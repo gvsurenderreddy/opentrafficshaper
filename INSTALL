@@ -1,0 +1,12 @@
+Installing OpenTrafficShaper:
+
+
+*
+* Requirements for OpenTrafficShaper
+*
+
+- Perl 5.6+
+
+
+1. Copy opentrafficshaper to /usr/local/sbin/
+
