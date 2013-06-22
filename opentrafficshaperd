@@ -1,0 +1,467 @@
+#!/usr/bin/perl
+# Main OpenTrafficShaper program
+# Copyright (C) 2007-2013, AllWorldIT
+# 
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+use strict;
+use warnings;
+
+
+# Set the dirs we look for library files in
+use lib('/usr/local/lib/opentrafficshaper-1.0','/usr/lib/opentrafficshaper-1.0',
+		'/usr/lib64/opentrafficshaper-1.0','opentrafficshaper','awitpt');
+
+# System stuff we need
+use Config::IniFiles;
+use Getopt::Long;
+use Time::HiRes qw(time);
+
+# UDP
+use IO::Socket::INET;
+use constant DATAGRAM_MAXLEN => 1500;
+
+# TCP/HTTP
+use POE qw(Component::Server::TCP Filter::HTTPD);
+use HTTP::Response;
+
+# Our own stuff
+use opentrafficshaper::version;
+use opentrafficshaper::logger;
+use Radius::Dictionary;
+use Radius::Packet;
+
+
+# Main config
+my $globals;
+# We just create the logger first, its only using STDERR here
+my $logger = new opentrafficshaper::logger;
+
+
+
+# Process basically starts here
+$logger->log(LOG_NOTICE,"[MAIN] OpenTrafficShaper v".VERSION." - Copyright (c) 2007-2013, AllWorldIT");
+parseCfgCmdLine();
+init();
+
+
+
+
+# This is our configuration processing session
+# TODO: Current just a trigger
+POE::Session->create(
+  inline_states => {
+	_start => sub {
+	  $_[KERNEL]->delay(tick => 5);
+	},
+
+	tick => sub {
+	  print STDERR "tick at ", time(), ":  users = ". (keys %{$globals->{'users'}})  ."\n";
+	  $_[KERNEL]->delay(tick => 5);
+	},
+  }
+);
+
+
+
+# Radius listener
+POE::Session->create(
+	inline_states => {
+		_start	   => \&server_start,
+		get_datagram => \&server_read,
+	}
+);
+
+sub server_start {
+	my $kernel = $_[KERNEL];
+	my $socket = IO::Socket::INET->new(
+		Proto	 => 'udp',
+		LocalPort => '1812',
+	);
+	my $socket2 = IO::Socket::INET->new(
+		Proto	 => 'udp',
+		LocalPort => '1813',
+	);
+	die "Couldn't create server socket: $!" unless $socket;
+	$kernel->select_read($socket, "get_datagram");
+	$kernel->select_read($socket2, "get_datagram");
+}
+
+sub server_read {
+  my ($kernel, $socket) = @_[KERNEL, ARG0];
+  my $remote_address = recv($socket, my $udp_packet = "", DATAGRAM_MAXLEN, 0);
+  return unless defined $remote_address;
+  my ($peer_port, $peer_addr) = unpack_sockaddr_in($remote_address);
+  my $human_addr = inet_ntoa($peer_addr);
+
+  print "(server) $human_addr : $peer_port sent us a packet\n";
+
+
+
+	# Parse packet
+	my $pkt = new Radius::Packet($globals->{'radius'}->{'dictionary'},$udp_packet);
+
+	my $logLine = sprintf("Code: %s, Identifier: %s => ",$pkt->code,$pkt->identifier);
+foreach my $attr ($pkt->attributes) {
+	$logLine .= sprintf(" %s: '%s',", $attr, $pkt->rawattr($attr));
+}
+
+			# Add vattributes onto logline
+			$logLine .= ". VREPLY => ";
+			# Loop with vendors
+			foreach my $vendor ($pkt->vendors()) {
+				# Loop with attributes
+				foreach my $attr ($pkt->vsattributes($vendor)) {
+					# Grab the value
+					my @attrRawVal = ( $pkt->vsattr($vendor,$attr) );
+					my $attrVal = $attrRawVal[0][0];
+					# Sanatize it a bit
+					if ($attrVal =~ /[[:cntrl:]]/) {
+						$attrVal = "-nonprint-";
+					} else {
+						$attrVal = "'$attrVal'";
+					}
+
+					$logLine .= sprintf(" %s/%s: %s,",$vendor,$attr,$attrVal);
+				}
+			}
+
+
+	# Pull in a variables from packet
+	my $user = $pkt->rawattr("User-Name");
+	my $trafficGroup;
+	if (my $attrRawVal = $pkt->vsattr(11111,'OpenTrafficShaper-Traffic-Group')) {
+		$trafficGroup = @{ $attrRawVal }[0];
+	}
+	my $trafficClass;
+	if (my $attrRawVal = $pkt->vsattr(11111,'OpenTrafficShaper-Traffic-Class')) {
+		$trafficClass = @{ $attrRawVal }[0];
+	}
+	my $trafficLimit;
+	if (my $attrRawVal = $pkt->vsattr(11111,'OpenTrafficShaper-Traffic-Limit')) {
+		$trafficLimit = @{ $attrRawVal }[0];
+	}
+
+	# Grab rate limits from the string we got
+	my $trafficLimitRx = 0; my $trafficLimitTx = 0;
+	my $trafficLimitRxBurst = 0; my $trafficLimitTxBurst = 0;
+	if (defined($trafficLimit)) {
+		my ($trafficLimitRxQuantifier,$trafficLimitTxQuantifier);
+		my ($trafficLimitRxBurstQuantifier,$trafficLimitTxBurstQuantifier);
+		# Match rx-rate[/tx-rate] rx-burst-rate[/tx-burst-rate]
+		if ($trafficLimit =~ /^(\d+)([km])(?:\/(\d+)([km]))?(?: (\d+)([km])(?:\/(\d+)([km]))?)?/) {
+			$trafficLimitRx = getKbit($1,$2);
+			$trafficLimitTx = getKbit($3,$4);
+			$trafficLimitRxBurst = getKbit($5,$6);
+			$trafficLimitTxBurst = getKbit($7,$8);
+		}
+	}
+
+	# Set default if they undefined
+	if (!defined($trafficGroup)) {
+		$trafficGroup = 0;
+	}
+	if (!defined($trafficClass)) {
+		$trafficClass = 0;
+	}
+
+	my $userIP = $pkt->attr('Framed-IP-Address');
+
+	my $status = $pkt->rawattr('Acct-Status-Type');
+
+
+	$globals->{'users'}->{$user} = $userIP;
+
+	$logger->log(LOG_DEBUG,"=> Code: $status, User: $user, IP: $userIP, Group: $trafficGroup, Class: $trafficClass, Limits: $trafficLimitRx/$trafficLimitTx, Burst: $trafficLimitRxBurst/$trafficLimitTxBurst");
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#
+# MAIN
+#
+POE::Kernel->run();
+exit;
+
+
+
+
+
+# Function to parse our config and commandline
+sub parseCfgCmdLine
+{
+
+	# Set defaults
+	my $cfg;
+	$cfg->{'config_file'} = "/etc/opentrafficshaper.conf";
+
+	$cfg->{'timeout'} = 120;
+	$cfg->{'background'} = "yes";
+	$cfg->{'pid_file'} = "/var/run/opentrafficshaper/opentrafficshaperd.pid";
+	$cfg->{'log_level'} = 2;
+	$cfg->{'log_file'} = "/var/log/opentrafficshaper/opentrafficshaperd.log";
+
+#	$server->{'host'} = "*";
+#	$server->{'port'} = [ 1812, 1813 ];
+#	$server->{'proto'} = 'udp';
+
+	# Parse command line params
+	my $cmdline;
+	%{$cmdline} = ();
+	GetOptions(
+			\%{$cmdline},
+			"help",
+			"config:s",
+			"debug",
+			"fg",
+	) or die "Error parsing commandline arguments";
+
+	# Check for some args
+	if ($cmdline->{'help'}) {
+		displayHelp();
+		exit 0;
+	}
+	if (defined($cmdline->{'config'}) && $cmdline->{'config'} ne "") {
+		$cfg->{'config_file'} = $cmdline->{'config'};
+	}
+
+	# Check config file exists
+	if (! -f $cfg->{'config_file'}) {
+		die("No configuration file '".$cfg->{'config_file'}."' found!\n");
+	}
+
+	# Use config file, ignore case
+	tie my %inifile, 'Config::IniFiles', (
+			-file => $cfg->{'config_file'},
+			-nocase => 1
+	) or die "Failed to open config file '".$cfg->{'config_file'}."': $!";
+	# Copy config
+	my %config = %inifile;
+
+	# Pull in params for the server
+	my @server_params = (
+			'log_level','log_file',
+			'host',
+			'pid_file',
+			'user', 'group',
+			'timeout',
+			'background',
+	);
+	foreach my $param (@server_params) {
+		$cfg->{$param} = $config{'server'}{$param} if (defined($config{'server'}{$param}));
+	}
+
+	# Override
+	if ($cmdline->{'debug'}) {
+		$cfg->{'log_level'} = 4;
+		$cfg->{'debug'} = 1;
+	}
+
+	# If we set on commandline for foreground, keep in foreground
+	if ($cmdline->{'fg'} || (defined($config{'server'}{'background'}) && $config{'server'}{'background'} eq "no" )) {
+		$cfg->{'background'} = undef;
+		$cfg->{'log_file'} = undef;
+	} else {
+		$cfg->{'setsid'} = 1;
+	}
+
+	# Loop with logging detail
+	if (defined($config{'server'}{'log_detail'})) {
+		# Lets see what we have to enable
+		foreach my $detail (split(/[,\s;]/,$config{'server'}{'log_detail'})) {
+			$cfg->{'logging'}{$detail} = 1;
+		}
+	}
+
+	#
+	# System plugins
+	#
+	if (ref($config{'plugins'}{'load'}) eq "ARRAY") {
+		foreach my $plugin (@{$config{'plugins'}{'load'}}) {
+			$plugin =~ s/\s+//g;
+	 		# Skip comments
+	 		next if ($plugin =~ /^#/);
+			push(@{$cfg->{'plugin_list'}},$plugin);
+		}
+	} elsif (defined($config{'plugins'}{'load'})) {
+		my @pluginList = split(/\s+/,$config{'plugins'}{'load'});
+		foreach my $plugin (@pluginList) {
+			# Skip comments
+			next if ($plugin =~ /^#/);
+			push(@{$cfg->{'plugin_list'}},$plugin);
+		}
+	}
+
+	#
+	# Dictionary configuration
+	#
+	# Split off dictionaries to load
+	if (ref($config{'dictionary'}->{'load'}) eq "ARRAY") {
+		foreach my $dict (@{$config{'dictionary'}->{'load'}}) {
+			$dict =~ s/\s+//g;
+	 		# Skip comments
+	 		next if ($dict =~ /^#/);
+			push(@{$cfg->{'dictionary_list'}},$dict);
+		}
+	} elsif (defined($config{'dictionary'}->{'load'})) {
+		my @dictList = split(/\s+/,$config{'dictionary'}->{'load'});
+		foreach my $dict (@dictList) {
+			# Skip comments
+			next if ($dict =~ /^#/);
+			push(@{$cfg->{'dictionary_list'}},$dict);
+		}
+	}
+
+	# Check if the user specified a cache_file in the config
+	if (defined($config{'server'}{'cache_file'})) {
+		$cfg->{'cache_file'} = $config{'server'}{'cache_file'};
+	}
+
+	$globals->{'config'} = $cfg;
+}
+
+
+# Display help
+sub displayHelp {
+
+	print(STDERR<<EOF);
+
+Usage: $0 [args]
+	--config=<file>		Configuration file
+	--debug				Put into debug mode
+	--fg				   Don't go into background
+
+EOF
+}
+
+
+# Initialize things we need
+sub init
+{
+	# Certain things we need
+	$globals->{'users'} = { };
+
+
+	# Load dictionaries
+	$logger->log(LOG_INFO,"[INIT] Initializing dictionaries...");
+	my $dict = new Radius::Dictionary;
+	foreach my $df (@{$globals->{'config'}->{'dictionary_list'}}) {
+		# Load dictionary
+		if (!$dict->readfile($df)) {
+			$logger->log(LOG_WARN,"[INIT] Failed to load dictionary '$df': $!");
+		}
+		$logger->log(LOG_DEBUG,"[INIT] Loaded dictionary '$df'.");
+	}
+	$logger->log(LOG_INFO,"[INIT] Dictionaries initialized.");
+	# Store the dictionary
+	$globals->{'radius'}->{'dictionary'} = $dict;
+
+
+	# Load plugins
+	$logger->log(LOG_INFO,"[INIT] Initializing plugins...");
+	foreach my $plugin (@{$globals->{'config'}->{'plugin_list'}}) {
+		# Load plugin
+		my $res = eval("
+			use opentrafficshaper::plugins::${plugin}::${plugin};
+			plugin_register(\$globals,\"${plugin}\",\$opentrafficshaper::plugins::${plugin}::pluginInfo);
+		");
+		if ($@ || (defined($res) && $res != 0)) {
+			$logger->log(LOG_WARN,"[INIT] Error loading plugin $plugin ($@)");
+		} else {
+			$logger->log(LOG_DEBUG,"[INIT] Plugin '$plugin' loaded.");
+		}
+	}
+	$logger->log(LOG_INFO,"[INIT] Plugins initialized.");
+}
+# Register plugin info
+sub plugin_register {
+	my ($globals,$plugin,$info) = @_;
+
+
+	# If no info, return
+	if (!defined($info)) {
+		$logger->log(LOG_WARN,"WARNING: Plugin info not found for plugin => $plugin\n");
+		return -1;
+	}
+
+	# Set real module name & save
+	$info->{'Plugin'} = $plugin;
+#	push(@{$logger->{'module_list'}},$info);
+
+	# If we should, init the module
+	if (defined($info->{'Init'})) {
+		$info->{'Init'}($globals);
+	}
+
+	return 0;
+}
+
+
+# Simple function to reduce everything to kbit
+sub getKbit
+{
+	my ($counter,$quantifier) = @_;
+
+	# If there is no counter, return 0
+	return 0 if (!defined($counter));
+
+	# We need a quantifier
+	return undef if (!defined($quantifier));
+
+	# Initialize counter
+	my $newCounter = $counter;
+
+	if ($quantifier =~ /^m$/i) {
+		$newCounter = $counter * 1024;
+	} elsif ($quantifier =~ /^k$/i) {
+		$newCounter = $counter * 1;
+	} else {
+		return undef;
+	}
+
+	return $newCounter;
+}
+
+
+# vim: ts=4

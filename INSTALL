@@ -5,6 +5,9 @@ Installing OpenTrafficShaper:
 * Requirements for OpenTrafficShaper
 *
 
+- POE
+- Config::IniFiles
+
 - Perl 5.6+
 
 
