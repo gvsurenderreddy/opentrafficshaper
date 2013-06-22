@@ -188,44 +188,58 @@ sub server_read {
 		'ClassName' => "Class A",
 		'Limits' => "$trafficLimitTx / $trafficLimitRx",
 		'BurstLimits' => "$trafficLimitTxBurst / $trafficLimitRxBurst",
-		'Status' => $pkt->rawattr('Acct-Status-Type'),
+		'Status' => getStatus($pkt->rawattr('Acct-Status-Type')),
 	};
 
 	$globals->{'users'}->{$username} = $user;
 
-	$logger->log(LOG_DEBUG,"=> Code: $user->{'status'}, User: $user->{'username'}, IP: $user->{'ip'}, Group: $user->{'group'}, Class: $user->{'class'}, Limits: $user->{'limits'}, Burst: $user->{'burstlimits'}");
+	$logger->log(LOG_DEBUG,"=> Code: $user->{'Status'}, User: $user->{'Username'}, IP: $user->{'IP'}, Group: $user->{'Group'}, Class: $user->{'Class'}, Limits: $user->{'Limits'}, Burst: $user->{'BurstLimits'}");
+}
+
+
+# Convert status into something easy to useful
+sub getStatus
+{
+	my $status = shift;
+
+	if ($status == 1) {
+		return "new";
+	} elsif ($status == 2) {
+		return "offline";
+	} elsif ($status == 3) {
+		return "online";
+	} else {
+		return "unknown";
+	}
 }
 
 
 
 
+# Simple function to reduce everything to kbit
+sub getKbit
+{
+	my ($counter,$quantifier) = @_;
 
+	# If there is no counter, return 0
+	return 0 if (!defined($counter));
 
+	# We need a quantifier
+	return undef if (!defined($quantifier));
 
+	# Initialize counter
+	my $newCounter = $counter;
 
+	if ($quantifier =~ /^m$/i) {
+		$newCounter = $counter * 1024;
+	} elsif ($quantifier =~ /^k$/i) {
+		$newCounter = $counter * 1;
+	} else {
+		return undef;
+	}
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+	return $newCounter;
+}
 
 1;
 # vim: ts=4
