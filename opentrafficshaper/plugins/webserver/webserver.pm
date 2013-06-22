@@ -217,7 +217,7 @@ sub httpCreateResponse
 			<<EOF);
 <!DOCTYPE html>
 	<head>
-		<title>Bootstrap 101 Template</title>
+		<title>OpenTrafficShaper - Enterprise Traffic Shaper</title>
 		<meta name="viewport" content="width=device-width, initial-scale=1.0">
 		<!-- Assets -->
 		<link href="/static/jquery-ui/css/ui-lightness/jquery-ui.min.css" rel="stylesheet" media="screen">
@@ -254,7 +254,7 @@ sub httpCreateResponse
 						<span class="icon-bar"></span>
 						<span class="icon-bar"></span>
 					</button>
-   					<a class="brand" href="#">OpenTrafficShaper</a>
+   					<a class="brand" href="/">OpenTrafficShaper</a>
 					<div class="nav-collapse collapse">
 						<p class="navbar-text pull-right">Logged in as <a href="#" class="navbar-link">Username</a>	</p>
 						<ul class="nav">
@@ -285,7 +285,7 @@ sub httpCreateResponse
 			</div><!--/row-->
 			<hr>
 			<footer>
-				<p>&copy; AllWorldIT 2013</p>
+				<p>v$globals->{'version'} - Copyright &copy; 2013,  <a href="http://www.allworldit.com">AllWorldIT</a></p>
 			</footer>
 		</div><!--/.fluid-container-->
 
