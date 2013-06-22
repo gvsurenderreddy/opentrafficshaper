@@ -233,6 +233,7 @@ sub init
 	# Certain things we need
 	$globals->{'users'} = { };
 	$globals->{'logger'} = $logger;
+	$globals->{'version'} = VERSION;
 
 	# Load dictionaries
 	$logger->log(LOG_INFO,"[MAIN] Initializing dictionaries...");
@@ -287,32 +288,5 @@ sub plugin_register {
 
 	return 0;
 }
-
-
-# Simple function to reduce everything to kbit
-sub getKbit
-{
-	my ($counter,$quantifier) = @_;
-
-	# If there is no counter, return 0
-	return 0 if (!defined($counter));
-
-	# We need a quantifier
-	return undef if (!defined($quantifier));
-
-	# Initialize counter
-	my $newCounter = $counter;
-
-	if ($quantifier =~ /^m$/i) {
-		$newCounter = $counter * 1024;
-	} elsif ($quantifier =~ /^k$/i) {
-		$newCounter = $counter * 1;
-	} else {
-		return undef;
-	}
-
-	return $newCounter;
-}
-
 
 # vim: ts=4
