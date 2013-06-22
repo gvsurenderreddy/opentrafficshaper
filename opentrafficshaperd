@@ -26,15 +26,8 @@ use lib('/usr/local/lib/opentrafficshaper-1.0','/usr/lib/opentrafficshaper-1.0',
 # System stuff we need
 use Config::IniFiles;
 use Getopt::Long;
+use POE;
 use Time::HiRes qw(time);
-
-# UDP
-use IO::Socket::INET;
-use constant DATAGRAM_MAXLEN => 1500;
-
-# TCP/HTTP
-use POE qw(Component::Server::TCP Filter::HTTPD);
-use HTTP::Response;
 
 # Our own stuff
 use opentrafficshaper::version;
@@ -75,152 +68,10 @@ POE::Session->create(
 
 
 
-# Radius listener
-POE::Session->create(
-	inline_states => {
-		_start	   => \&server_start,
-		get_datagram => \&server_read,
-	}
-);
-
-sub server_start {
-	my $kernel = $_[KERNEL];
-	my $socket = IO::Socket::INET->new(
-		Proto	 => 'udp',
-		LocalPort => '1812',
-	);
-	my $socket2 = IO::Socket::INET->new(
-		Proto	 => 'udp',
-		LocalPort => '1813',
-	);
-	die "Couldn't create server socket: $!" unless $socket;
-	$kernel->select_read($socket, "get_datagram");
-	$kernel->select_read($socket2, "get_datagram");
-}
-
-sub server_read {
-  my ($kernel, $socket) = @_[KERNEL, ARG0];
-  my $remote_address = recv($socket, my $udp_packet = "", DATAGRAM_MAXLEN, 0);
-  return unless defined $remote_address;
-  my ($peer_port, $peer_addr) = unpack_sockaddr_in($remote_address);
-  my $human_addr = inet_ntoa($peer_addr);
-
-  print "(server) $human_addr : $peer_port sent us a packet\n";
-
-
-
-	# Parse packet
-	my $pkt = new Radius::Packet($globals->{'radius'}->{'dictionary'},$udp_packet);
-
-	my $logLine = sprintf("Code: %s, Identifier: %s => ",$pkt->code,$pkt->identifier);
-foreach my $attr ($pkt->attributes) {
-	$logLine .= sprintf(" %s: '%s',", $attr, $pkt->rawattr($attr));
-}
-
-			# Add vattributes onto logline
-			$logLine .= ". VREPLY => ";
-			# Loop with vendors
-			foreach my $vendor ($pkt->vendors()) {
-				# Loop with attributes
-				foreach my $attr ($pkt->vsattributes($vendor)) {
-					# Grab the value
-					my @attrRawVal = ( $pkt->vsattr($vendor,$attr) );
-					my $attrVal = $attrRawVal[0][0];
-					# Sanatize it a bit
-					if ($attrVal =~ /[[:cntrl:]]/) {
-						$attrVal = "-nonprint-";
-					} else {
-						$attrVal = "'$attrVal'";
-					}
-
-					$logLine .= sprintf(" %s/%s: %s,",$vendor,$attr,$attrVal);
-				}
-			}
-
-
-	# Pull in a variables from packet
-	my $user = $pkt->rawattr("User-Name");
-	my $trafficGroup;
-	if (my $attrRawVal = $pkt->vsattr(11111,'OpenTrafficShaper-Traffic-Group')) {
-		$trafficGroup = @{ $attrRawVal }[0];
-	}
-	my $trafficClass;
-	if (my $attrRawVal = $pkt->vsattr(11111,'OpenTrafficShaper-Traffic-Class')) {
-		$trafficClass = @{ $attrRawVal }[0];
-	}
-	my $trafficLimit;
-	if (my $attrRawVal = $pkt->vsattr(11111,'OpenTrafficShaper-Traffic-Limit')) {
-		$trafficLimit = @{ $attrRawVal }[0];
-	}
-
-	# Grab rate limits from the string we got
-	my $trafficLimitRx = 0; my $trafficLimitTx = 0;
-	my $trafficLimitRxBurst = 0; my $trafficLimitTxBurst = 0;
-	if (defined($trafficLimit)) {
-		my ($trafficLimitRxQuantifier,$trafficLimitTxQuantifier);
-		my ($trafficLimitRxBurstQuantifier,$trafficLimitTxBurstQuantifier);
-		# Match rx-rate[/tx-rate] rx-burst-rate[/tx-burst-rate]
-		if ($trafficLimit =~ /^(\d+)([km])(?:\/(\d+)([km]))?(?: (\d+)([km])(?:\/(\d+)([km]))?)?/) {
-			$trafficLimitRx = getKbit($1,$2);
-			$trafficLimitTx = getKbit($3,$4);
-			$trafficLimitRxBurst = getKbit($5,$6);
-			$trafficLimitTxBurst = getKbit($7,$8);
-		}
-	}
-
-	# Set default if they undefined
-	if (!defined($trafficGroup)) {
-		$trafficGroup = 0;
-	}
-	if (!defined($trafficClass)) {
-		$trafficClass = 0;
-	}
-
-	my $userIP = $pkt->attr('Framed-IP-Address');
-
-	my $status = $pkt->rawattr('Acct-Status-Type');
-
-
-	$globals->{'users'}->{$user} = $userIP;
-
-	$logger->log(LOG_DEBUG,"=> Code: $status, User: $user, IP: $userIP, Group: $trafficGroup, Class: $trafficClass, Limits: $trafficLimitRx/$trafficLimitTx, Burst: $trafficLimitRxBurst/$trafficLimitTxBurst");
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #
 # MAIN
 #
+$logger->log(LOG_NOTICE,"[MAIN] Starting...");
 POE::Kernel->run();
 exit;
 
@@ -381,25 +232,25 @@ sub init
 {
 	# Certain things we need
 	$globals->{'users'} = { };
-
+	$globals->{'logger'} = $logger;
 
 	# Load dictionaries
-	$logger->log(LOG_INFO,"[INIT] Initializing dictionaries...");
+	$logger->log(LOG_INFO,"[MAIN] Initializing dictionaries...");
 	my $dict = new Radius::Dictionary;
 	foreach my $df (@{$globals->{'config'}->{'dictionary_list'}}) {
 		# Load dictionary
 		if (!$dict->readfile($df)) {
-			$logger->log(LOG_WARN,"[INIT] Failed to load dictionary '$df': $!");
+			$logger->log(LOG_WARN,"[MAIN] Failed to load dictionary '$df': $!");
 		}
-		$logger->log(LOG_DEBUG,"[INIT] Loaded dictionary '$df'.");
+		$logger->log(LOG_DEBUG,"[MAIN] Loaded dictionary '$df'.");
 	}
-	$logger->log(LOG_INFO,"[INIT] Dictionaries initialized.");
+	$logger->log(LOG_INFO,"[MAIN] Dictionaries initialized.");
 	# Store the dictionary
 	$globals->{'radius'}->{'dictionary'} = $dict;
 
 
 	# Load plugins
-	$logger->log(LOG_INFO,"[INIT] Initializing plugins...");
+	$logger->log(LOG_INFO,"[MAIN] Initializing plugins...");
 	foreach my $plugin (@{$globals->{'config'}->{'plugin_list'}}) {
 		# Load plugin
 		my $res = eval("
@@ -407,12 +258,12 @@ sub init
 			plugin_register(\$globals,\"${plugin}\",\$opentrafficshaper::plugins::${plugin}::pluginInfo);
 		");
 		if ($@ || (defined($res) && $res != 0)) {
-			$logger->log(LOG_WARN,"[INIT] Error loading plugin $plugin ($@)");
+			$logger->log(LOG_WARN,"[MAIN] Error loading plugin $plugin ($@)");
 		} else {
-			$logger->log(LOG_DEBUG,"[INIT] Plugin '$plugin' loaded.");
+			$logger->log(LOG_DEBUG,"[MAIN] Plugin '$plugin' loaded.");
 		}
 	}
-	$logger->log(LOG_INFO,"[INIT] Plugins initialized.");
+	$logger->log(LOG_INFO,"[MAIN] Plugins initialized.");
 }
 # Register plugin info
 sub plugin_register {
