@@ -80,7 +80,7 @@ sub log
 	if ($msg =~ /^(\[[^\]]+\]) (.*)/s) {
 		$msg = "$1 $logtxt: $2";
 	} else {
-		$msg = "[CORE] $logtxt: $msg";
+		$msg = "[UNKNOWN] $logtxt: $msg";
 	}
 
 	# If we have args, this is more than likely a format string & args
