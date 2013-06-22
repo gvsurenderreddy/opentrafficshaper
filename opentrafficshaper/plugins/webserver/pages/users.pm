@@ -62,8 +62,16 @@ EOF
 	foreach my $userid (keys %{$globals->{'users'}}) {
 		my $user = $globals->{'users'}->{$userid};
 
+		# Make style a bit pretty
+		my $style = "";
+		if ($user->{'Status'} eq "offline") {
+			$style = "warning";
+		} elsif ($user->{'Status'} eq "new") {
+			$style = "info";
+		}
+
 		$content .=<<EOF;
-		<tr>
+		<tr class="$style">
 			<td>X</td>
 			<td>$user->{'Username'}</td>
 			<td>$user->{'IP'}</td>
