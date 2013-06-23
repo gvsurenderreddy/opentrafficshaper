@@ -24,6 +24,7 @@ use warnings;
 
 use POE;
 
+use opentrafficshaper::constants;
 use opentrafficshaper::logger;
 
 
@@ -39,6 +40,7 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 
 use constant {
 	VERSION => '0.0.1',
+	TIMEOUT_EXPIRE_OFFLINE => 60,
 };
 
 
@@ -54,6 +56,12 @@ our $pluginInfo = {
 # Copy of system globals
 my $globals;
 my $logger;
+
+# Pending changes
+my $changeQueue = { };
+# UserID counter
+my $userIDMap = {};
+my $userIDCounter = 1;
 
 
 # Initialize plugin
@@ -98,7 +106,91 @@ sub session_tick {
 	my $kernel = $_[KERNEL];
 
 
-	print STDERR "tick at ", time(), ":  users = ". (keys %{$globals->{'users'}})  ."\n";
+	# Suck in global
+	my $users = $globals->{'users'};
+
+	# Now
+	my $now = time();
+
+
+	# Loop with changes
+	foreach my $uid (keys %{$changeQueue}) {
+		# Global user
+		my $guser = $users->{$uid};
+		# Change user
+		my $cuser = $changeQueue->{$uid};
+
+
+		# NO USER IN LIST
+		if (!defined($guser)) {
+
+			# NO USER IN LIST => CHANGE IS NEW or ONLINE
+		   if (($cuser->{'Status'} eq "new" || $cuser->{'Status'} eq "online")) {
+				$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Processing new user '$cuser->{'Username'}' [$uid]");
+				# This is now live
+				$users->{$uid} = $cuser;
+				$users->{$uid}->{'shaper_live'} = SHAPER_PENDING;
+				# Post to shaper
+				$kernel->post("shaper" => "add" => $uid);
+
+			# NO USER IN LIST => CHANGE IS OFFLINE OR UNKNOWN
+			} else {
+				$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Ignoring user '$cuser->{'Username'}' [$uid] state '$cuser->{'Status'}', user was not online");
+			}
+	
+			# Remove from change queue
+			delete($changeQueue->{$uid});
+
+		# USER IN LIST
+		} else {
+			# USER IN LIST => CHANGE IS NEW
+			if ($cuser->{'Status'} eq "new") {
+				$logger->log(LOG_DEBUG,"[CONFIGMANAGER] User '$cuser->{'Username'}' [$uid], user live but new connection?");
+
+				# Remove from change queue
+				delete($changeQueue->{$uid});
+
+			# USER IN LIST => CHANGE IS ONLINE
+			} elsif ($cuser->{'Status'} eq "online") {
+				$logger->log(LOG_DEBUG,"[CONFIGMANAGER] User '$cuser->{'Username'}' [$uid], user in list, new online notification");
+
+				# Remove from change queue
+				delete($changeQueue->{$uid});
+
+			# USER IN LIST => CHANGE IS OFFLINE
+			} elsif ($cuser->{'Status'} eq "offline") {
+
+				# USER IN LIST => CHANGE IS OFFLINE => TIMEOUT EXPIRED
+				if ($now - $cuser->{'LastUpdate'} > TIMEOUT_EXPIRE_OFFLINE) {
+
+					# Remove entry if no longer live
+					if (!$guser->{'shaper_live'}) {
+						$logger->log(LOG_DEBUG,"[CONFIGMANAGER] User '$cuser->{'Username'}' [$uid], user in list, but offline now, expired and not live on shaper");
+
+						# Remove from system
+						delete($users->{$uid});
+						# Remove from change queue
+						delete($changeQueue->{$uid});
+
+					# Push to shaper
+					} elsif ($guser->{'status'} ne "offline") {
+						$logger->log(LOG_DEBUG,"[CONFIGMANAGER] User '$cuser->{'Username'}' [$uid], user in list, but offline now and expired, still live on shaper");
+
+						# Post to shaper
+						$kernel->post("shaper" => "remove" => $uid);
+						# Update that we're offline
+						$guser->{'Status'} = 'offline';
+
+					} else {
+						$logger->log(LOG_DEBUG,"[CONFIGMANAGER] User '$cuser->{'Username'}' [$uid], user in list, but offline now and expired, still live, waiting for shaper");
+					}
+				}
+			}
+
+			# Update the last time we got an update
+			$guser->{'LastUpdate'} = $cuser->{'LastUpdate'};
+		}
+	}
 
 	# Reset tick
 	$kernel->delay(tick => 5);
@@ -109,7 +201,23 @@ sub session_tick {
 sub process_change {
 	my ($kernel, $user) = @_[KERNEL, ARG0];
 
-	print STDERR "We were asked to process an update for $user->{'Username'}\n";
+
+	# Create a unique user identifier
+	my $userUniq = $user->{'Username'} . "/" . $user->{'IP'};
+
+	# If we've not seen it
+	my $uid;
+	if (!defined($uid = $userIDMap->{$userUniq})) {
+		# Give it the next userID in the list
+		$userIDMap->{$userUniq} = $uid = ++$userIDCounter;
+	}
+
+	# Set the user ID before we post to the change queue
+	$user->{'ID'} = $uid;
+	$user->{'LastUpdate'} = time();
+
+	# Push change to change queue
+	$changeQueue->{$uid} = $user;
 }
 
 
