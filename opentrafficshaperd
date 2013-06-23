@@ -42,35 +42,13 @@ my $globals;
 my $logger = new opentrafficshaper::logger;
 
 
-
-# Process basically starts here
+#
+# MAIN
+#
 $logger->log(LOG_NOTICE,"[MAIN] OpenTrafficShaper v".VERSION." - Copyright (c) 2007-2013, AllWorldIT");
 parseCfgCmdLine();
 init();
 
-
-
-
-# This is our configuration processing session
-# TODO: Current just a trigger
-POE::Session->create(
-  inline_states => {
-	_start => sub {
-	  $_[KERNEL]->delay(tick => 5);
-	},
-
-	tick => sub {
-	  print STDERR "tick at ", time(), ":  users = ". (keys %{$globals->{'users'}})  ."\n";
-	  $_[KERNEL]->delay(tick => 5);
-	},
-  }
-);
-
-
-
-#
-# MAIN
-#
 $logger->log(LOG_NOTICE,"[MAIN] Starting...");
 POE::Kernel->run();
 exit;
@@ -250,6 +228,19 @@ sub init
 	$globals->{'radius'}->{'dictionary'} = $dict;
 
 
+	# Core configuration manager
+	$logger->log(LOG_INFO,"[MAIN] Initializing config manager...");
+	my $res = eval("
+		use opentrafficshaper::plugins::configmanager;
+		plugin_register(\$globals,\"configmanager\",\$opentrafficshaper::plugins::configmanager::pluginInfo);
+	");
+	if ($@ || (defined($res) && $res != 0)) {
+		$logger->log(LOG_WARN,"[MAIN] Error loading config manager, things WILL BREAK! ($@)");
+	} else {
+		$logger->log(LOG_DEBUG,"[MAIN] Config manager initialized.");
+	}
+	
+
 	# Load plugins
 	$logger->log(LOG_INFO,"[MAIN] Initializing plugins...");
 	foreach my $plugin (@{$globals->{'config'}->{'plugin_list'}}) {
@@ -259,13 +250,14 @@ sub init
 			plugin_register(\$globals,\"${plugin}\",\$opentrafficshaper::plugins::${plugin}::pluginInfo);
 		");
 		if ($@ || (defined($res) && $res != 0)) {
-			$logger->log(LOG_WARN,"[MAIN] Error loading plugin $plugin ($@)");
+			$logger->log(LOG_WARN,"[MAIN] Error loading plugin '$plugin' ($@)");
 		} else {
 			$logger->log(LOG_DEBUG,"[MAIN] Plugin '$plugin' loaded.");
 		}
 	}
 	$logger->log(LOG_INFO,"[MAIN] Plugins initialized.");
 }
+
 # Register plugin info
 sub plugin_register {
 	my ($globals,$plugin,$info) = @_;
@@ -279,7 +271,7 @@ sub plugin_register {
 
 	# Set real module name & save
 	$info->{'Plugin'} = $plugin;
-#	push(@{$logger->{'module_list'}},$info);
+	push(@{$globals->{'plugins'}},$info);
 
 	# If we should, init the module
 	if (defined($info->{'Init'})) {
