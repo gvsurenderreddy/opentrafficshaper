@@ -27,6 +27,7 @@ use lib('/usr/local/lib/opentrafficshaper-1.0','/usr/lib/opentrafficshaper-1.0',
 use Config::IniFiles;
 use Getopt::Long;
 use POE;
+use POSIX qw(setsid);
 use Time::HiRes qw(time);
 
 # Our own stuff
@@ -280,5 +281,30 @@ sub plugin_register {
 
 	return 0;
 }
+
+# NK: Needs work
+# Become daemon
+sub daemonize {
+	chdir '/'
+			or die "Can't chdir to /: $!";
+
+	open STDIN, '/dev/null'
+			or die "Can't read /dev/null: $!";
+
+	open STDOUT, '> /var/log/ppp-gatekeeper/stdout.log'
+			or die "Can't open stdout log: $!";
+
+	defined(my $pid = fork) 
+			or die "Can't fork: $!";
+
+	exit if $pid;
+
+	setsid
+			or die "Can't start a new session: $!";
+
+	open STDERR, '> /var/log/ppp-gatekeeper/stderr.log'
+			or die "Can't open stderr log: $!";
+}
+
 
 # vim: ts=4
