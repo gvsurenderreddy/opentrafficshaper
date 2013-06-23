@@ -86,7 +86,7 @@ sub init
 
 	# Spawn a web server on port 8088 of all interfaces.
 	POE::Component::Server::TCP->new(
-		Alias => "webserver",
+		Alias => "plugin.webserver",
 		Port => 8088,
 		ClientFilter => 'POE::Filter::HTTPD',
 		# Function to handle HTTP requests (as we passing through a filter)
