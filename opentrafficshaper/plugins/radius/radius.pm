@@ -195,8 +195,6 @@ sub server_read {
 		'Status' => getStatus($pkt->rawattr('Acct-Status-Type')),
 	};
 
-	$globals->{'users'}->{$username} = $user;
-
 	# Throw the change at the config manager
 	$kernel->post("configmanager" => "process_change" => $user);
 
