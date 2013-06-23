@@ -98,27 +98,36 @@ sub do_add {
 
 
 	# Pull in global
-	my $users = %globals->{'users'};
+	my $users = $globals->{'users'};
 	my $user = $users->{$uid};
 
-
 	$users->{$uid}->{'shaper_live'} = SHAPER_LIVE;
-	print STDERR " TC => add $user->{'Username'}\n";
+	$logger->log(LOG_DEBUG," Add '$user->{'Username'}' [$uid]\n");
 }
 
 # Change event for tc
 sub do_change {
-	my ($kernel, $user) = @_[KERNEL, ARG0];
+	my ($kernel, $uid) = @_[KERNEL, ARG0];
 
-	print STDERR " TC => change $user->{'Username'}\n";
+
+	# Pull in global
+	my $users = $globals->{'users'};
+	my $user = $users->{$uid};
+
+	$logger->log(LOG_DEBUG," Change '$user->{'Username'}' [$uid]\n");
 }
 
 # Remove event for tc
 sub do_remove {
-	my ($kernel, $user) = @_[KERNEL, ARG0];
+	my ($kernel, $uid) = @_[KERNEL, ARG0];
+
+
+	# Pull in global
+	my $users = $globals->{'users'};
+	my $user = $users->{$uid};
 
 	$users->{$uid}->{'shaper_live'} = 0;
-	print STDERR " TC => remove $user->{'Username'}\n";
+	$logger->log(LOG_DEBUG," Remove '$user->{'Username'}' [$uid]\n");
 }
 
 
