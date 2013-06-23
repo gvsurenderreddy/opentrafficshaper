@@ -106,7 +106,7 @@ sub init
 
 
 
-# Initialize config manager
+# Initialize this plugins main POE session
 sub session_init {
 	my $kernel = $_[KERNEL];
 
