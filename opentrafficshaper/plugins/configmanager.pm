@@ -129,7 +129,7 @@ sub session_tick {
 				$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Processing new user '$cuser->{'Username'}' [$uid]");
 				# This is now live
 				$users->{$uid} = $cuser;
-				$users->{$uid}->{'shaper_live'} = SHAPER_PENDING;
+				$users->{$uid}->{'shaper.live'} = SHAPER_PENDING;
 				# Post to shaper
 				$kernel->post("shaper" => "add" => $uid);
 
@@ -164,16 +164,18 @@ sub session_tick {
 				if ($now - $cuser->{'LastUpdate'} > TIMEOUT_EXPIRE_OFFLINE) {
 
 					# Remove entry if no longer live
-					if (!$guser->{'shaper_live'}) {
+					if (!$guser->{'shaper.live'}) {
 						$logger->log(LOG_DEBUG,"[CONFIGMANAGER] User '$cuser->{'Username'}' [$uid], user in list, but offline now, expired and not live on shaper");
 
 						# Remove from system
 						delete($users->{$uid});
 						# Remove from change queue
 						delete($changeQueue->{$uid});
+						# Jump to next
+						next;
 
 					# Push to shaper
-					} elsif ($guser->{'status'} ne "offline") {
+					} elsif ($guser->{'shaper.live'} == SHAPER_LIVE) {
 						$logger->log(LOG_DEBUG,"[CONFIGMANAGER] User '$cuser->{'Username'}' [$uid], user in list, but offline now and expired, still live on shaper");
 
 						# Post to shaper
@@ -186,11 +188,13 @@ sub session_tick {
 					}
 				}
 			}
-
-			# Update the last time we got an update
-			$guser->{'LastUpdate'} = $cuser->{'LastUpdate'};
 		}
+
+		# Update the last time we got an update
+		$guser->{'Status'} = $cuser->{'Status'};
+		$guser->{'LastUpdate'} = $cuser->{'LastUpdate'};
 	}
+
 
 	# Reset tick
 	$kernel->delay(tick => 5);
