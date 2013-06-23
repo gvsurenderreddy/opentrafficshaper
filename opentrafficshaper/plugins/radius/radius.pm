@@ -89,6 +89,10 @@ sub server_init {
 	);
 	die "Couldn't create server socket: $!" unless $socket;
 
+	# Set our alias
+	$kernel->alias_set("plugin.radius");
+
+	# Setup our reader
 	$kernel->select_read($socket, "get_datagram");
 }
 
@@ -192,6 +196,9 @@ sub server_read {
 	};
 
 	$globals->{'users'}->{$username} = $user;
+
+	# Throw the change at the config manager
+	$kernel->post("configmanager" => "process_change" => $user);
 
 	$logger->log(LOG_DEBUG,"=> Code: $user->{'Status'}, User: $user->{'Username'}, IP: $user->{'IP'}, Group: $user->{'Group'}, Class: $user->{'Class'}, Limits: $user->{'Limits'}, Burst: $user->{'BurstLimits'}");
 }
