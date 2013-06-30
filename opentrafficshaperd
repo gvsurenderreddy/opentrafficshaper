@@ -33,8 +33,6 @@ use Time::HiRes qw(time);
 # Our own stuff
 use opentrafficshaper::version;
 use opentrafficshaper::logger;
-use Radius::Dictionary;
-use Radius::Packet;
 
 
 # Main config
@@ -213,21 +211,6 @@ sub init
 	$globals->{'users'} = { };
 	$globals->{'logger'} = $logger;
 	$globals->{'version'} = VERSION;
-
-	# Load dictionaries
-	$logger->log(LOG_INFO,"[MAIN] Initializing dictionaries...");
-	my $dict = new Radius::Dictionary;
-	foreach my $df (@{$globals->{'config'}->{'dictionary_list'}}) {
-		# Load dictionary
-		if (!$dict->readfile($df)) {
-			$logger->log(LOG_WARN,"[MAIN] Failed to load dictionary '$df': $!");
-		}
-		$logger->log(LOG_DEBUG,"[MAIN] Loaded dictionary '$df'.");
-	}
-	$logger->log(LOG_INFO,"[MAIN] Dictionaries initialized.");
-	# Store the dictionary
-	$globals->{'radius'}->{'dictionary'} = $dict;
-
 
 	# Core configuration manager
 	$logger->log(LOG_INFO,"[MAIN] Initializing config manager...");

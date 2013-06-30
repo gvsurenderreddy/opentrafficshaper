@@ -1,4 +1,4 @@
-package Radius::Dictionary;
+package opentrafficshaper::plugins::radius::Radius::Dictionary;
 
 use strict;
 use warnings;

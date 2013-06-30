@@ -22,6 +22,9 @@ use strict;
 use warnings;
 
 
+use opentrafficshaper::plugins::radius::Radius::Dictionary;
+use opentrafficshaper::plugins::radius::Radius::Packet;
+
 use POE;
 use IO::Socket::INET;
 
@@ -75,7 +78,21 @@ sub init
 		}
 	);
 
-	$logger->log(LOG_NOTICE,"[RADIUS] OpenTrafficShaper Radius Module v".VERSION." - Copyright (c) 2013, AllWorldIT")
+	$logger->log(LOG_NOTICE,"[RADIUS] OpenTrafficShaper Radius Module v".VERSION." - Copyright (c) 2013, AllWorldIT");
+
+	# Load dictionaries
+	$logger->log(LOG_INFO,"[RADIUS] Loading dictionaries...");
+	my $dict = new opentrafficshaper::plugins::radius::Radius::Dictionary;
+	foreach my $df (@{$globals->{'config'}->{'dictionary_list'}}) {
+		# Load dictionary
+		if (!$dict->readfile($df)) {
+			$logger->log(LOG_WARN,"[RADIUS] Failed to load dictionary '$df': $!");
+		}
+		$logger->log(LOG_DEBUG,"[RADIUS] Loaded dictionary '$df'.");
+	}
+	$logger->log(LOG_INFO,"[RADIUS] Loading dictionaries completed.");
+	# Store the dictionary
+	$globals->{'plugin.radius'}->{'dictionary'} = $dict;
 }
 
 
@@ -111,7 +128,7 @@ sub server_read {
 	my $peer_addr_h = inet_ntoa($peer_addr);
 
 	# Parse packet
-	my $pkt = new Radius::Packet($globals->{'radius'}->{'dictionary'},$udp_packet);
+	my $pkt = new Radius::Packet($globals->{'plugin.radius'}->{'dictionary'},$udp_packet);
 
 	# Build log line
 	my $logLine = sprintf("Remote: $peer_addr_h, Code: %s, Identifier: %s => ",$pkt->code,$pkt->identifier);
@@ -186,12 +203,12 @@ sub server_read {
 	my $user = {
 		'Username' => $username,
 		'IP' => $pkt->attr('Framed-IP-Address'),
-		'Group' => $trafficGroup,
-		'GroupName' => "Group 1",
-		'Class' => $trafficClass,
-		'ClassName' => "Class A",
-		'Limits' => "$trafficLimitTx / $trafficLimitRx",
-		'BurstLimits' => "$trafficLimitTxBurst / $trafficLimitRxBurst",
+		'GroupID' => $trafficGroup,
+		'ClassID' => $trafficClass,
+		'TrafficLimitTx' => $trafficLimitTx,
+		'TrafficLimitRx' => $trafficLimitRx,
+		'TrafficLimitTxBurst' => $trafficLimitTxBurst,
+		'TrafficLimitRxBurst' => $trafficLimitRxBurst,
 		'Status' => getStatus($pkt->rawattr('Acct-Status-Type')),
 	};
 
