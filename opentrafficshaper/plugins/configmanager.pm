@@ -57,11 +57,21 @@ our $pluginInfo = {
 my $globals;
 my $logger;
 
+# Config
+my $config;
+my $groups = {
+	1 => 'Default'
+};
+my $classes = {
+	1 => 'Default'
+};
+
 # Pending changes
 my $changeQueue = { };
 # UserID counter
 my $userIDMap = {};
 my $userIDCounter = 1;
+
 
 
 # Initialize plugin
@@ -83,7 +93,54 @@ sub init
 		}
 	);
 
-	$logger->log(LOG_NOTICE,"[CONFIGMANAGER] OpenTrafficShaper Config Manager v".VERSION." - Copyright (c) 2013, AllWorldIT")
+	$logger->log(LOG_NOTICE,"[CONFIGMANAGER] OpenTrafficShaper Config Manager v".VERSION." - Copyright (c) 2013, AllWorldIT");
+
+	# Split off groups to load
+	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Loading traffic groups...");
+	# Check if we loaded an array or just text
+	my @groups = ref($globals->{'file.config'}->{'shaping'}->{'group'}) eq "ARRAY" ? @{$globals->{'file.config'}->{'shaping'}->{'group'}} : ( $globals->{'file.config'}->{'shaping'}->{'group'} );
+	# Loop with groups
+	foreach my $group (@groups) {
+ 		# Skip comments
+ 		next if ($group =~ /^\s*#/);
+		# Split off group ID and group name
+		my ($groupID,$groupName) = split(/:/,$group);
+		if (!defined($groupID) || int($groupID) < 1) {
+			$logger->log(LOG_WARN,"[CONFIGMANAGER] Failed to load traffic group definition '$group': ID is invalid");
+			next;
+		}
+		if (!defined($groupName) || $groupName eq "") {
+			$logger->log(LOG_WARN,"[CONFIGMANAGER] Failed to load traffic group definition '$group': Name is invalid");
+			next;
+		}
+		$groups->{$groupID} = $groupName;
+		$logger->log(LOG_INFO,"[CONFIGMANAGER] Loaded traffic group '$groupName' with ID $groupID.");
+	}
+	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Loading traffic groups completed.");
+
+	# Split off traffic classes
+	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Loading traffic classes...");
+	# Check if we loaded an array or just text
+	my @classes = ref($globals->{'file.config'}->{'shaping'}->{'class'}) eq "ARRAY" ? @{$globals->{'file.config'}->{'shaping'}->{'class'}} : ( $globals->{'file.config'}->{'shaping'}->{'class'} );
+	# Loop with classes
+	foreach my $class (@classes) {
+ 		# Skip comments
+ 		next if ($class =~ /^\s*#/);
+		# Split off class ID and class name
+		my ($classID,$className) = split(/:/,$class);
+		if (!defined($classID) || int($classID) < 1) {
+			$logger->log(LOG_WARN,"[CONFIGMANAGER] Failed to load traffic class definition '$class': ID is invalid");
+			next;
+		}
+		if (!defined($className) || $className eq "") {
+			$logger->log(LOG_WARN,"[CONFIGMANAGER] Failed to load traffic class definition '$class': Name is invalid");
+			next;
+		}
+		$classes->{$classID} = $className;
+		$logger->log(LOG_INFO,"[CONFIGMANAGER] Loaded traffic class '$className' with ID $classID.");
+	}
+	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Loading traffic classes completed.");
+
 }
 
 
@@ -130,6 +187,8 @@ sub session_tick {
 				# This is now live
 				$users->{$uid} = $cuser;
 				$users->{$uid}->{'shaper.live'} = SHAPER_PENDING;
+				# Clean things up a bit
+
 				# Post to shaper
 				$kernel->post("shaper" => "add" => $uid);
 
@@ -201,7 +260,31 @@ sub session_tick {
 };
 
 
-# Read event for server
+# Process shaper change
+# Supoprted user attributes:
+#
+# Username
+#  - Users username
+# IP
+#  - Users IP
+# GroupID
+#  - Group ID
+# ClassID
+#  - Class ID
+# TrafficLimitTx
+#  - Traffic limit in kbps
+# TrafficLimitRx
+#  - Traffic limit in kbps
+# TrafficLimitTxBurst
+#  - Traffic bursting limit in kbps
+# TrafficLimitRxBurst
+#  - Traffic bursting limit in kbps
+# Status
+# - new
+# - offline
+# - online
+# - unknown
+
 sub process_change {
 	my ($kernel, $user) = @_[KERNEL, ARG0];
 
@@ -216,15 +299,63 @@ sub process_change {
 		$userIDMap->{$userUniq} = $uid = ++$userIDCounter;
 	}
 
+	# We start off blank so we only pull in whats supported
+	my $userChange;
+	if (!($userChange->{'Username'} = $user->{'Username'})) {
+		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process user change as username is invalid.");
+	}
+	$userChange->{'Username'} = $user->{'Username'};
+	$userChange->{'IP'} = $user->{'IP'};
+	# Check group is OK
+	if (!($userChange->{'GroupID'} = checkGroupID($user->{'GroupID'}))) {
+		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process user change for '".$user->{'Username'}."' as the GroupID is invalid.");
+	}
+	# Check class is OK
+	if (!($userChange->{'ClassID'} = checkClassID($user->{'ClassID'}))) {
+		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process user change for '".$user->{'Username'}."' as the ClassID is invalid.");
+	}
+	$userChange->{'TrafficLimitTx'} = $user->{'TrafficLimitTx'};
+	$userChange->{'TrafficLimitRx'} = $user->{'TrafficLimitRx'};
+	# Take base limits if we don't have any burst values set
+	$userChange->{'TrafficLimitTxBurst'} = defined($user->{'TrafficLimitTxBurst'}) ? $user->{'TrafficLimitTxBurst'} : $user->{'TrafficLimitTx'};
+	$userChange->{'TrafficLimitRxBurst'} = defined($user->{'TrafficLimitRxBurst'}) ? $user->{'TrafficLimitRxBurst'} : $user->{'TrafficLimitRx'};
+	# Check status is OK
+	if (!($userChange->{'Status'} = checkStatus($user->{'Status'}))) {
+		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process user change for '".$user->{'Username'}."' as the Status is invalid.");
+	}
+
 	# Set the user ID before we post to the change queue
-	$user->{'ID'} = $uid;
-	$user->{'LastUpdate'} = time();
+	$userChange->{'ID'} = $uid;
+	$userChange->{'LastUpdate'} = time();
+
 
 	# Push change to change queue
-	$changeQueue->{$uid} = $user;
+	$changeQueue->{$uid} = $userChange;
 }
 
 
+# Function to check the group ID exists
+sub checkGroupID
+{
+	my $gid = shift;
+	return $gid if (defined($groups->{$gid}));
+}
+
+# Function to check the class ID exists
+sub checkClassID
+{
+	my $cid = shift;
+	return $cid if (defined($classes->{$cid}));
+}
+
+# Function to check if the status is ok
+sub checkStatus
+{
+	my $status = shift;
+	if ($status eq "new" || $status eq "offline" || $status eq "online" || $status eq "unknown") {
+		return $status
+	}
+}
 
 1;
 # vim: ts=4
