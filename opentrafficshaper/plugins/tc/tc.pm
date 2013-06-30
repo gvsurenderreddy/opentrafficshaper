@@ -26,6 +26,7 @@ use POE qw( Wheel::Run Filter::Line );
 
 use opentrafficshaper::constants;
 use opentrafficshaper::logger;
+use opentrafficshaper::utils;
 
 
 
@@ -56,14 +57,21 @@ our $pluginInfo = {
 my $globals;
 my $logger;
 
-my $classMaps = {
-	1 => {
-		1 => "Primary Interface",
-	},
-};
-my $classID = 10;
 
+# Our own config stuff
+
+# ID of last class used
+my $classID = 10;
+# Queue of tasks to run
 my @taskQueue = ();
+# Interfaces
+my $rxiface = "eth0";
+my $rxrate = "10240kbit";
+my $txiface = "eth1";
+my $txrate = "10240kbit";
+# TC filters
+my $tcFilters;
+my $lastTcFilter = 900;
 
 
 
@@ -101,7 +109,82 @@ sub init
 		}
 	);
 
-	$logger->log(LOG_NOTICE,"[TC] OpenTrafficShaper tc Integration v".VERSION." - Copyright (c) 2013, AllWorldIT")
+	$logger->log(LOG_NOTICE,"[TC] OpenTrafficShaper tc Integration v".VERSION." - Copyright (c) 2013, AllWorldIT");
+
+
+	# Check our interfaces
+	if (defined(my $rxi = $globals->{'file.config'}->{'plugin.tc'}->{'rxiface'})) {
+		$logger->log(LOG_INFO,"[TC] Set rxiface to '$rxi'");
+		$rxiface = $rxi;
+	}
+	if (defined(my $txi = $globals->{'file.config'}->{'plugin.tc'}->{'txiface'})) {
+		$logger->log(LOG_INFO,"[TC] Set txiface to '$txi'");
+		$txiface = $txi;
+	}
+
+
+	# Initialize TX interface
+	$logger->log(LOG_INFO,"[TC] Queuing tasks to initialize '$txiface'");
+	_tc_task_add_to_queue([
+			'/sbin/tc','qdisc','del',
+				'dev',$txiface,
+				'root'
+	]);
+	_tc_task_add_to_queue([
+			'/sbin/tc','qdisc','add',
+				'dev',$txiface,
+				'root',
+				'handle','1:',
+				'htb'
+	]);
+	_tc_task_add_to_queue([
+			'/sbin/tc','class','add',
+				'dev',$txiface,
+				'parent','1:',
+				'classid','1:1',
+				'htb',
+					'rate',$txrate
+	]);
+	_tc_task_add_to_queue([
+			'/sbin/tc','filter','add',
+				'dev',$txiface,
+				'parent','1:0',
+				'prio','10',
+				'protocol','ip',
+				'u32',
+	]);
+
+	# Initialize RX interface
+	$logger->log(LOG_INFO,"[TC] Queuing tasks to initialize '$rxiface'");
+	_tc_task_add_to_queue([
+			'/sbin/tc','qdisc','del',
+				'dev',$rxiface,
+				'root'
+	]);
+	_tc_task_add_to_queue([
+			'/sbin/tc','qdisc','add',
+				'dev',$rxiface,
+				'root',
+				'handle','1:',
+				'htb'
+	]);
+	_tc_task_add_to_queue([
+			'/sbin/tc','class','add',
+				'dev',$rxiface,
+				'parent','1:',
+				'classid','1:1',
+				'htb',
+					'rate',$rxrate
+	]);
+	_tc_task_add_to_queue([
+			'/sbin/tc','filter','add',
+				'dev',$rxiface,
+				'parent','1:0',
+				'prio','10',
+				'protocol','ip',
+				'u32',
+	]);
+
 }
 
 
@@ -125,35 +208,192 @@ sub do_add {
 	my $users = $globals->{'users'};
 	my $user = $users->{$uid};
 
-	$users->{$uid}->{'shaper.live'} = SHAPER_LIVE;
+	$user->{'shaper.live'} = SHAPER_LIVE;
 	$logger->log(LOG_DEBUG," Add '$user->{'Username'}' [$uid]\n");
 
-#	tc class add dev eth0 parent 1:1  classid 1:aa  htb rate 150kbps ceil 200kbps
-#	tc filter add dev eth0 parent 1:1 protocol ip prio 1 u32 \
-#		match ip dst 10.254.254.235/32 flowid 1:aa
 
-	$classID++;
-	my $classIDHex = sprintf('%x',$classID);
+	my @components = split(/\./,$user->{'IP'});
 
-	$kernel->post("_tc" => "queue" => [
-			'/sbin/tc','class','add',
-				'dev','eth0',
-				'parent','1:1',
-				'classid',"1:$classIDHex",
-				'htb',
-					'rate','150kbps',
-					'ceil','200kbps',
-	]);
-	$kernel->post("_tc" => "queue" => [
-			'/sbin/tc','filter','add',
-				'dev','eth0',
-				'parent','1:1',
-				'protocol','ip',
-				'prio','1',
-				'u32',
-					'match','ip','dst',$user->{'IP'},
-				'flowid',"1:$classIDHex",
-	]);
+	# Filter level 2-4
+	my $ip1 = $components[0];
+	my $ip2 = $components[1];
+	my $ip3 = $components[2];
+	my $ip4 = $components[3];
+
+	# Check if we have a entry for the /8, if not we must create our 2nd level hash table and link it
+	if (!defined($tcFilters->{$ip1})) {
+		# Setup IP1's hash table
+		$tcFilters->{$ip1}->{'id'} = ++$lastTcFilter;
+		my $filterIDHex = toHex($lastTcFilter);
+
+
+		$logger->log(LOG_DEBUG,"Linking 2nd level hash table to '$filterIDHex' to $ip1.0.0/8\n");
+
+		# Create second level hash table for $ip1
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$txiface,
+					'parent','1:0',
+					'prio','10',
+					'handle',"$filterIDHex:",
+					'protocol','ip',
+					'u32',
+						'divisor','256',
+		]);
+		# Link hash table
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$txiface,
+					'parent','1:0',
+					'prio','10',
+					'protocol','ip',
+					'u32',
+						# Root hash table
+						'ht','800::',
+							'match','ip','dst',"$ip1.0.0.0/8",
+						'hashkey','mask','0x00ff0000','at',16,
+						# Link to our hash table
+						'link',"$filterIDHex:"
+		]);
+	}
+
+	# Check if we have our /16 hash entry, if not we must create the 3rd level hash table
+	if (!defined($tcFilters->{$ip1}->{$ip2})) {
+		$tcFilters->{$ip1}->{$ip2}->{'id'} = ++$lastTcFilter;
+		my $filterIDHex = toHex($lastTcFilter);
+		# Set 2nd level hash table ID
+		my $ip1HtHex = toHex($tcFilters->{$ip1}->{'id'});
+		# Hex of IP2 for hash table
+		my $ip2Hex = toHex($ip2);
+
+
+		$logger->log(LOG_DEBUG,"Linking 3rd level hash table to '$filterIDHex' to $ip1.$ip2.0.0/16\n");
+		# Create second level hash table for $fl1
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$txiface,
+					'parent','1:0',
+					'prio','10',
+					'handle',"$filterIDHex:",
+					'protocol','ip',
+					'u32',
+						'divisor','256',
+		]);
+		# Link hash table
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$txiface,
+					'parent','1:0',
+					'prio','10',
+					'protocol','ip',
+					'u32',
+						# This is the 2nd level hash table
+						'ht',"${ip1HtHex}:${ip2Hex}:",
+							'match','ip','dst',"$ip1.$ip2.0.0/16",
+						'hashkey','mask','0x0000ff00','at',16,
+						# That we're linking to our hash table
+						'link',"$filterIDHex:"
+		]);
+	}
+
+	# Check if we have our /24 hash entry, if not we must create the 4th level hash table
+	if (!defined($tcFilters->{$ip1}->{$ip2}->{$ip3})) {
+		$tcFilters->{$ip1}->{$ip2}->{$ip3}->{'id'} = ++$lastTcFilter;
+		my $filterIDHex = toHex($lastTcFilter);
+		# Set 3rd level hash table ID
+		my $ip2HtHex = toHex($tcFilters->{$ip1}->{$ip2}->{'id'});
+		# Hex of IP2 for hash table
+		my $ip3Hex = toHex($ip3);
+
+
+		$logger->log(LOG_DEBUG,"Linking 4th level hash table to '$filterIDHex' to $ip1.$ip2.$ip3.0/24\n");
+		# Create second level hash table for $fl1
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$txiface,
+					'parent','1:0',
+					'prio','10',
+					'handle',"$filterIDHex:",
+					'protocol','ip',
+					'u32',
+						'divisor','256',
+		]);
+		# Link hash table
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$txiface,
+					'parent','1:0',
+					'prio','10',
+					'protocol','ip',
+					'u32',
+						# This is the 3rd level hash table
+						'ht',"${ip2HtHex}:${ip3Hex}:",
+							'match','ip','dst',"$ip1.$ip2.$ip3.0/24",
+						'hashkey','mask','0x000000ff','at',16,
+						# That we're linking to our hash table
+						'link',"$filterIDHex:"
+		]);
+
+	}
+
+
+
+	# Only if we have limits setup process them
+	if (defined($user->{'TrafficLimitTx'}) && defined($user->{'TrafficLimitRx'})) {
+		# Build users tc class ID
+		my $classIDHex = toHex(++$classID);
+		# Set 4th level hash table ID
+		my $ip3HtHex = toHex($tcFilters->{$ip1}->{$ip2}->{$ip3}->{'id'});
+		# Hex of IP2 for hash table
+		my $ip4Hex = toHex($ip4);
+
+
+		# Save user tc class ID
+		$user->{'tc.class'} = $classID;
+
+
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','class','add',
+					'dev',$txiface,
+					'parent','1:1',
+					'classid',"1:$classIDHex",
+					'htb',
+						'rate', $user->{'TrafficLimitTx'},
+						'ceil', $user->{'TrafficLimitTxBurst'},
+		]);
+
+#		$kernel->post("_tc" => "queue" => [
+#				'/sbin/tc','class','add',
+#					'dev',$rxiface,
+#					'parent','1:1',
+#					'classid',"1:$classIDHex",
+#					'htb',
+#						'rate', $user->{'TrafficLimitRx'},
+#						'ceil', $user->{'TrafficLimitRxBurst'},
+#		]);
+
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$txiface,
+					'parent','1:0',
+					'prio','10',
+					'protocol','ip',
+					'u32',
+						'ht',"${ip3HtHex}:${ip4Hex}:",
+						'match','ip','dst',$user->{'IP'},
+					'flowid',"1:$classIDHex",
+		]);
+#		$kernel->post("_tc" => "queue" => [
+#				'/sbin/tc','filter','add',
+#					'dev',$rxiface,
+#					'parent','1:',
+#					'protocol','ip',
+#					'prio','1',
+#					'u32',
+#						'match','ip','src',$user->{'IP'},
+#					'flowid',"1:$classIDHex",
+#		]);
+	}
 }
 
 # Change event for tc
@@ -193,12 +433,15 @@ sub tc_session_init {
 	my $kernel = $_[KERNEL];
 	# Set our alias
 	$kernel->alias_set("_tc");
+
+	# Fire things up, we trigger this to process the task queue generated during init
+	$kernel->yield("tc_task_run_next");
 }
 
-# Run a task
-sub tc_task_add
+# Add task to queue
+sub _tc_task_add_to_queue
 {
-	my ($kernel,$heap,$cmd) = @_[KERNEL,HEAP,ARG0];
+	my $cmd = shift;
 
 
 	# Build commandline string
@@ -206,6 +449,17 @@ sub tc_task_add
 	# Shove task on list
 	$logger->log(LOG_DEBUG,"[TC] TASK: Queue '$cmdStr'");
 	push(@taskQueue,$cmd);
+}
+
+
+# Run a task
+sub tc_task_add
+{
+	my ($kernel,$heap,$cmd) = @_[KERNEL,HEAP,ARG0];
+
+
+	# Internal function to add command to queue
+	_tc_task_add_to_queue($cmd);
 
 	# Trigger a run if list is empty
 	if (@taskQueue < 2) {
