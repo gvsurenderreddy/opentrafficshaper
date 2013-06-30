@@ -80,17 +80,30 @@ sub init
 
 	$logger->log(LOG_NOTICE,"[RADIUS] OpenTrafficShaper Radius Module v".VERSION." - Copyright (c) 2013, AllWorldIT");
 
+	#
+	# Dictionary configuration
+	#
+	# Split off dictionaries to load
+	if (ref($globals->{'file.config'}->{'plugin.radius'}->{'dictionary'}) eq "ARRAY") {
+		foreach my $dict (@{$globals->{'file.config'}->{'plugin.radius'}->{'dictionary'}}) {
+			$dict =~ s/\s+//g;
+	 		# Skip comments
+	 		next if ($dict =~ /^#/);
+			push(@{$globals->{'plugin.radius'}->{'config'}->{'dictionaries'}},$dict);
+		}
+	}
+
 	# Load dictionaries
-	$logger->log(LOG_INFO,"[RADIUS] Loading dictionaries...");
+	$logger->log(LOG_DEBUG,"[RADIUS] Loading dictionaries...");
 	my $dict = new opentrafficshaper::plugins::radius::Radius::Dictionary;
-	foreach my $df (@{$globals->{'config'}->{'dictionary_list'}}) {
+	foreach my $df (@{$globals->{'plugin.radius'}->{'config'}->{'dictionaries'}}) {
 		# Load dictionary
 		if (!$dict->readfile($df)) {
 			$logger->log(LOG_WARN,"[RADIUS] Failed to load dictionary '$df': $!");
 		}
-		$logger->log(LOG_DEBUG,"[RADIUS] Loaded dictionary '$df'.");
+		$logger->log(LOG_INFO,"[RADIUS] Loaded dictionary '$df'.");
 	}
-	$logger->log(LOG_INFO,"[RADIUS] Loading dictionaries completed.");
+	$logger->log(LOG_DEBUG,"[RADIUS] Loading dictionaries completed.");
 	# Store the dictionary
 	$globals->{'plugin.radius'}->{'dictionary'} = $dict;
 }
