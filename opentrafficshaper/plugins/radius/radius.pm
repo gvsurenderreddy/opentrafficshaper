@@ -221,6 +221,7 @@ sub server_read {
 		$trafficLimitRx = 256*1024;
 	}
 
+	# Build user
 	my $user = {
 		'Username' => $username,
 		'IP' => $pkt->attr('Framed-IP-Address'),
@@ -231,12 +232,13 @@ sub server_read {
 		'TrafficLimitTxBurst' => $trafficLimitTxBurst,
 		'TrafficLimitRxBurst' => $trafficLimitRxBurst,
 		'Status' => getStatus($pkt->rawattr('Acct-Status-Type')),
+		'Source' => "plugin.radius",
 	};
 
 	# Throw the change at the config manager
 	$kernel->post("configmanager" => "process_change" => $user);
 
-	$logger->log(LOG_DEBUG,"=> Code: $user->{'Status'}, User: $user->{'Username'}, IP: $user->{'IP'}, Group: $user->{'GroupID'}, Class: $user->{'ClassID'}, ".
+	$logger->log(LOG_DEBUG,"[RADIUS] Code: $user->{'Status'}, User: $user->{'Username'}, IP: $user->{'IP'}, Group: $user->{'GroupID'}, Class: $user->{'ClassID'}, ".
 			"Limits: ".prettyUndef($trafficLimitTx)."/".prettyUndef($trafficLimitRx).", Burst: ".prettyUndef($trafficLimitTxBurst)."/".prettyUndef($trafficLimitRxBurst));
 }
 

@@ -284,6 +284,8 @@ sub session_tick {
 # - offline
 # - online
 # - unknown
+# Source 
+# - This is the source of the user, typically  plugin.ModuleName
 
 sub process_change {
 	my ($kernel, $user) = @_[KERNEL, ARG0];
