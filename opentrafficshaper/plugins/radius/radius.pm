@@ -29,7 +29,7 @@ use POE;
 use IO::Socket::INET;
 
 use opentrafficshaper::logger;
-
+use opentrafficshaper::utils;
 
 
 # Exporter stuff
@@ -59,6 +59,9 @@ our $pluginInfo = {
 # Copy of system globals
 my $globals;
 my $logger;
+# Our own data storage
+my $config;
+my $dictionary;
 
 
 # Initialize plugin
@@ -80,23 +83,20 @@ sub init
 
 	$logger->log(LOG_NOTICE,"[RADIUS] OpenTrafficShaper Radius Module v".VERSION." - Copyright (c) 2013, AllWorldIT");
 
-	#
-	# Dictionary configuration
-	#
 	# Split off dictionaries to load
-	if (ref($globals->{'file.config'}->{'plugin.radius'}->{'dictionary'}) eq "ARRAY") {
-		foreach my $dict (@{$globals->{'file.config'}->{'plugin.radius'}->{'dictionary'}}) {
-			$dict =~ s/\s+//g;
-	 		# Skip comments
-	 		next if ($dict =~ /^#/);
-			push(@{$globals->{'plugin.radius'}->{'config'}->{'dictionaries'}},$dict);
-		}
+	my @dicts = ref($globals->{'file.config'}->{'plugin.radius'}->{'dictionary'}) eq "ARRAY" ? 
+			@{$globals->{'file.config'}->{'plugin.radius'}->{'dictionary'}} : ( $globals->{'file.config'}->{'plugin.radius'}->{'dictionary'} );
+	foreach my $dict (@dicts) {
+		$dict =~ s/\s+//g;
+ 		# Skip comments
+ 		next if ($dict =~ /^#/);
+		push(@{$config->{'config.dictionaries'}},$dict);
 	}
 
 	# Load dictionaries
 	$logger->log(LOG_DEBUG,"[RADIUS] Loading dictionaries...");
 	my $dict = new opentrafficshaper::plugins::radius::Radius::Dictionary;
-	foreach my $df (@{$globals->{'plugin.radius'}->{'config'}->{'dictionaries'}}) {
+	foreach my $df (@{$config->{'config.dictionaries'}}) {
 		# Load dictionary
 		if (!$dict->readfile($df)) {
 			$logger->log(LOG_WARN,"[RADIUS] Failed to load dictionary '$df': $!");
@@ -105,7 +105,7 @@ sub init
 	}
 	$logger->log(LOG_DEBUG,"[RADIUS] Loading dictionaries completed.");
 	# Store the dictionary
-	$globals->{'plugin.radius'}->{'dictionary'} = $dict;
+	$dictionary = $dict;
 }
 
 
@@ -141,7 +141,7 @@ sub server_read {
 	my $peer_addr_h = inet_ntoa($peer_addr);
 
 	# Parse packet
-	my $pkt = new Radius::Packet($globals->{'plugin.radius'}->{'dictionary'},$udp_packet);
+	my $pkt = new opentrafficshaper::plugins::radius::Radius::Packet($dictionary,$udp_packet);
 
 	# Build log line
 	my $logLine = sprintf("Remote: $peer_addr_h, Code: %s, Identifier: %s => ",$pkt->code,$pkt->identifier);
@@ -191,8 +191,8 @@ sub server_read {
 	}
 
 	# Grab rate limits from the string we got
-	my $trafficLimitRx = 0; my $trafficLimitTx = 0;
-	my $trafficLimitRxBurst = 0; my $trafficLimitTxBurst = 0;
+	my $trafficLimitRx; my $trafficLimitTx;
+	my $trafficLimitRxBurst; my $trafficLimitTxBurst;
 	if (defined($trafficLimit)) {
 		my ($trafficLimitRxQuantifier,$trafficLimitTxQuantifier);
 		my ($trafficLimitRxBurstQuantifier,$trafficLimitTxBurstQuantifier);
@@ -207,10 +207,18 @@ sub server_read {
 
 	# Set default if they undefined
 	if (!defined($trafficGroup)) {
-		$trafficGroup = 0;
+		$trafficGroup = 1;
 	}
 	if (!defined($trafficClass)) {
-		$trafficClass = 0;
+		$trafficClass = 1;
+	}
+
+# NK: FIXME for testing
+	if (!defined($trafficLimitTx)) {
+		$trafficLimitTx = 1024*1024;
+	}
+	if (!defined($trafficLimitRx)) {
+		$trafficLimitRx = 256*1024;
 	}
 
 	my $user = {
@@ -228,7 +236,8 @@ sub server_read {
 	# Throw the change at the config manager
 	$kernel->post("configmanager" => "process_change" => $user);
 
-	$logger->log(LOG_DEBUG,"=> Code: $user->{'Status'}, User: $user->{'Username'}, IP: $user->{'IP'}, Group: $user->{'Group'}, Class: $user->{'Class'}, Limits: $user->{'Limits'}, Burst: $user->{'BurstLimits'}");
+	$logger->log(LOG_DEBUG,"=> Code: $user->{'Status'}, User: $user->{'Username'}, IP: $user->{'IP'}, Group: $user->{'GroupID'}, Class: $user->{'ClassID'}, ".
+			"Limits: ".prettyUndef($trafficLimitTx)."/".prettyUndef($trafficLimitRx).", Burst: ".prettyUndef($trafficLimitTxBurst)."/".prettyUndef($trafficLimitRxBurst));
 }
 
 
@@ -256,8 +265,8 @@ sub getKbit
 {
 	my ($counter,$quantifier) = @_;
 
-	# If there is no counter, return 0
-	return 0 if (!defined($counter));
+	# If there is no counter
+	return undef if (!defined($counter));
 
 	# We need a quantifier
 	return undef if (!defined($quantifier));
