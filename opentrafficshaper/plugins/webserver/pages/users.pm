@@ -30,6 +30,19 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 );
 
 
+use DateTime;
+
+# Sidebar menu options for this module
+my $menu = {
+	'Users' =>  {
+		'Show Users' => '',
+	},
+	'Admin' => {
+		'Add User' => 'add',
+	},
+};
+
+
 
 sub default
 {
@@ -45,14 +58,16 @@ sub default
 	# Header
 	$content .=<<EOF;
 <table class="table">
-	<caption>User List</caption>
+	<caption>Active User List</caption>
 	<thead>
 		<tr>
 			<th>#</th>
 			<th>User</th>
 			<th>IP</th>
-			<th>Group</th>
+			<th>Source</th>
+			<th>LastUpdate</th>
 			<th>Class</th>
+			<th>Group</th>
 			<th>Limits</th>
 		</tr>
 	</thead>
@@ -70,14 +85,20 @@ EOF
 			$style = "info";
 		}
 
+		# Get a nice last update string
+		my $lastUpdate = DateTime->from_epoch( epoch => $user->{'LastUpdate'} )->iso8601();
+		my $limits = $user->{'TrafficLimitTx'} . "/" . $user->{'TrafficLimitRx'};
+
 		$content .=<<EOF;
 		<tr class="$style">
 			<td>X</td>
 			<td>$user->{'Username'}</td>
 			<td>$user->{'IP'}</td>
-			<td>$user->{'GroupName'}</td>
-			<td>$user->{'ClassName'}</td>
-			<td>$user->{'Limits'}</td>
+			<td>$user->{'Source'}</td>
+			<td>$lastUpdate</td>
+			<td>$user->{'ClassID'}</td>
+			<td>$user->{'GroupID'}</td>
+			<td>$limits</td>
 		</tr>
 EOF
 	}
@@ -85,7 +106,7 @@ EOF
 	if (keys %{$globals->{'users'}} < 1) {
 		$content .=<<EOF;
 		<tr class="info">
-			<td colspan="6"><p class="text-center">No Results</p></td>
+			<td colspan="8"><p class="text-center">No Results</p></td>
 		</tr>
 EOF
 	}
@@ -97,7 +118,7 @@ EOF
 EOF
 
 
-	return (200,$content);
+	return (200,$content,$menu);
 }
 
 
