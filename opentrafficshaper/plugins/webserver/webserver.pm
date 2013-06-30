@@ -25,6 +25,7 @@ use HTML::Entities;
 use HTTP::Response;
 use HTTP::Status qw(:constants :is status_message);
 use POE qw(Component::Server::TCP Filter::HTTPD);
+use URI;
 
 use opentrafficshaper::logger;
 
@@ -70,6 +71,7 @@ my $pages = {
 	},
 	'users' => {
 		'default' => \&opentrafficshaper::plugins::webserver::pages::users::default,
+		'add' => \&opentrafficshaper::plugins::webserver::pages::users::add,
 	},
 };
 
@@ -114,8 +116,11 @@ sub handle_request
 		goto END;
 	}
 
+	# We need to parse the URI nicely
+	my $requestURI = URI->new($request->uri);
+
 	# Split off the URL into a module and action
-	my (undef,$dmodule,$daction,@dparams) = split(/\//,$request->uri);
+	my (undef,$dmodule,$daction,@dparams) = split(/\//,$requestURI->path);
 	# If any is blank, set it to the default
 	$dmodule = "index" if (!defined($dmodule));
 	$daction = "default" if (!defined($daction));
@@ -231,7 +236,7 @@ EOF
 #							<li><a href="#">Link</a></li>
 			# Loop with menu items
 			foreach my $item (keys %{$menu->{$section}}) {
-				my $link = $module . "/" . $menu->{$section}->{$item};
+				my $link = "/" . $module . "/" . $menu->{$section}->{$item};
 				# Sanitize slightly
 				$link =~ s,/+$,,;
 
