@@ -32,6 +32,7 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 
 use DateTime;
 
+
 # Sidebar menu options for this module
 my $menu = {
 	'Users' =>  {
@@ -44,6 +45,7 @@ my $menu = {
 
 
 
+# Default page/action
 sub default
 {
 	my ($globals,$module,$daction,$request) = @_;
@@ -58,7 +60,7 @@ sub default
 	# Header
 	$content .=<<EOF;
 <table class="table">
-	<caption>Active User List</caption>
+	<legend>User List</legend>
 	<thead>
 		<tr>
 			<th>#</th>
@@ -117,6 +119,62 @@ EOF
 </table>
 EOF
 
+
+	return (200,$content,$menu);
+}
+
+
+# Add action
+sub add
+{
+	my ($globals,$module,$daction,$request) = @_;
+
+
+	# Build content
+	my $content = "";
+
+	# Header
+	$content .=<<EOF;
+<form class="form-horizontal" method="post">
+	<legend>Add Manual User</legend>
+	<div class="control-group">
+		<label class="control-label" for="inputUsername">Username</label>
+		<div class="controls">
+			<input name="inputUsername" type="text" placeholder="Username">
+		</div>
+	</div>
+	<div class="control-group">
+		<label class="control-label" for="inputIP">IP Address</label>
+		<div class="controls">
+			<input name="inputIP" type="text" placeholder="IP Address">
+		</div>
+	</div>
+	<div class="control-group">
+		<label class="control-label" for="inputLimitTx">Download Limit</label>
+		<div class="controls">
+			<div class="input-append">
+				<input name="inputLimitTx" type="text" class="span5" id="appendedInput" placeholder="TX Limit">
+				<span class="add-on">Kbps<span>
+			</div>
+		</div>
+	</div>
+	<div class="control-group">
+		<label class="control-label" for="inputLimitRx">Upload Limit</label>
+		<div class="controls">
+			<div class="input-append">
+				<input name="inputLimitRx" type="text" class="span5" id="appendedInput" placeholder="RX Limit">
+				<span class="add-on">Kbps<span>
+			</div>
+		</div>
+	</div>
+	<div class="control-group">
+		<div class="controls">
+			<button type="submit" class="btn btn-primary">Add</button>
+			<button type="submit" class="btn">Cancel</button>
+		</div>
+	</div>
+</form>
+EOF
 
 	return (200,$content,$menu);
 }
