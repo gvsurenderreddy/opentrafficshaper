@@ -146,9 +146,11 @@ sub handle_request
 			} elsif (ref($res) eq "HTTP::Response") {
 				$response = $res;
 			# TODO: This is a bit dirty
+			# Extra in this case is the sidebar menu items
 			} elsif ($res == HTTP_OK) {
-				$response = httpCreateResponse($content);
+				$response = httpCreateResponse($module,$daction,$content,$extra);
 			# TODO - redirect?
+			# Extra in this case is the error description 
 			} else {
 				httpDisplayFault($res,$content,$extra);
 			}
@@ -204,13 +206,51 @@ EOF
 # Create a response object
 sub httpCreateResponse
 {
-	my ($msg) = @_;
+	my ($module,$daction,$content,$menu) = @_;
 
 
 	# Throw out message to client to authenticate first
 	my $headers = HTTP::Headers->new;
 	$headers->content_type("text/html");
 
+
+	# Check if we have a menu structure, if we do, display the sidebar
+	my $menuStr = "";
+	if (defined($menu)) {
+		$menuStr =<<EOF;
+			<div class="span1">
+				<div class="well sidebar-nav">
+					<ul class="nav nav-list">
+EOF
+		# Loop with sub menu sections
+		foreach my $section (keys %{$menu}) {
+#							<li class="nav-header">Sidebar</li>
+#							<li class="active"><a href="#">Link</a></li>
+#							<li><a href="#">Link</a></li>
+#							<li class="nav-header">Sidebar</li>
+#							<li><a href="#">Link</a></li>
+			# Loop with menu items
+			foreach my $item (keys %{$menu->{$section}}) {
+				my $link = $module . "/" . $menu->{$section}->{$item};
+				# Sanitize slightly
+				$link =~ s,/+$,,;
+
+				# Build sections
+				$menuStr .=<<EOF;
+						<li class="nav-header">$section</li>
+						<li><a href="$link">$item</a></li>
+EOF
+			}
+		}
+		$menuStr .=<<EOF;
+					</ul>
+				</div><!--/.well -->
+			</div><!--/span-->
+EOF
+	}
+
+
+	# Build action response
 	my $resp = HTTP::Response->new(
 			HTTP_OK,"Ok",
 			$headers,
@@ -268,24 +308,14 @@ sub httpCreateResponse
 
 		<div class="container-fluid">
 			<div class="row-fluid">
-				<div class="span1">
-					<div class="well sidebar-nav">
-						<ul class="nav nav-list">
-							<li class="nav-header">Sidebar</li>
-							<li class="active"><a href="#">Link</a></li>
-							<li><a href="#">Link</a></li>
-							<li class="nav-header">Sidebar</li>
-							<li><a href="#">Link</a></li>
-						</ul>
-					</div><!--/.well -->
-				</div><!--/span-->
+					$menuStr
 				<div class="span10">
-					$msg
+					$content
 				</div><!--/span-->
 			</div><!--/row-->
 			<hr>
 			<footer>
-				<p>v$globals->{'version'} - Copyright &copy; 2013,  <a href="http://www.allworldit.com">AllWorldIT</a></p>
+				<p class="muted">v$globals->{'version'} - Copyright &copy; 2013,  <a href="http://www.allworldit.com">AllWorldIT</a></p>
 			</footer>
 		</div><!--/.fluid-container-->
 
