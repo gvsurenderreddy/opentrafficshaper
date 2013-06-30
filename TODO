@@ -1,3 +1,5 @@
 - Syslog
 - Daemononization
 
+- If "plugin.radius" sources for user shaping has a > 24hr LastUpdate, remove them
+- Plugin to update pps and bps
