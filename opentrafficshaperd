@@ -64,15 +64,11 @@ sub parseCfgCmdLine
 	my $cfg;
 	$cfg->{'config_file'} = "/etc/opentrafficshaper.conf";
 
-	$cfg->{'timeout'} = 120;
-	$cfg->{'background'} = "yes";
-	$cfg->{'pid_file'} = "/var/run/opentrafficshaper/opentrafficshaperd.pid";
-	$cfg->{'log_level'} = 2;
-	$cfg->{'log_file'} = "/var/log/opentrafficshaper/opentrafficshaperd.log";
-
-#	$server->{'host'} = "*";
-#	$server->{'port'} = [ 1812, 1813 ];
-#	$server->{'proto'} = 'udp';
+#	$cfg->{'timeout'} = 120;
+#	$cfg->{'background'} = "yes";
+#	$cfg->{'pid_file'} = "/var/run/opentrafficshaper/opentrafficshaperd.pid";
+#	$cfg->{'log_level'} = 2;
+#	$cfg->{'log_file'} = "/var/log/opentrafficshaper/opentrafficshaperd.log";
 
 	# Parse command line params
 	my $cmdline;
@@ -109,12 +105,12 @@ sub parseCfgCmdLine
 
 	# Pull in params for the server
 	my @server_params = (
-			'log_level','log_file',
-			'host',
-			'pid_file',
-			'user', 'group',
-			'timeout',
-			'background',
+			'log_level',#'log_file',
+#			'host',
+#			'pid_file',
+#			'user', 'group',
+#			'timeout',
+#			'background',
 	);
 	foreach my $param (@server_params) {
 		$cfg->{$param} = $config{'server'}{$param} if (defined($config{'server'}{$param}));
@@ -135,12 +131,12 @@ sub parseCfgCmdLine
 	}
 
 	# Loop with logging detail
-	if (defined($config{'server'}{'log_detail'})) {
-		# Lets see what we have to enable
-		foreach my $detail (split(/[,\s;]/,$config{'server'}{'log_detail'})) {
-			$cfg->{'logging'}{$detail} = 1;
-		}
-	}
+#	if (defined($config{'server'}{'log_detail'})) {
+#		# Lets see what we have to enable
+#		foreach my $detail (split(/[,\s;]/,$config{'server'}{'log_detail'})) {
+#			$cfg->{'logging'}{$detail} = 1;
+#		}
+#	}
 
 	#
 	# System plugins
@@ -161,31 +157,12 @@ sub parseCfgCmdLine
 		}
 	}
 
-	#
-	# Dictionary configuration
-	#
-	# Split off dictionaries to load
-	if (ref($config{'dictionary'}->{'load'}) eq "ARRAY") {
-		foreach my $dict (@{$config{'dictionary'}->{'load'}}) {
-			$dict =~ s/\s+//g;
-	 		# Skip comments
-	 		next if ($dict =~ /^#/);
-			push(@{$cfg->{'dictionary_list'}},$dict);
-		}
-	} elsif (defined($config{'dictionary'}->{'load'})) {
-		my @dictList = split(/\s+/,$config{'dictionary'}->{'load'});
-		foreach my $dict (@dictList) {
-			# Skip comments
-			next if ($dict =~ /^#/);
-			push(@{$cfg->{'dictionary_list'}},$dict);
-		}
-	}
-
 	# Check if the user specified a cache_file in the config
-	if (defined($config{'server'}{'cache_file'})) {
-		$cfg->{'cache_file'} = $config{'server'}{'cache_file'};
-	}
+#	if (defined($config{'server'}{'cache_file'})) {
+#		$cfg->{'cache_file'} = $config{'server'}{'cache_file'};
+#	}
 
+	$globals->{'file.config'} = \%config;
 	$globals->{'config'} = $cfg;
 }
 
