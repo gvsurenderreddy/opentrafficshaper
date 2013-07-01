@@ -31,6 +31,11 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 
 
 use DateTime;
+use HTML::Entities;
+use HTTP::Status qw( :constants );
+
+use opentrafficshaper::utils;
+
 
 
 # Sidebar menu options for this module
@@ -48,10 +53,11 @@ my $menu = {
 # Default page/action
 sub default
 {
-	my ($globals,$module,$daction,$request) = @_;
+	my ($kernel,$globals,$module,$daction,$request) = @_;
 
 	# If we not passed default by the main app, just return
 	return if ($daction ne "default");
+
 
 
 	# Build content
@@ -120,40 +126,121 @@ EOF
 EOF
 
 
-	return (200,$content,$menu);
+	return (HTTP_OK,$content,$menu);
 }
 
 
 # Add action
 sub add
 {
-	my ($globals,$module,$daction,$request) = @_;
+	my ($kernel,$globals,$module,$daction,$request) = @_;
 
+
+	# Errors to display
+	my @errors;
+	# Form items
+	my $params = {
+		'inputUsername' => undef,
+		'inputIP' => undef,
+		'inputLimitTx' => undef,
+		'inputLimitRx' => undef,
+	};
+	
+	# If this is a form try parse it
+	if ($request->method eq "POST") {
+		# Parse form data
+		$params = parseFormContent($request->content);
+
+		# If user pressed cancel, redirect
+		if (defined($params->{'cancel'})) {
+			# Redirects to default page
+			return (HTTP_TEMPORARY_REDIRECT,'users');
+		}
+
+		# Check POST data
+		my $username;
+		if (!defined($username = isUsername($params->{'inputUsername'}))) {
+			push(@errors,"Username is not valid");
+		}
+		my $ipAddress;
+		if (!defined($ipAddress = isIP($params->{'inputIP'}))) {
+			push(@errors,"IP address is not valid");
+		}
+		my $trafficLimitTx;
+		if (!defined($trafficLimitTx = isNumber($params->{'inputLimitTx'}))) {
+			push(@errors,"Download limit is not valid");
+		}
+		my $trafficLimitRx;
+		if (!defined($trafficLimitRx = isNumber($params->{'inputLimitRx'}))) {
+			push(@errors,"Upload limit is not valid");
+		}
+
+		# If there are no errors we need to push this update
+		if (!@errors) {
+			# Build user
+			my $user = {
+				'Username' => $username,
+				'IP' => $ipAddress,
+				'GroupID' => 1,
+				'ClassID' => 1,
+				'TrafficLimitTx' => $trafficLimitTx,
+				'TrafficLimitRx' => $trafficLimitRx,
+				'TrafficLimitTxBurst' => $trafficLimitTx,
+				'TrafficLimitRxBurst' => $trafficLimitRx,
+				'Status' => "new",
+				'Source' => "plugin.webserver.users",
+			};
+
+			# Throw the change at the config manager
+			$kernel->post("configmanager" => "process_change" => $user);
+
+			print STDERR "[WEBSERVER/USERS/ADD] User: $username, IP: $ipAddress, Group: 1, Class: 2, ".
+					"Limits: ".prettyUndef($trafficLimitTx)."/".prettyUndef($trafficLimitRx).", Burst: ".prettyUndef($trafficLimitTx)."/".prettyUndef($trafficLimitRx) . "\n";
+
+			return (HTTP_TEMPORARY_REDIRECT,'users');
+		}
+	}
+
+	# Sanitize params if we need to
+	foreach my $item (keys %{$params}) {
+		$params->{$item} = defined($params->{$item}) ? encode_entities($params->{$item}) : "";	
+	}
 
 	# Build content
 	my $content = "";
 
-	# Header
+	# Form header
 	$content .=<<EOF;
 <form class="form-horizontal" method="post">
 	<legend>Add Manual User</legend>
+EOF
+
+	# Spit out errors if we have any
+	if (@errors > 0) {
+		foreach my $error (@errors) {
+			$content .= '<div class="alert alert-error">'.$error.'</div>';
+		}
+	}
+
+	# Header
+	$content .=<<EOF;
 	<div class="control-group">
 		<label class="control-label" for="inputUsername">Username</label>
 		<div class="controls">
-			<input name="inputUsername" type="text" placeholder="Username">
+			<input name="inputUsername" type="text" placeholder="Username" value="$params->{'inputUsername'}" />
 		</div>
 	</div>
 	<div class="control-group">
 		<label class="control-label" for="inputIP">IP Address</label>
 		<div class="controls">
-			<input name="inputIP" type="text" placeholder="IP Address">
+			<input name="inputIP" type="text" placeholder="IP Address" value="$params->{'inputIP'}" />
 		</div>
 	</div>
 	<div class="control-group">
 		<label class="control-label" for="inputLimitTx">Download Limit</label>
 		<div class="controls">
 			<div class="input-append">
-				<input name="inputLimitTx" type="text" class="span5" id="appendedInput" placeholder="TX Limit">
+				<input name="inputLimitTx" type="text" class="span5" placeholder="TX Limit" value="$params->{'inputLimitTx'}" />
 				<span class="add-on">Kbps<span>
 			</div>
 		</div>
@@ -162,7 +249,7 @@ sub add
 		<label class="control-label" for="inputLimitRx">Upload Limit</label>
 		<div class="controls">
 			<div class="input-append">
-				<input name="inputLimitRx" type="text" class="span5" id="appendedInput" placeholder="RX Limit">
+				<input name="inputLimitRx" type="text" class="span5" placeholder="RX Limit" value="$params->{'inputLimitRx'}" />
 				<span class="add-on">Kbps<span>
 			</div>
 		</div>
@@ -170,7 +257,7 @@ sub add
 	<div class="control-group">
 		<div class="controls">
 			<button type="submit" class="btn btn-primary">Add</button>
-			<button type="submit" class="btn">Cancel</button>
+			<button name="cancel" type="submit" class="btn">Cancel</button>
 		</div>
 	</div>
 </form>
