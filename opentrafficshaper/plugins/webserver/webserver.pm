@@ -23,8 +23,8 @@ use warnings;
 
 use HTML::Entities;
 use HTTP::Response;
-use HTTP::Status qw(:constants :is status_message);
-use POE qw(Component::Server::TCP Filter::HTTPD);
+use HTTP::Status qw( :constants :is status_message );
+use POE qw( Component::Server::TCP Filter::HTTPD );
 use URI;
 
 use opentrafficshaper::logger;
@@ -99,9 +99,10 @@ sub init
 }
 
 
+# Handle the HTTP request
 sub handle_request
 {
-	my ($kernel, $heap, $request) = @_[KERNEL, HEAP, ARG0];
+	my ($kernel,$heap,$request) = @_[KERNEL, HEAP, ARG0];
 
 
 	# We going to init these as system so we know whats a parsing issue
@@ -109,6 +110,7 @@ sub handle_request
 	my $action = "parse";
 	# This is our response
 	my $response;
+
 
 	# We may have a response from the filter indicating an error
 	if ($request->isa("HTTP::Response")) {
@@ -118,6 +120,15 @@ sub handle_request
 
 	# We need to parse the URI nicely
 	my $requestURI = URI->new($request->uri);
+
+	# Check method & encoding
+	if ($request->method eq "POST") {
+		# We currently only accept form data
+		if ($request->content_type ne "application/x-www-form-urlencoded") {
+			$response = httpDisplayFault(HTTP_FORBIDDEN,"Method Not Allowed","The requested method and content type is not allowed.");
+			goto END;
+		}
+	}
 
 	# Split off the URL into a module and action
 	my (undef,$dmodule,$daction,@dparams) = split(/\//,$requestURI->path);
@@ -129,7 +140,7 @@ sub handle_request
 	($action = $daction) =~ s/[^A-Za-z0-9]//g;	
 	# If module name is sneaky? then just block it
 	if ($module ne $dmodule) {
-		$response = httpDisplayFault(HTTP_FORBIDDEN,"Method Not Allowed","The requested resource '".encode_entities($module)."' is not allowed.");
+		$response = httpDisplayFault(HTTP_FORBIDDEN,"Method Not Allowed","The requested resource '$module' is not allowed.");
 		goto END;
 	}
 
@@ -143,34 +154,36 @@ sub handle_request
 
 		# Check if it exists first
 		if (defined($pages->{$module}->{$action})) {
-			my ($res,$content,$extra) = $pages->{$module}->{$action}->($globals,$module,$daction,$request);
+			my ($res,$content,$extra) = $pages->{$module}->{$action}->($kernel,$globals,$module,$daction,$request);
 
 			# Module return undef if they don't want to handle the request
 			if (!defined($res)) {
-				$response = httpDisplayFault(HTTP_NOT_FOUND,"Resource Not found","The requested resource '".encode_entities($daction)."' cannot be found");
+				$response = httpDisplayFault(HTTP_NOT_FOUND,"Resource Not found","The requested resource '$daction' cannot be found");
 			} elsif (ref($res) eq "HTTP::Response") {
 				$response = $res;
 			# TODO: This is a bit dirty
 			# Extra in this case is the sidebar menu items
 			} elsif ($res == HTTP_OK) {
 				$response = httpCreateResponse($module,$daction,$content,$extra);
-			# TODO - redirect?
+			# The content in a redirect is the URL
+			} elsif ($res == HTTP_TEMPORARY_REDIRECT) {
+				$response = httpRedirect("//".$request->header('host')."/" . $content);
 			# Extra in this case is the error description 
 			} else {
 				httpDisplayFault($res,$content,$extra);
 			}
 		} else {
-			$response = httpDisplayFault(HTTP_NOT_FOUND,"Method Not found","The requested method '".encode_entities($action)."' cannot be found in '".encode_entities($module)."'");
+			$response = httpDisplayFault(HTTP_NOT_FOUND,"Method Not found","The requested method '$action' cannot be found in '$module'");
 		}
 	}
 
 	if (!defined($response)) {
-		$response = httpDisplayFault(HTTP_NOT_FOUND,"Resource Not found","The requested resource '".encode_entities($module)."' cannot be found");
+		$response = httpDisplayFault(HTTP_NOT_FOUND,"Resource Not found","The requested resource '$module' cannot be found");
 	}
 
 
 END:
-	$logger->log(LOG_INFO,"[WEBSERVER] Access: ".$response->code." [$module/$action] - ".$request->method." ".$request->uri." ".$request->protocol);
+	$logger->log(LOG_INFO,"[WEBSERVER] Access: ".$response->code." [$module/$action] - ".encode_entities($request->method)." ".encode_entities($request->uri)." ".encode_entities($request->protocol));
 	$heap->{client}->put($response);
 	$kernel->yield("shutdown");
 }
@@ -206,6 +219,14 @@ EOF
 	return $resp;
 }
 
+
+# Do a redirect
+sub httpRedirect
+{
+	my $url = shift;
+
+	return HTTP::Response->new(HTTP_FOUND, 'Redirect', [Location => $url]);
+}
 
 
 # Create a response object
@@ -333,7 +354,6 @@ EOF
 EOF
 	return $resp;
 }
-
 
 
 1;
