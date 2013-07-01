@@ -7,6 +7,7 @@ Installing OpenTrafficShaper:
 
 - POE
 - Config::IniFiles
+- DateTime
 
 - Perl 5.6+
 
