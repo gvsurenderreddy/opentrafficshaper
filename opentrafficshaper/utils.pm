@@ -28,6 +28,11 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 @EXPORT = qw(
 	prettyUndef
 	toHex
+	parseFormContent
+	isVariable
+	isUsername
+	isIP
+	isNumber
 );
 @EXPORT_OK = qw(
 );
@@ -50,6 +55,124 @@ sub toHex
 	my $decimal = shift;
 	return sprintf('%x',$decimal);
 }
+
+# Parse form post data from HTTP content
+sub parseFormContent
+{
+	my $data = shift;
+	my %res;
+
+	# Split information into name/value pairs
+	my @pairs = split(/&/, $data);
+	foreach my $pair (@pairs)
+	{
+		my ($name, $value) = split(/=/, $pair);
+		$value =~ tr/+/ /;
+		$value =~ s/%(..)/pack("C", hex($1))/eg;
+		$res{$name} = $value;
+	}
+
+	return \%res;
+}
+
+
+
+
+# Check if variable is normal
+sub isVariable
+{
+	my $var = shift;
+
+
+	# A variable cannot be undef?
+	if (!defined($var)) {
+		return undef;
+	}
+
+	return (ref($var) eq "");
+}
+
+
+# Check if variable is a username
+sub isUsername
+{
+	my $var = shift;
+
+
+	# Make sure we're not a ref
+	if (!isVariable($var)) {
+		return undef;
+	}
+
+	# Lowercase it
+	$var = lc($var);
+
+	# Normal username
+	if ($var =~ /^[a-z0-9_\-\.]+$/) {
+		return $var;
+	}
+
+	# Username with domain
+	if ($var =~ /^[a-z0-9_\-\.]+\@[a-z0-9\-\.]+$/) {
+		return $var;
+	}
+
+	return undef;
+}
+
+
+# Check if variable is an IP
+sub isIP
+{
+	my $var = shift;
+
+
+	# Make sure we're not a ref
+	if (!isVariable($var)) {
+		return undef;
+	}
+
+	# Lowercase it
+	$var = lc($var);
+
+	# Normal IP
+	if ($var =~ /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/) {
+		return $var;
+	}
+
+	return undef;
+}
+
+
+# Check if variable is a number
+sub isNumber
+{
+	my $var = shift;
+
+
+	# Make sure we're not a ref
+	if (!isVariable($var)) {
+		return undef;
+	}
+
+	# Strip leading 0's
+	if ($var =~ /^0*([0-9]+)$/) {
+		my $val = int($1);
+
+		# Check we not 0 or negative
+		if ($val > 0) {
+			return $val;
+		}
+
+		# Check if we allow 0's
+		if ($val == 0) {
+			return $val;
+		}
+	}
+
+	return undef;
+}
+
 
 1;
 # vim: ts=4
