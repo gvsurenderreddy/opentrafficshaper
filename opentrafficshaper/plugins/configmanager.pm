@@ -326,6 +326,8 @@ sub process_change {
 		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process user change for '".$user->{'Username'}."' as the Status is invalid.");
 	}
 
+	$userChange->{'Source'} = $user->{'Source'};
+
 	# Set the user ID before we post to the change queue
 	$userChange->{'ID'} = $uid;
 	$userChange->{'LastUpdate'} = time();
