@@ -33,10 +33,11 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 
 sub _catchall
 {
-	my ($globals,$module,$daction,$request) = @_;
+	my ($kernel,$globals,$module,$daction,$request) = @_;
+
+
 	# If we not passed default by the main app, just return
 	return if ($daction ne "default");
-
 
 	# Build content
 	my $content = "";

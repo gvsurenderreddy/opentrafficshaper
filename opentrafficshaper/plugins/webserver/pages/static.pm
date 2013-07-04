@@ -43,7 +43,7 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 
 sub _catchall
 {
-	my ($globals,$module,$daction,$request) = @_;
+	my ($kernel,$globals,$module,$daction,$request) = @_;
 	my $logger = $globals->{'logger'};
 
 
@@ -113,7 +113,7 @@ sub _catchall
 	# Set to binary mode
 	binmode(FH);
 	# Suck in file
-	my $buffer;
+	my $buffer = "";
 	my $len;
 	do {
 		$len = read(FH,$buffer,4096,length($buffer));
