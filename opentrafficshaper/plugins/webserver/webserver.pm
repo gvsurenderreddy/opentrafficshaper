@@ -286,6 +286,7 @@ EOF
 		<title>OpenTrafficShaper - Enterprise Traffic Shaper</title>
 		<meta name="viewport" content="width=device-width, initial-scale=1.0">
 		<!-- Assets -->
+		<link href="/static/favicon.ico" rel="icon" />
 		<link href="/static/jquery-ui/css/ui-lightness/jquery-ui.min.css" rel="stylesheet" media="screen">
 		<link href="/static/bootstrap/css/bootstrap.min.css" rel="stylesheet" media="screen">
 
