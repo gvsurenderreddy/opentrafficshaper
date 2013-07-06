@@ -55,6 +55,9 @@ our $pluginInfo = {
 	Version => VERSION,
 	
 	Init => \&init,
+
+	# Signals
+	signal_SIGHUP => \&handle_SIGHUP,
 };
 
 
@@ -86,16 +89,18 @@ sub init
 	# Setup our environment
 	$logger = $globals->{'logger'};
 
+	$logger->log(LOG_NOTICE,"[WEBSERVER] OpenTrafficShaper Webserver Module v".VERSION." - Copyright (c) 2013, AllWorldIT");
+
 	# Spawn a web server on port 8088 of all interfaces.
 	POE::Component::Server::TCP->new(
 		Alias => "plugin.webserver",
 		Port => 8088,
 		ClientFilter => 'POE::Filter::HTTPD',
 		# Function to handle HTTP requests (as we passing through a filter)
-		ClientInput => \&handle_request
+		ClientInput => \&handle_request,
+		# Setup the sever
+		Started => \&session_init,
 	);
-
-	$logger->log(LOG_NOTICE,"[WEBSERVER] OpenTrafficShaper Webserver Module v".VERSION." - Copyright (c) 2013, AllWorldIT")
 }
 
 
@@ -355,6 +360,22 @@ EOF
 EOF
 	return $resp;
 }
+
+
+# Session initialization
+sub session_init
+{
+	my $kernel = $_[KERNEL];
+
+	$logger->log(LOG_INFO,"[WEBSERVER] Started");
+}
+
+# Handle SIGHUP
+sub handle_SIGHUP
+{
+	$logger->log(LOG_WARN,"[WEBSERVER] Got SIGHUP, ignoring for now");
+}
+
 
 
 1;

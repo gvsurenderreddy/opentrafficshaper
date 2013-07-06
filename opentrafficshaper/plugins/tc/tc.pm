@@ -50,6 +50,9 @@ our $pluginInfo = {
 	Version => VERSION,
 	
 	Init => \&init,
+
+	# Signals
+	signal_SIGHUP => \&handle_SIGHUP,
 };
 
 
@@ -88,31 +91,6 @@ sub init
 
 	# Setup our environment
 	$logger = $globals->{'logger'};
-
-
-	# This session is our main session, its alias is "shaper"
-	POE::Session->create(
-		inline_states => {
-			_start => \&session_init,
-			add => \&do_add,
-			change => \&do_change,
-			remove => \&do_remove,
-		}
-	);
-
-	# This is our session for communicating directly with tc, its alias is _tc
-	POE::Session->create(
-		inline_states => {
-			_start => \&tc_session_init,
-			# Public'ish
-			queue => \&tc_task_add,
-			# Internal
-			tc_child_stdout => \&tc_child_stdout,
-			tc_child_stderr => \&tc_child_stderr,
-			tc_child_close => \&tc_child_close,
-			tc_task_run_next => \&tc_task_run_next,
-		}
-	);
 
 	$logger->log(LOG_NOTICE,"[TC] OpenTrafficShaper tc Integration v".VERSION." - Copyright (c) 2013, AllWorldIT");
 
@@ -190,6 +168,30 @@ sub init
 				'u32',
 	]);
 
+
+	# This session is our main session, its alias is "shaper"
+	POE::Session->create(
+		inline_states => {
+			_start => \&session_init,
+			add => \&do_add,
+			change => \&do_change,
+			remove => \&do_remove,
+		}
+	);
+
+	# This is our session for communicating directly with tc, its alias is _tc
+	POE::Session->create(
+		inline_states => {
+			_start => \&tc_session_init,
+			# Public'ish
+			queue => \&tc_task_add,
+			# Internal
+			tc_child_stdout => \&tc_child_stdout,
+			tc_child_stderr => \&tc_child_stderr,
+			tc_child_close => \&tc_child_close,
+			tc_task_run_next => \&tc_task_run_next,
+		}
+	);
 }
 
 
@@ -201,6 +203,8 @@ sub session_init {
 
 	# Set our alias
 	$kernel->alias_set("shaper");
+
+	$logger->log(LOG_INFO,"[TC] Started");
 }
 
 
@@ -1296,6 +1300,12 @@ sub tc_sigchld
     delete($heap->{task_by_wid}{$child->ID});
 }
 
+
+# Handle SIGHUP
+sub handle_SIGHUP
+{
+	$logger->log(LOG_WARN,"[TC] Got SIGHUP, ignoring for now");
+}
 
 1;
 # vim: ts=4

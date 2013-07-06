@@ -44,9 +44,6 @@ use constant {
 	# After how long does a user get removed if he's offline
 	TIMEOUT_EXPIRE_OFFLINE => 300,
 
-	# After how long do we check users which have not been updated
-	TIMEOUT_EXPIRE_OLD => 7200,
-
 	# How often our config check ticks
 	TICK_PERIOD => 5,
 };
@@ -58,6 +55,9 @@ our $pluginInfo = {
 	Version => VERSION,
 	
 	Init => \&init,
+
+	# Signals
+	signal_SIGHUP => \&handle_SIGHUP,
 };
 
 
@@ -91,16 +91,6 @@ sub init
 
 	# Setup our environment
 	$logger = $globals->{'logger'};
-
-
-	# This is our configuration processing session
-	POE::Session->create(
-		inline_states => {
-			_start => \&session_init,
-			tick => \&session_tick,
-			process_change => \&process_change,
-		}
-	);
 
 	$logger->log(LOG_NOTICE,"[CONFIGMANAGER] OpenTrafficShaper Config Manager v".VERSION." - Copyright (c) 2013, AllWorldIT");
 
@@ -150,6 +140,14 @@ sub init
 	}
 	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Loading traffic classes completed.");
 
+	# This is our configuration processing session
+	POE::Session->create(
+		inline_states => {
+			_start => \&session_init,
+			tick => \&session_tick,
+			process_change => \&process_change,
+		}
+	);
 }
 
 
@@ -164,6 +162,8 @@ sub session_init {
 
 	# Set delay on config updates
 	$kernel->delay(tick => TICK_PERIOD);
+
+	$logger->log(LOG_INFO,"[CONFIGMANAGER] Started");
 }
 
 
@@ -323,6 +323,8 @@ sub session_tick {
 		if (defined($guser)) {
 			$guser->{'Status'} = $cuser->{'Status'};
 			$guser->{'LastUpdate'} = $cuser->{'LastUpdate'};
+			# This item is optional
+			$guser->{'Expires'} = $cuser->{'Expires'} if (defined($cuser->{'Expires'}));
 		}
 	}
 
@@ -335,9 +337,8 @@ sub session_tick {
 		my $guser = $users->{$uid};
 
 		# Check for expired users
-		if ($now - $guser->{'LastUpdate'} > TIMEOUT_EXPIRE_OLD) {
+		if ($now > $guser->{'Expires'}) {
 			# Looks like this user has expired?
-			# TODO: Check stats to make sure they 0
 			my $cuser = {
 				'Username' => 'Username',
 				'Status' => 'offline',
@@ -347,7 +348,6 @@ sub session_tick {
 			$changeQueue->{$uid} = $cuser;
 		}
 	}
-
 
 	# Reset tick
 	$kernel->delay(tick => 5);
@@ -373,13 +373,15 @@ sub session_tick {
 #  - Traffic bursting limit in kbps
 # TrafficLimitRxBurst
 #  - Traffic bursting limit in kbps
+# Expires
+#  - Unix timestamp when this entry expires, 0 if never
 # Status
-# - new
-# - offline
-# - online
-# - unknown
+#  - new
+#  - offline
+#  - online
+#  - unknown
 # Source 
-# - This is the source of the user, typically  plugin.ModuleName
+#  - This is the source of the user, typically  plugin.ModuleName
 sub process_change {
 	my ($kernel, $user) = @_[KERNEL, ARG0];
 
@@ -415,6 +417,10 @@ sub process_change {
 	# Take base limits if we don't have any burst values set
 	$userChange->{'TrafficLimitTxBurst'} = defined($user->{'TrafficLimitTxBurst'}) ? $user->{'TrafficLimitTxBurst'} : $user->{'TrafficLimitTx'};
 	$userChange->{'TrafficLimitRxBurst'} = defined($user->{'TrafficLimitRxBurst'}) ? $user->{'TrafficLimitRxBurst'} : $user->{'TrafficLimitRx'};
+
+	# Set when this entry expires
+	$userChange->{'Expires'} = defined($user->{'Expires'}) ? $user->{'Expires'} : 0;
+
 	# Check status is OK
 	if (!($userChange->{'Status'} = checkStatus($user->{'Status'}))) {
 		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process user change for '".$user->{'Username'}."' as the Status is invalid.");
@@ -473,6 +479,14 @@ sub checkStatus
 		return $status
 	}
 	return undef;
+}
+
+
+
+# Handle SIGHUP
+sub handle_SIGHUP
+{
+	$logger->log(LOG_WARN,"[CONFIGMANAGER] Got SIGHUP, ignoring for now");
 }
 
 1;

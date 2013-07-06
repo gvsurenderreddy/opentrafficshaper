@@ -44,6 +44,7 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 use constant {
 	VERSION => '0.0.1',
 	DATAGRAM_MAXLEN => 8192,
+	DEFAULT_ENTRY_EXPIRES => 86400,
 };
 
 
@@ -53,6 +54,9 @@ our $pluginInfo = {
 	Version => VERSION,
 	
 	Init => \&init,
+
+	# Signals
+	signal_SIGHUP => \&handle_SIGHUP,
 };
 
 
@@ -73,14 +77,6 @@ sub init
 	# Setup our environment
 	$logger = $globals->{'logger'};
 
-	# Radius listener
-	POE::Session->create(
-		inline_states => {
-			_start => \&server_init,
-			get_datagram => \&server_read,
-		}
-	);
-
 	$logger->log(LOG_NOTICE,"[RADIUS] OpenTrafficShaper Radius Module v".VERSION." - Copyright (c) 2013, AllWorldIT");
 
 	# Split off dictionaries to load
@@ -90,6 +86,10 @@ sub init
 		$dict =~ s/\s+//g;
  		# Skip comments
  		next if ($dict =~ /^#/);
+		# Check if we have a path, if we do use it
+		if (defined($globals->{'file.config'}->{'plugin.radius'}->{'dictionary_path'})) {
+			$dict = $globals->{'file.config'}->{'plugin.radius'}->{'dictionary_path'} . "/$dict";
+		}
 		push(@{$config->{'config.dictionaries'}},$dict);
 	}
 
@@ -106,6 +106,14 @@ sub init
 	$logger->log(LOG_DEBUG,"[RADIUS] Loading dictionaries completed.");
 	# Store the dictionary
 	$dictionary = $dict;
+
+	# Radius listener
+	POE::Session->create(
+		inline_states => {
+			_start => \&server_init,
+			get_datagram => \&server_read,
+		}
+	);
 }
 
 
@@ -124,6 +132,8 @@ sub server_init {
 
 	# Setup our reader
 	$kernel->select_read($socket, "get_datagram");
+
+	$logger->log(LOG_INFO,"[RADIUS] Started");
 }
 
 
@@ -172,8 +182,8 @@ sub server_read {
 
 	# TODO - verify packet
 
-
-
+	# Time now
+	my $now = time();
 
 	# Pull in a variables from packet
 	my $username = $pkt->rawattr("User-Name");
@@ -231,6 +241,7 @@ sub server_read {
 		'TrafficLimitRx' => $trafficLimitRx,
 		'TrafficLimitTxBurst' => $trafficLimitTxBurst,
 		'TrafficLimitRxBurst' => $trafficLimitRxBurst,
+		'Expires' => $now + defined($globals->{'file.config'}->{'plugin.radius'}->{'expire_entries'}) ? $globals->{'file.config'}->{'plugin.radius'}->{'expire_entries'} : DEFAULT_ENTRY_EXPIRES,
 		'Status' => getStatus($pkt->rawattr('Acct-Status-Type')),
 		'Source' => "plugin.radius",
 	};
@@ -285,6 +296,13 @@ sub getKbit
 	}
 
 	return $newCounter;
+}
+
+
+# Handle SIGHUP
+sub handle_SIGHUP
+{
+	$logger->log(LOG_WARN,"[RADIUS] Got SIGHUP, ignoring for now");
 }
 
 1;

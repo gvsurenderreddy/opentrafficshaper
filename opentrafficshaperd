@@ -44,7 +44,6 @@ my $logger = new opentrafficshaper::logger;
 #
 # MAIN
 #
-
 parseCfgCmdLine();
 
 # Check if we must use a log file instead
@@ -52,7 +51,6 @@ if (defined($globals->{'config'}->{'log_file'})) {
 	$logger->open($globals->{'config'}->{'log_file'});
 }
 $logger->setLevel($globals->{'config'}->{'log_level'});
-
 # Check if we need to go background
 if (defined($globals->{'config'}->{'background'})) {
 	daemonize();
@@ -62,9 +60,12 @@ displayBanner();
 
 init();
 
-$logger->log(LOG_NOTICE,"[MAIN] Starting...");
+$logger->log(LOG_NOTICE,"[MAIN] Starting events...");
+
 POE::Kernel->run();
 exit;
+
+
 
 
 # Function to display banner
@@ -190,6 +191,16 @@ sub init
 	$globals->{'logger'} = $logger;
 	$globals->{'version'} = VERSION;
 
+	# Setup master session
+	POE::Session->create(
+		inline_states => {
+			'_start' => \&main_session_start,
+			'_stop' => \&main_session_stop,
+			'main_SIGHUP' => \&main_signal_SIGHUP,
+			'main_SIGINT' => \&main_signal_SIGINT,
+		},
+	);
+
 	# Core configuration manager
 	$logger->log(LOG_INFO,"[MAIN] Initializing config manager...");
 	my $res = eval("
@@ -266,7 +277,7 @@ sub daemonize {
 			print(FH $$);
 			close(FH);
 		} else {
-			$globals->{'logger'}->log(LOG_WARN,"[CORE] Unable to write PID to '".$globals->{'config'}->{'pid_file'}."': $!");
+			$logger->log(LOG_WARN,"[CORE] Unable to write PID to '".$globals->{'config'}->{'pid_file'}."': $!");
 		}
 	}
 
@@ -275,6 +286,69 @@ sub daemonize {
 
 	open STDERR, '> /dev/null'
 			or die "Can't open stderr log: $!";
+}
+
+
+
+# Function to fire up our main session
+sub main_session_start
+{
+	my $kernel = $_[KERNEL];
+
+	$kernel->alias_set('main');
+
+	# Register signal handlers
+	$kernel->sig('HUP', 'main_SIGHUP');
+	$kernel->sig('INT', 'main_SIGINT');
+
+	$logger->log(LOG_INFO,"[MAIN] Started");
+}
+
+# Function to dispose of anything as a final stage to shutting down
+sub main_session_stop
+{
+	$logger->log(LOG_WARN,"[MAIN] Exiting");
+}
+
+# Function to handle SIGHUP
+sub main_signal_SIGHUP
+{
+	my ($kernel,$signal_name) = @_[KERNEL,ARG0];
+
+
+	$logger->log(LOG_WARN,"[MAIN] Got SIGHUP, triggering config reload");
+
+	# Loop with plugins and call the handler for SIGHUP
+	foreach my $plugin (@{$globals->{'plugins'}})
+	{
+		# Load the function up
+		my $callSIGHUP = $plugin->{'signal_SIGHUP'};
+		if (defined($callSIGHUP)) {
+			$callSIGHUP->();
+		}
+	}
+
+	$kernel->sig_handled();
+}
+
+# Function to handle SIGINT
+sub main_signal_SIGINT
+{
+	my ($kernel, $signal_name) = @_[KERNEL, ARG0];
+
+
+	$logger->log(LOG_WARN,"[MAIN] Got SIGINT, shutting down...");
+
+	# Loop with plugins and call the handler for SIGINT
+	foreach my $plugin (@{$globals->{'plugins'}})
+	{
+		# Load the function up
+		my $callSIGINT = $plugin->{'signal_SIGINT'};
+		if (defined($callSIGINT)) {
+			$callSIGINT->();
+		}
+	}
+	$kernel->signal($kernel,'handle_SIGINT');
 }
 
 
