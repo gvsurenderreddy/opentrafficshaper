@@ -60,18 +60,23 @@ my $logger;
 
 # Our own config stuff
 
-# ID of last class used
-my $classID = 10;
 # Queue of tasks to run
 my @taskQueue = ();
 # Interfaces
 my $rxiface = "eth0";
-my $rxrate = "10240kbit";
+my $rxrate = "10240mbit";
 my $txiface = "eth1";
-my $txrate = "10240kbit";
-# TC filters
-my $tcFilters;
-my $lastTcFilter = 900;
+my $txrate = "10240mbit";
+# TC classes & filters
+my $tcFilterMappings;
+my $tcClasses = {
+	'free' => [ ],
+	'track' => { },
+};
+my $tcFilters = {
+	'free' => [ ],
+	'track' => { },
+};
 
 
 
@@ -148,7 +153,7 @@ sub init
 	_tc_task_add_to_queue([
 			'/sbin/tc','filter','add',
 				'dev',$txiface,
-				'parent','1:0',
+				'parent','1:',
 				'prio','10',
 				'protocol','ip',
 				'u32',
@@ -179,7 +184,7 @@ sub init
 	_tc_task_add_to_queue([
 			'/sbin/tc','filter','add',
 				'dev',$rxiface,
-				'parent','1:0',
+				'parent','1:',
 				'prio','10',
 				'protocol','ip',
 				'u32',
@@ -208,7 +213,6 @@ sub do_add {
 	my $users = $globals->{'users'};
 	my $user = $users->{$uid};
 
-	$user->{'shaper.live'} = SHAPER_LIVE;
 	$logger->log(LOG_DEBUG," Add '$user->{'Username'}' [$uid]\n");
 
 
@@ -221,21 +225,31 @@ sub do_add {
 	my $ip4 = $components[3];
 
 	# Check if we have a entry for the /8, if not we must create our 2nd level hash table and link it
-	if (!defined($tcFilters->{$ip1})) {
+	if (!defined($tcFilterMappings->{$ip1})) {
 		# Setup IP1's hash table
-		$tcFilters->{$ip1}->{'id'} = ++$lastTcFilter;
-		my $filterIDHex = toHex($lastTcFilter);
+		my $filterID  = getTcFilter();
+		$tcFilterMappings->{$ip1}->{'id'} = $filterID;
 
 
-		$logger->log(LOG_DEBUG,"Linking 2nd level hash table to '$filterIDHex' to $ip1.0.0/8\n");
+		$logger->log(LOG_DEBUG,"Linking 2nd level hash table to '$filterID' to $ip1.0.0/8\n");
 
 		# Create second level hash table for $ip1
 		$kernel->post("_tc" => "queue" => [
 				'/sbin/tc','filter','add',
 					'dev',$txiface,
-					'parent','1:0',
+					'parent','1:',
 					'prio','10',
-					'handle',"$filterIDHex:",
+					'handle',"$filterID:",
+					'protocol','ip',
+					'u32',
+						'divisor','256',
+		]);
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$rxiface,
+					'parent','1:',
+					'prio','10',
+					'handle',"$filterID:",
 					'protocol','ip',
 					'u32',
 						'divisor','256',
@@ -244,7 +258,7 @@ sub do_add {
 		$kernel->post("_tc" => "queue" => [
 				'/sbin/tc','filter','add',
 					'dev',$txiface,
-					'parent','1:0',
+					'parent','1:',
 					'prio','10',
 					'protocol','ip',
 					'u32',
@@ -253,28 +267,52 @@ sub do_add {
 							'match','ip','dst',"$ip1.0.0.0/8",
 						'hashkey','mask','0x00ff0000','at',16,
 						# Link to our hash table
-						'link',"$filterIDHex:"
+						'link',"$filterID:"
+		]);
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$rxiface,
+					'parent','1:',
+					'prio','10',
+					'protocol','ip',
+					'u32',
+						# Root hash table
+						'ht','800::',
+							'match','ip','src',"$ip1.0.0.0/8",
+						'hashkey','mask','0x00ff0000','at',16,
+						# Link to our hash table
+						'link',"$filterID:"
 		]);
 	}
 
 	# Check if we have our /16 hash entry, if not we must create the 3rd level hash table
-	if (!defined($tcFilters->{$ip1}->{$ip2})) {
-		$tcFilters->{$ip1}->{$ip2}->{'id'} = ++$lastTcFilter;
-		my $filterIDHex = toHex($lastTcFilter);
+	if (!defined($tcFilterMappings->{$ip1}->{$ip2})) {
+		my $filterID  = getTcFilter();
 		# Set 2nd level hash table ID
-		my $ip1HtHex = toHex($tcFilters->{$ip1}->{'id'});
-		# Hex of IP2 for hash table
+		$tcFilterMappings->{$ip1}->{$ip2}->{'id'} = $filterID;
+		# Grab some hash table ID's we need
+		my $ip1HtHex = $tcFilterMappings->{$ip1}->{'id'};
 		my $ip2Hex = toHex($ip2);
 
 
-		$logger->log(LOG_DEBUG,"Linking 3rd level hash table to '$filterIDHex' to $ip1.$ip2.0.0/16\n");
+		$logger->log(LOG_DEBUG,"Linking 3rd level hash table to '$filterID' to $ip1.$ip2.0.0/16\n");
 		# Create second level hash table for $fl1
 		$kernel->post("_tc" => "queue" => [
 				'/sbin/tc','filter','add',
 					'dev',$txiface,
-					'parent','1:0',
+					'parent','1:',
 					'prio','10',
-					'handle',"$filterIDHex:",
+					'handle',"$filterID:",
+					'protocol','ip',
+					'u32',
+						'divisor','256',
+		]);
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$rxiface,
+					'parent','1:',
+					'prio','10',
+					'handle',"$filterID:",
 					'protocol','ip',
 					'u32',
 						'divisor','256',
@@ -283,7 +321,7 @@ sub do_add {
 		$kernel->post("_tc" => "queue" => [
 				'/sbin/tc','filter','add',
 					'dev',$txiface,
-					'parent','1:0',
+					'parent','1:',
 					'prio','10',
 					'protocol','ip',
 					'u32',
@@ -292,28 +330,52 @@ sub do_add {
 							'match','ip','dst',"$ip1.$ip2.0.0/16",
 						'hashkey','mask','0x0000ff00','at',16,
 						# That we're linking to our hash table
-						'link',"$filterIDHex:"
+						'link',"$filterID:"
+		]);
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$rxiface,
+					'parent','1:',
+					'prio','10',
+					'protocol','ip',
+					'u32',
+						# This is the 2nd level hash table
+						'ht',"${ip1HtHex}:${ip2Hex}:",
+							'match','ip','src',"$ip1.$ip2.0.0/16",
+						'hashkey','mask','0x0000ff00','at',16,
+						# That we're linking to our hash table
+						'link',"$filterID:"
 		]);
 	}
 
 	# Check if we have our /24 hash entry, if not we must create the 4th level hash table
-	if (!defined($tcFilters->{$ip1}->{$ip2}->{$ip3})) {
-		$tcFilters->{$ip1}->{$ip2}->{$ip3}->{'id'} = ++$lastTcFilter;
-		my $filterIDHex = toHex($lastTcFilter);
+	if (!defined($tcFilterMappings->{$ip1}->{$ip2}->{$ip3})) {
+		my $filterID  = getTcFilter();
 		# Set 3rd level hash table ID
-		my $ip2HtHex = toHex($tcFilters->{$ip1}->{$ip2}->{'id'});
-		# Hex of IP2 for hash table
+		$tcFilterMappings->{$ip1}->{$ip2}->{$ip3}->{'id'} = $filterID;
+		# Grab some hash table ID's we need
+		my $ip2HtHex = $tcFilterMappings->{$ip1}->{$ip2}->{'id'};
 		my $ip3Hex = toHex($ip3);
 
 
-		$logger->log(LOG_DEBUG,"Linking 4th level hash table to '$filterIDHex' to $ip1.$ip2.$ip3.0/24\n");
+		$logger->log(LOG_DEBUG,"Linking 4th level hash table to '$filterID' to $ip1.$ip2.$ip3.0/24\n");
 		# Create second level hash table for $fl1
 		$kernel->post("_tc" => "queue" => [
 				'/sbin/tc','filter','add',
 					'dev',$txiface,
-					'parent','1:0',
+					'parent','1:',
 					'prio','10',
-					'handle',"$filterIDHex:",
+					'handle',"$filterID:",
+					'protocol','ip',
+					'u32',
+						'divisor','256',
+		]);
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$rxiface,
+					'parent','1:',
+					'prio','10',
+					'handle',"$filterID:",
 					'protocol','ip',
 					'u32',
 						'divisor','256',
@@ -322,7 +384,7 @@ sub do_add {
 		$kernel->post("_tc" => "queue" => [
 				'/sbin/tc','filter','add',
 					'dev',$txiface,
-					'parent','1:0',
+					'parent','1:',
 					'prio','10',
 					'protocol','ip',
 					'u32',
@@ -331,7 +393,21 @@ sub do_add {
 							'match','ip','dst',"$ip1.$ip2.$ip3.0/24",
 						'hashkey','mask','0x000000ff','at',16,
 						# That we're linking to our hash table
-						'link',"$filterIDHex:"
+						'link',"$filterID:"
+		]);
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$rxiface,
+					'parent','1:',
+					'prio','10',
+					'protocol','ip',
+					'u32',
+						# This is the 3rd level hash table
+						'ht',"${ip2HtHex}:${ip3Hex}:",
+							'match','ip','src',"$ip1.$ip2.$ip3.0/24",
+						'hashkey','mask','0x000000ff','at',16,
+						# That we're linking to our hash table
+						'link',"$filterID:"
 		]);
 
 	}
@@ -341,71 +417,627 @@ sub do_add {
 	# Only if we have limits setup process them
 	if (defined($user->{'TrafficLimitTx'}) && defined($user->{'TrafficLimitRx'})) {
 		# Build users tc class ID
-		my $classIDHex = toHex(++$classID);
-		# Set 4th level hash table ID
-		my $ip3HtHex = toHex($tcFilters->{$ip1}->{$ip2}->{$ip3}->{'id'});
-		# Hex of IP2 for hash table
+		my $classID  = getTcClass();
+		# Grab some hash table ID's we need
+		my $ip3HtHex = $tcFilterMappings->{$ip1}->{$ip2}->{$ip3}->{'id'};
 		my $ip4Hex = toHex($ip4);
-
+		# Generate our filter handle
+		my $filterHandle = "${ip3HtHex}:${ip4Hex}:1";
 
 		# Save user tc class ID
 		$user->{'tc.class'} = $classID;
+		$user->{'tc.filter'} = "${ip3HtHex}:${ip4Hex}:1";
 
+		#
+		# SETUP MAIN TRAFFIC LIMITS
+		#
 
+		# Create main rate limiting classes
 		$kernel->post("_tc" => "queue" => [
 				'/sbin/tc','class','add',
 					'dev',$txiface,
 					'parent','1:1',
-					'classid',"1:$classIDHex",
+					'classid',"1:$classID",
 					'htb',
-						'rate', $user->{'TrafficLimitTx'},
-						'ceil', $user->{'TrafficLimitTxBurst'},
+						'rate', $user->{'TrafficLimitTx'} . "kbit",
+						'ceil', $user->{'TrafficLimitTxBurst'} . "kbit",
+		]);
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','class','add',
+					'dev',$rxiface,
+					'parent','1:1',
+					'classid',"1:$classID",
+					'htb',
+						'rate', $user->{'TrafficLimitRx'} . "kbit",
+						'ceil', $user->{'TrafficLimitRxBurst'} . "kbit",
 		]);
 
-#		$kernel->post("_tc" => "queue" => [
-#				'/sbin/tc','class','add',
-#					'dev',$rxiface,
-#					'parent','1:1',
-#					'classid',"1:$classIDHex",
-#					'htb',
-#						'rate', $user->{'TrafficLimitRx'},
-#						'ceil', $user->{'TrafficLimitRxBurst'},
-#		]);
+		#
+		# DEFINE 3 PRIO BANDS
+		#
 
+		# We then prioritize traffic into 3 bands based on TOS
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','qdisc','add',
+					'dev',$txiface,
+					'parent',"1:$classID",
+					'handle',"$classID:",
+					'prio',
+						'bands','3',
+						'priomap','2','2','2','2','2','2','2','2','2','2','2','2','2','2','2','2',
+		]);
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','qdisc','add',
+					'dev',$rxiface,
+					'parent',"1:$classID",
+					'handle',"$classID:",
+					'prio',
+						'bands','3',
+						'priomap','2','2','2','2','2','2','2','2','2','2','2','2','2','2','2','2',
+		]);
+
+
+		#
+		# SETUP DEFAULT CLASSIFICATION OF TRAFFIC
+		#
+
+		# Default traffic classification to main class
 		$kernel->post("_tc" => "queue" => [
 				'/sbin/tc','filter','add',
 					'dev',$txiface,
-					'parent','1:0',
+					'parent','1:',
 					'prio','10',
+					'handle',$filterHandle,
 					'protocol','ip',
 					'u32',
 						'ht',"${ip3HtHex}:${ip4Hex}:",
 						'match','ip','dst',$user->{'IP'},
-					'flowid',"1:$classIDHex",
+					'flowid',"1:$classID",
 		]);
-#		$kernel->post("_tc" => "queue" => [
-#				'/sbin/tc','filter','add',
-#					'dev',$rxiface,
-#					'parent','1:',
-#					'protocol','ip',
-#					'prio','1',
-#					'u32',
-#						'match','ip','src',$user->{'IP'},
-#					'flowid',"1:$classIDHex",
-#		]);
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$rxiface,
+					'parent','1:',
+					'prio','10',
+					'handle',$filterHandle,
+					'protocol','ip',
+					'u32',
+						'ht',"${ip3HtHex}:${ip4Hex}:",
+						'match','ip','src',$user->{'IP'},
+					'flowid',"1:$classID",
+		]);
+
+
+		#
+		# CLASSIFICATIONS
+		#
+
+		# Prioritize ICMP up to a certain limit
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$txiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','protocol','1','0xff',
+					'police',
+						'rate','2kbit','burst','4k','continue',
+					'flowid',"$classID:1",
+		]);
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$rxiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','protocol','1','0xff',
+					'police',
+						'rate','2kbit','burst','4k','continue',
+					'flowid',"$classID:1",
+		]);
+		# Prioritize ACK up to a certain limit
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$txiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','protocol','0x6','0xff', # TCP
+						'match','u8','0x05','0x0f','at','0', # ??
+						'match','u8','0x10','0xff','at','33', # ACK
+						'match','u16','0x0000','0xffc0','at','2',
+					'police',
+						'rate','2kbit','burst','4k','continue',
+					'flowid',"$classID:1",
+		]);
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$rxiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','protocol','0x6','0xff', # TCP
+						'match','u8','0x05','0x0f','at','0', # ??
+						'match','u8','0x10','0xff','at','33', # ACK
+						'match','u16','0x0000','0xffc0','at','2',
+					'police',
+						'rate','2kbit','burst','4k','continue',
+					'flowid',"$classID:1",
+		]);
+		# Prioritize SYN-ACK up to a certain limit
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$txiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','protocol','0x6','0xff', # TCP
+						'match','u8','0x05','0x0f','at','0', # ??
+						'match','u8','0x12','0x12','at','33', # SYN-ACK
+						'match','u16','0x0000','0xffc0','at','2',
+					'police',
+						'rate','2kbit','burst','4k','continue',
+					'flowid',"$classID:1",
+		]);
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$rxiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','protocol','0x6','0xff', # TCP
+						'match','u8','0x05','0x0f','at','0', # ??
+						'match','u8','0x12','0x12','at','33', # SYN-ACK
+						'match','u16','0x0000','0xffc0','at','2',
+					'police',
+						'rate','2kbit','burst','4k','continue',
+					'flowid',"$classID:1",
+		]);
+		# Prioritize FIN up to a certain limit
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$txiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','protocol','0x6','0xff', # TCP
+						'match','u8','0x05','0x0f','at','0', # ??
+						'match','u8','0x01','0x01','at','33', # FIN
+						'match','u16','0x0000','0xffc0','at','2',
+					'police',
+						'rate','2kbit','burst','4k','continue',
+					'flowid',"$classID:1",
+		]);
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$rxiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','protocol','0x6','0xff', # TCP
+						'match','u8','0x05','0x0f','at','0', # ??
+						'match','u8','0x01','0x01','at','33', # FIN
+						'match','u16','0x0000','0xffc0','at','2',
+					'police',
+						'rate','2kbit','burst','4k','continue',
+					'flowid',"$classID:1",
+		]);
+		# Prioritize RST up to a certain limit
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$txiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','protocol','0x6','0xff', # TCP
+						'match','u8','0x05','0x0f','at','0', # ??
+						'match','u8','0x04','0x04','at','33', # RST
+						'match','u16','0x0000','0xffc0','at','2',
+					'police',
+						'rate','2kbit','burst','4k','continue',
+					'flowid',"$classID:1",
+		]);
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$rxiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','protocol','0x6','0xff', # TCP
+						'match','u8','0x05','0x0f','at','0', # ??
+						'match','u8','0x04','0x04','at','33', # RST
+						'match','u16','0x0000','0xffc0','at','2',
+					'police',
+						'rate','2kbit','burst','4k','continue',
+					'flowid',"$classID:1",
+		]);
+		# DNS
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$txiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','sport','53','0xffff',
+					'police',
+						'rate','2kbit','burst','4k','continue',
+					'flowid',"$classID:1",
+		]);
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$txiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','dport','53','0xffff',
+					'police',
+						'rate','2kbit','burst','4k','continue',
+					'flowid',"$classID:1",
+		]);
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$rxiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','sport','53','0xffff',
+					'police',
+						'rate','2kbit','burst','4k','continue',
+					'flowid',"$classID:1",
+		]);
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$rxiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','dport','53','0xffff',
+					'police',
+						'rate','2kbit','burst','4k','continue',
+					'flowid',"$classID:1",
+		]);
+		# VOIP
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$txiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','sport','5060','0xffff',
+					'police',
+						'rate','128kbit','burst','40k','continue',
+					'flowid',"$classID:1",
+		]);
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$txiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','dport','5060','0xffff',
+					'police',
+						'rate','128kbit','burst','40k','continue',
+					'flowid',"$classID:1",
+		]);
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$rxiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','sport','5060','0xffff',
+					'police',
+						'rate','128kbit','burst','40k','continue',
+					'flowid',"$classID:1",
+		]);
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$rxiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','dport','5060','0xffff',
+					'police',
+						'rate','128kbit','burst','40k','continue',
+					'flowid',"$classID:1",
+		]);
+		# SMTP
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$txiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','protocol','6','0xff', # TCP
+						'match','ip','sport','25','0xffff',
+					'flowid',"$classID:2",
+		]);
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$txiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','protocol','6','0xff', # TCP
+						'match','ip','dport','25','0xffff',
+					'flowid',"$classID:2",
+		]);
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$rxiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','protocol','6','0xff', # TCP
+						'match','ip','sport','25','0xffff',
+					'flowid',"$classID:2",
+		]);
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$rxiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','protocol','6','0xff', # TCP
+						'match','ip','dport','25','0xffff',
+					'flowid',"$classID:2",
+		]);
+		# POP3
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$txiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','protocol','6','0xff', # TCP
+						'match','ip','sport','110','0xffff',
+					'flowid',"$classID:2",
+		]);
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$txiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','protocol','6','0xff', # TCP
+						'match','ip','dport','110','0xffff',
+					'flowid',"$classID:2",
+		]);
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$rxiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','protocol','6','0xff', # TCP
+						'match','ip','sport','110','0xffff',
+					'flowid',"$classID:2",
+		]);
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$rxiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','protocol','6','0xff', # TCP
+						'match','ip','dport','110','0xffff',
+					'flowid',"$classID:2",
+		]);
+		# IMAP
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$txiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','protocol','6','0xff', # TCP
+						'match','ip','sport','143','0xffff',
+					'flowid',"$classID:2",
+		]);
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$txiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','protocol','6','0xff', # TCP
+						'match','ip','dport','143','0xffff',
+					'flowid',"$classID:2",
+		]);
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$rxiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','protocol','6','0xff', # TCP
+						'match','ip','sport','143','0xffff',
+					'flowid',"$classID:2",
+		]);
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$rxiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','protocol','6','0xff', # TCP
+						'match','ip','dport','143','0xffff',
+					'flowid',"$classID:2",
+		]);
+		# HTTP
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$txiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','protocol','6','0xff', # TCP
+						'match','ip','sport','80','0xffff',
+					'flowid',"$classID:2",
+		]);
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$txiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','protocol','6','0xff', # TCP
+						'match','ip','dport','80','0xffff',
+					'flowid',"$classID:2",
+		]);
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$rxiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','protocol','6','0xff', # TCP
+						'match','ip','sport','80','0xffff',
+					'flowid',"$classID:2",
+		]);
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$rxiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','protocol','6','0xff', # TCP
+						'match','ip','dport','80','0xffff',
+					'flowid',"$classID:2",
+		]);
+		# HTTPS
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$txiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','protocol','6','0xff', # TCP
+						'match','ip','sport','443','0xffff',
+					'flowid',"$classID:2",
+		]);
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$txiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','protocol','6','0xff', # TCP
+						'match','ip','dport','443','0xffff',
+					'flowid',"$classID:2",
+		]);
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$rxiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','protocol','6','0xff', # TCP
+						'match','ip','sport','443','0xffff',
+					'flowid',"$classID:2",
+		]);
+		$kernel->post("_tc" => "queue" => [
+				'/sbin/tc','filter','add',
+					'dev',$rxiface,
+					'parent',"$classID:",
+					'prio','1',
+					'protocol','ip',
+					'u32',
+						'match','ip','protocol','6','0xff', # TCP
+						'match','ip','dport','443','0xffff',
+					'flowid',"$classID:2",
+		]);
 	}
+
+	# Mark as live
+	$user->{'shaper.live'} = SHAPER_LIVE;
 }
 
 # Change event for tc
 sub do_change {
-	my ($kernel, $uid) = @_[KERNEL, ARG0];
+	my ($kernel, $uid, $changes) = @_[KERNEL, ARG0];
 
 
 	# Pull in global
 	my $users = $globals->{'users'};
 	my $user = $users->{$uid};
 
-	$logger->log(LOG_DEBUG," Change '$user->{'Username'}' [$uid]\n");
+	$logger->log(LOG_DEBUG,"Processing changes for '$user->{'Username'}' [$uid]\n");
+
+	# We going to pull in the defaults
+	my $trafficLimitTx = $user->{'TrafficLimitTx'};
+	my $trafficLimitRx = $user->{'TrafficLimitRx'};
+	my $trafficLimitTxBurst = $user->{'TrafficLimitTxBurst'};
+	my $trafficLimitRxBurst = $user->{'TrafficLimitRxBurst'};
+	# Lets see if we can override them...
+	if (defined($changes->{'TrafficLimitTx'})) {
+		$trafficLimitTx = $changes->{'TrafficLimitTx'};
+	}
+	if (defined($changes->{'TrafficLimitRx'})) {
+		$trafficLimitRx = $changes->{'TrafficLimitRx'};
+	}
+	if (defined($changes->{'TrafficLimitTxBurst'})) {
+		$trafficLimitTxBurst = $changes->{'TrafficLimitTxBurst'};
+	}
+	if (defined($changes->{'TrafficLimitRxBurst'})) {
+		$trafficLimitRxBurst = $changes->{'TrafficLimitRxBurst'};
+	}
+
+	$kernel->post("_tc" => "queue" => [
+		'/sbin/tc','class','change',
+			'dev',$txiface,
+			'parent','1:1',
+			'classid',"1:$user->{'tc.class'}",
+			'htb',
+				'rate', $trafficLimitTx . "kbit",
+				'ceil', $trafficLimitTxBurst . "kbit",
+	]);
+	$kernel->post("_tc" => "queue" => [
+		'/sbin/tc','class','change',
+			'dev',$rxiface,
+			'parent','1:1',
+			'classid',"1:$user->{'tc.class'}",
+			'htb',
+				'rate', $trafficLimitRx . "kbit",
+				'ceil', $trafficLimitRxBurst . "kbit",
+	]);
 }
 
 # Remove event for tc
@@ -417,8 +1049,111 @@ sub do_remove {
 	my $users = $globals->{'users'};
 	my $user = $users->{$uid};
 
-	$users->{$uid}->{'shaper.live'} = SHAPER_NOTLIVE;
 	$logger->log(LOG_DEBUG," Remove '$user->{'Username'}' [$uid]\n");
+
+	# Grab ClassID
+	my $classID = $user->{'tc.class'};
+	my $filterHandle = $user->{'tc.filter'};
+
+	# Clear up the filter
+	$kernel->post("_tc" => "queue" => [
+			'/sbin/tc','filter','del',
+				'dev',$txiface,
+				'parent','1:',
+				'prio','10',
+				'handle',$filterHandle,
+				'protocol','ip',
+				'u32',
+	]);
+	$kernel->post("_tc" => "queue" => [
+			'/sbin/tc','filter','del',
+				'dev',$rxiface,
+				'parent','1:',
+				'prio','10',
+				'handle',$filterHandle,
+				'protocol','ip',
+				'u32',
+	]);
+	# Clear up the class
+	$kernel->post("_tc" => "queue" => [
+			'/sbin/tc','class','del',
+				'dev',$txiface,
+				'parent','1:1',
+				'classid',"1:$classID",
+	]);
+	$kernel->post("_tc" => "queue" => [
+			'/sbin/tc','class','del',
+				'dev',$rxiface,
+				'parent','1:1',
+				'classid',"1:$classID",
+	]);
+
+	# And recycle the class
+	disposeTcClass($classID);
+
+	# Mark as not live
+	$users->{$uid}->{'shaper.live'} = SHAPER_NOTLIVE;
+}
+
+
+# Function to get next available TC filter 
+sub getTcFilter
+{
+	my $id = pop(@{$tcFilters->{'free'}});
+
+	# Generate new number
+	if (!$id) {
+		$id = keys %{$tcFilters->{'track'}};
+		# Bump ID up by 10
+		$id += 100;
+		# We cannot use ID 800, its internal
+		$id = 801 if ($id == 800);
+		# Hex it
+		$id = toHex($id);
+	}
+
+	$tcFilters->{'track'}->{$id} = 1;
+
+	return $id;
+}
+# Function to dispose of a TC Filter
+sub disposeTcFilter
+{
+	my $id = shift;
+
+	# Push onto free list
+	push(@{$tcFilters->{'free'}},$id);
+	# Blank the value
+	$tcFilters->{'track'}->{$id} = undef;
+}
+
+
+# Function to get next available TC class 
+sub getTcClass
+{
+	my $id = pop(@{$tcClasses->{'free'}});
+
+	# Generate new number
+	if (!$id) {
+		$id = keys %{$tcClasses->{'track'}};
+		$id += 100;
+		# Hex it
+		$id = toHex($id);
+	}
+
+	$tcClasses->{'track'}->{$id} = 1;
+
+	return $id;
+}
+# Function to dispose of a TC class
+sub disposeTcClass
+{
+	my $id = shift;
+
+	# Push onto free list
+	push(@{$tcClasses->{'free'}},$id);
+	# Blank the value
+	$tcClasses->{'track'}->{$id} = undef;
 }
 
 
