@@ -45,14 +45,17 @@ use constant {
 };
 
 
+use IO::Handle;
 use POSIX qw( strftime );
-
 
 
 # Instantiate
 sub new {
 	my ($class) = @_;
-	my $self = {  };
+	my $self = {
+		'handle' => \*STDERR,
+		'level' => 2,
+	};
 	bless $self, $class;
 	return $self;
 }
@@ -87,8 +90,37 @@ sub log
 	if (@args > 0) {
 		$msg = sprintf($msg,@args);
 	}
-#	$self->SUPER::log($level,"[".$self->log_time." - $$] $msg");
-	print(STDERR "[".strftime('%F %T',localtime)." - $$] $msg\n");
+	# Check if we need to log this
+	if ($level <= $self->{'level'}) {
+		local *FH = $self->{'handle'};
+		print(FH "[".strftime('%F %T',localtime)." - $$] $msg\n");
+	}
+}
+
+# Set log file & open it
+sub open
+{
+	my ($self, $file) = @_;
+
+
+	# Try open logfile
+	my $fh;
+	open($fh,">>",$file)
+		or die("Failed to open log file '$file': $!");
+	# Make sure its flushed
+	$fh->autoflush();
+	# And set it
+	$self->{'handle'} = $fh;
+}
+
+# Set log level
+sub setLevel
+{
+	my ($self, $level) = @_;
+
+
+	# And set it
+	$self->{'level'} = $level;
 }
 
 1;

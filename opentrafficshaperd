@@ -44,8 +44,22 @@ my $logger = new opentrafficshaper::logger;
 #
 # MAIN
 #
-$logger->log(LOG_NOTICE,"[MAIN] OpenTrafficShaper v".VERSION." - Copyright (c) 2007-2013, AllWorldIT");
+
 parseCfgCmdLine();
+
+# Check if we must use a log file instead
+if (defined($globals->{'config'}->{'log_file'})) {
+	$logger->open($globals->{'config'}->{'log_file'});
+}
+$logger->setLevel($globals->{'config'}->{'log_level'});
+
+# Check if we need to go background
+if (defined($globals->{'config'}->{'background'})) {
+	daemonize();
+}
+
+displayBanner();
+
 init();
 
 $logger->log(LOG_NOTICE,"[MAIN] Starting...");
@@ -53,7 +67,11 @@ POE::Kernel->run();
 exit;
 
 
-
+# Function to display banner
+sub displayBanner
+{
+	$logger->log(LOG_NOTICE,"[MAIN] OpenTrafficShaper v".VERSION." - Copyright (c) 2007-2013, AllWorldIT");
+}
 
 
 # Function to parse our config and commandline
@@ -64,11 +82,10 @@ sub parseCfgCmdLine
 	my $cfg;
 	$cfg->{'config_file'} = "/etc/opentrafficshaper.conf";
 
-#	$cfg->{'timeout'} = 120;
-#	$cfg->{'background'} = "yes";
-#	$cfg->{'pid_file'} = "/var/run/opentrafficshaper/opentrafficshaperd.pid";
-#	$cfg->{'log_level'} = 2;
-#	$cfg->{'log_file'} = "/var/log/opentrafficshaper/opentrafficshaperd.log";
+	$cfg->{'background'} = "yes";
+	$cfg->{'pid_file'} = "/var/run/opentrafficshaper/opentrafficshaperd.pid";
+	$cfg->{'log_level'} = 2;
+	$cfg->{'log_file'} = "/var/log/opentrafficshaper/opentrafficshaperd.log";
 
 	# Parse command line params
 	my $cmdline;
@@ -105,15 +122,12 @@ sub parseCfgCmdLine
 
 	# Pull in params for the server
 	my @server_params = (
-			'log_level',#'log_file',
-#			'host',
-#			'pid_file',
-#			'user', 'group',
-#			'timeout',
-#			'background',
+			'log_level','log_file',
+			'pid_file',
+			'background',
 	);
 	foreach my $param (@server_params) {
-		$cfg->{$param} = $config{'server'}{$param} if (defined($config{'server'}{$param}));
+		$cfg->{$param} = $config{'system'}{$param} if (defined($config{'system'}{$param}));
 	}
 
 	# Override
@@ -123,20 +137,11 @@ sub parseCfgCmdLine
 	}
 
 	# If we set on commandline for foreground, keep in foreground
-	if ($cmdline->{'fg'} || (defined($config{'server'}{'background'}) && $config{'server'}{'background'} eq "no" )) {
+	if ($cmdline->{'fg'} || (defined($config{'system'}{'background'}) && $config{'system'}{'background'} eq "no" )) {
 		$cfg->{'background'} = undef;
 		$cfg->{'log_file'} = undef;
-	} else {
-		$cfg->{'setsid'} = 1;
+		$cfg->{'pid_file'} = undef;
 	}
-
-	# Loop with logging detail
-#	if (defined($config{'server'}{'log_detail'})) {
-#		# Lets see what we have to enable
-#		foreach my $detail (split(/[,\s;]/,$config{'server'}{'log_detail'})) {
-#			$cfg->{'logging'}{$detail} = 1;
-#		}
-#	}
 
 	#
 	# System plugins
@@ -157,11 +162,6 @@ sub parseCfgCmdLine
 		}
 	}
 
-	# Check if the user specified a cache_file in the config
-#	if (defined($config{'server'}{'cache_file'})) {
-#		$cfg->{'cache_file'} = $config{'server'}{'cache_file'};
-#	}
-
 	$globals->{'file.config'} = \%config;
 	$globals->{'config'} = $cfg;
 }
@@ -169,13 +169,14 @@ sub parseCfgCmdLine
 
 # Display help
 sub displayHelp {
+	displayBanner();
 
 	print(STDERR<<EOF);
 
 Usage: $0 [args]
-	--config=<file>		Configuration file
-	--debug				Put into debug mode
-	--fg				   Don't go into background
+    --config=<file>        Configuration file
+    --debug                Put into debug mode
+    --fg                   Don't go into background
 
 EOF
 }
@@ -242,7 +243,7 @@ sub plugin_register {
 	return 0;
 }
 
-# NK: Needs work
+
 # Become daemon
 sub daemonize {
 	chdir '/'
@@ -251,7 +252,7 @@ sub daemonize {
 	open STDIN, '/dev/null'
 			or die "Can't read /dev/null: $!";
 
-	open STDOUT, '> /var/log/ppp-gatekeeper/stdout.log'
+	open STDOUT, '> /dev/null'
 			or die "Can't open stdout log: $!";
 
 	defined(my $pid = fork) 
@@ -259,10 +260,20 @@ sub daemonize {
 
 	exit if $pid;
 
+	# Write out our PID if we have a file to do it
+	if (defined($globals->{'config'}->{'pid_file'})) {
+		if (open(FH,"> ".$globals->{'config'}->{'pid_file'})) {
+			print(FH $$);
+			close(FH);
+		} else {
+			$globals->{'logger'}->log(LOG_WARN,"[CORE] Unable to write PID to '".$globals->{'config'}->{'pid_file'}."': $!");
+		}
+	}
+
 	setsid
 			or die "Can't start a new session: $!";
 
-	open STDERR, '> /var/log/ppp-gatekeeper/stderr.log'
+	open STDERR, '> /dev/null'
 			or die "Can't open stderr log: $!";
 }
 
