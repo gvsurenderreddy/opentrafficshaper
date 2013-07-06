@@ -2,4 +2,9 @@
 - Daemononization
 
 - If "plugin.radius" sources for user shaping has a > 24hr LastUpdate, remove them
+
 - Plugin to update pps and bps
+  - maybe also the 3 prio bands?
+
+- When loading individual user filters of diff traffic types, make a list of what we added so we can display in web interface
+
