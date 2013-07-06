@@ -40,7 +40,8 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 
 use constant {
 	VERSION => '0.0.1',
-	TIMEOUT_EXPIRE_OFFLINE => 60,
+	TIMEOUT_EXPIRE_OFFLINE => 300,
+	TICK_PERIOD => 5,
 };
 
 
@@ -69,6 +70,7 @@ my $classes = {
 # Pending changes
 my $changeQueue = { };
 # UserID counter
+my $userIPMap = {};
 my $userIDMap = {};
 my $userIDCounter = 1;
 
@@ -154,7 +156,7 @@ sub session_init {
 	$kernel->alias_set("configmanager");
 
 	# Set delay on config updates
-	$kernel->delay(tick => 5);
+	$kernel->delay(tick => TICK_PERIOD);
 }
 
 
@@ -178,33 +180,18 @@ sub session_tick {
 		my $cuser = $changeQueue->{$uid};
 
 
-		# NO USER IN LIST
-		if (!defined($guser)) {
-
-			# NO USER IN LIST => CHANGE IS NEW or ONLINE
-		   if (($cuser->{'Status'} eq "new" || $cuser->{'Status'} eq "online")) {
-				$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Processing new user '$cuser->{'Username'}' [$uid]");
-				# This is now live
-				$users->{$uid} = $cuser;
-				$users->{$uid}->{'shaper.live'} = SHAPER_PENDING;
-				# Clean things up a bit
-
-				# Post to shaper
-				$kernel->post("shaper" => "add" => $uid);
-
-			# NO USER IN LIST => CHANGE IS OFFLINE OR UNKNOWN
-			} else {
-				$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Ignoring user '$cuser->{'Username'}' [$uid] state '$cuser->{'Status'}', user was not online");
-			}
-	
-			# Remove from change queue
-			delete($changeQueue->{$uid});
-
 		# USER IN LIST
-		} else {
+		if (defined($guser)) {
+
 			# USER IN LIST => CHANGE IS NEW
 			if ($cuser->{'Status'} eq "new") {
 				$logger->log(LOG_DEBUG,"[CONFIGMANAGER] User '$cuser->{'Username'}' [$uid], user live but new connection?");
+
+				# Get the changes we made and push them to the shaper
+				if (my $changes = processChanges($guser,$cuser)) {
+					# Post to shaper
+					$kernel->post("shaper" => "change" => $uid => $changes);
+				}
 
 				# Remove from change queue
 				delete($changeQueue->{$uid});
@@ -212,6 +199,12 @@ sub session_tick {
 			# USER IN LIST => CHANGE IS ONLINE
 			} elsif ($cuser->{'Status'} eq "online") {
 				$logger->log(LOG_DEBUG,"[CONFIGMANAGER] User '$cuser->{'Username'}' [$uid], user in list, new online notification");
+
+				# Get the changes we made and push them to the shaper
+				if (my $changes = processChanges($guser,$cuser)) {
+					# Post to shaper
+					$kernel->post("shaper" => "change" => $uid => $changes);
+				}
 
 				# Remove from change queue
 				delete($changeQueue->{$uid});
@@ -223,8 +216,8 @@ sub session_tick {
 				if ($now - $cuser->{'LastUpdate'} > TIMEOUT_EXPIRE_OFFLINE) {
 
 					# Remove entry if no longer live
-					if (!$guser->{'shaper.live'}) {
-						$logger->log(LOG_DEBUG,"[CONFIGMANAGER] User '$cuser->{'Username'}' [$uid], user in list, but offline now, expired and not live on shaper");
+					if ($guser->{'shaper.live'} == SHAPER_NOTLIVE) {
+						$logger->log(LOG_DEBUG,"[CONFIGMANAGER] User '$cuser->{'Username'}' [$uid] offline and removed from shaper");
 
 						# Remove from system
 						delete($users->{$uid});
@@ -235,23 +228,92 @@ sub session_tick {
 
 					# Push to shaper
 					} elsif ($guser->{'shaper.live'} == SHAPER_LIVE) {
-						$logger->log(LOG_DEBUG,"[CONFIGMANAGER] User '$cuser->{'Username'}' [$uid], user in list, but offline now and expired, still live on shaper");
+						$logger->log(LOG_DEBUG,"[CONFIGMANAGER] User '$cuser->{'Username'}' [$uid] offline, queue remove from shaper");
 
-						# Post to shaper
+						# Post removal to shaper
 						$kernel->post("shaper" => "remove" => $uid);
 						# Update that we're offline
 						$guser->{'Status'} = 'offline';
+
+						# Set this UID as no longer using this IP
+						delete($userIPMap->{$cuser->{'IP'}}->{$uid});
 
 					} else {
 						$logger->log(LOG_DEBUG,"[CONFIGMANAGER] User '$cuser->{'Username'}' [$uid], user in list, but offline now and expired, still live, waiting for shaper");
 					}
 				}
 			}
+
+		# USER NOT IN LIST
+		} else {
+			# NO USER IN LIST => CHANGE IS NEW or ONLINE
+		   if (($cuser->{'Status'} eq "new" || $cuser->{'Status'} eq "online")) {
+				$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Processing new user '$cuser->{'Username'}' [$uid]");
+
+				# Check if there are IP conflicts
+				my @ipUsers = keys %{$userIPMap->{$cuser->{'IP'}}};
+				if (
+					# If there is already an entry and its not us ...
+					@ipUsers == 1 && !defined($userIPMap->{$cuser->{'IP'}}->{$uid})
+					# Or if there is more than 1 entry...
+					|| @ipUsers > 1 
+				) {
+					# Don't post to shaper & override status
+					$cuser->{'Status'} = 'conflict';
+					$cuser->{'shaper.live'} = SHAPER_NOTLIVE;
+					# Give a bit of info
+					$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process user '".$cuser->{'Username'}."' IP '$cuser->{'IP'}' conflicts with users '".
+							join(',',
+								map { $users->{$_}->{'Username'}  } 
+								@ipUsers
+							)
+					."'.");
+
+					# Remove conflicted users from shaper
+					foreach my $uid2 (@ipUsers) {
+						# Check if the user has been setup already (all but the user we busy with, as its setup below)
+						if (defined($userIPMap->{$cuser->{'IP'}}->{$uid2})) {
+							my $guser2 = $users->{$uid2};
+
+							# If the user is active or pending on the shaper, remove it
+							if ($guser2->{'shaper.live'} == SHAPER_LIVE || $guser2->{'shaper.live'} == SHAPER_PENDING) {
+								$logger->log(LOG_WARN,"[CONFIGMANAGER] Removing conflicted user '".$guser2->{'Username'}."' [$uid2] from shaper'");
+								# Post removal to shaper
+								$kernel->post("shaper" => "remove" => $uid2);
+								# Update that we're offline
+								$guser2->{'Status'} = 'conflict';
+							}
+						}
+					}
+
+				# All is good, no conflicts ... lets add
+				} else {
+					# Post to shaper
+					$cuser->{'shaper.live'} = SHAPER_PENDING;
+					$kernel->post("shaper" => "add" => $uid);
+				}
+
+				# Set this UID as using this IP
+				$userIPMap->{$cuser->{'IP'}}->{$uid} = 1;
+
+				# This is now live
+				$users->{$uid} = $cuser;
+
+
+			# NO USER IN LIST => CHANGE IS OFFLINE OR UNKNOWN
+			} else {
+				$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Ignoring user '$cuser->{'Username'}' [$uid] state '$cuser->{'Status'}', not in our global list");
+			}
+	
+			# Remove from change queue
+			delete($changeQueue->{$uid});
 		}
 
 		# Update the last time we got an update
-		$guser->{'Status'} = $cuser->{'Status'};
-		$guser->{'LastUpdate'} = $cuser->{'LastUpdate'};
+		if (defined($guser)) {
+			$guser->{'Status'} = $cuser->{'Status'};
+			$guser->{'LastUpdate'} = $cuser->{'LastUpdate'};
+		}
 	}
 
 
@@ -286,9 +348,9 @@ sub session_tick {
 # - unknown
 # Source 
 # - This is the source of the user, typically  plugin.ModuleName
-
 sub process_change {
 	my ($kernel, $user) = @_[KERNEL, ARG0];
+
 
 
 	# Create a unique user identifier
@@ -332,9 +394,28 @@ sub process_change {
 	$userChange->{'ID'} = $uid;
 	$userChange->{'LastUpdate'} = time();
 
-
 	# Push change to change queue
 	$changeQueue->{$uid} = $userChange;
+}
+
+
+# Function to compute the changes between two users
+sub processChanges
+{
+	my ($orig,$new) = @_;
+
+	my $res;
+
+	# Loop through what can change
+	foreach my $item ('GroupID','ClassID','TrafficLimitTx','TrafficLimitRx','TrafficLimitTxBurst','TrafficLimitRxBurst') {
+		# Check if its changed...
+		if ($orig->{$item} ne $new->{$item}) {
+			# If so record it & make the change
+			$res->{$item} = $orig->{$item} = $new->{$item};
+		}
+	}
+
+	return $res;
 }
 
 
@@ -356,9 +437,10 @@ sub checkClassID
 sub checkStatus
 {
 	my $status = shift;
-	if ($status eq "new" || $status eq "offline" || $status eq "online" || $status eq "unknown") {
+	if ($status eq "new" || $status eq "offline" || $status eq "online" || $status eq "conflict" || $status eq "unknown") {
 		return $status
 	}
+	return undef;
 }
 
 1;
