@@ -34,6 +34,7 @@ use DateTime;
 use HTML::Entities;
 use HTTP::Status qw( :constants );
 
+use opentrafficshaper::logger;
 use opentrafficshaper::utils;
 
 
@@ -87,10 +88,14 @@ EOF
 
 		# Make style a bit pretty
 		my $style = "";
+		my $icon = "";
 		if ($user->{'Status'} eq "offline") {
 			$style = "warning";
 		} elsif ($user->{'Status'} eq "new") {
 			$style = "info";
+		} elsif ($user->{'Status'} eq "conflict") {
+			$icon = '<i class="icon-random"></i>';
+			$style = "error";
 		}
 
 		# Get a nice last update string
@@ -99,7 +104,7 @@ EOF
 
 		$content .=<<EOF;
 		<tr class="$style">
-			<td>X</td>
+			<td>$icon</td>
 			<td>$user->{'Username'}</td>
 			<td>$user->{'IP'}</td>
 			<td>$user->{'Source'}</td>
@@ -135,6 +140,9 @@ sub add
 {
 	my ($kernel,$globals,$module,$daction,$request) = @_;
 
+
+	# Setup our environment
+	my $logger = $globals->{'logger'};
 
 	# Errors to display
 	my @errors;
@@ -187,15 +195,15 @@ sub add
 				'TrafficLimitRx' => $trafficLimitRx,
 				'TrafficLimitTxBurst' => $trafficLimitTx,
 				'TrafficLimitRxBurst' => $trafficLimitRx,
-				'Status' => "new",
+				'Status' => "online",
 				'Source' => "plugin.webserver.users",
 			};
 
 			# Throw the change at the config manager
 			$kernel->post("configmanager" => "process_change" => $user);
 
-			print STDERR "[WEBSERVER/USERS/ADD] User: $username, IP: $ipAddress, Group: 1, Class: 2, ".
-					"Limits: ".prettyUndef($trafficLimitTx)."/".prettyUndef($trafficLimitRx).", Burst: ".prettyUndef($trafficLimitTx)."/".prettyUndef($trafficLimitRx) . "\n";
+			$logger->log(LOG_INFO,"[WEBSERVER/USERS/ADD] User: $username, IP: $ipAddress, Group: 1, Class: 2, ".
+					"Limits: ".prettyUndef($trafficLimitTx)."/".prettyUndef($trafficLimitRx).", Burst: ".prettyUndef($trafficLimitTx)."/".prettyUndef($trafficLimitRx));
 
 			return (HTTP_TEMPORARY_REDIRECT,'users');
 		}
