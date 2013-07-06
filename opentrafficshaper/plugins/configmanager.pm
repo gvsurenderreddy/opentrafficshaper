@@ -40,7 +40,14 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 
 use constant {
 	VERSION => '0.0.1',
+
+	# After how long does a user get removed if he's offline
 	TIMEOUT_EXPIRE_OFFLINE => 300,
+
+	# After how long do we check users which have not been updated
+	TIMEOUT_EXPIRE_OLD => 7200,
+
+	# How often our config check ticks
 	TICK_PERIOD => 5,
 };
 
@@ -172,7 +179,10 @@ sub session_tick {
 	my $now = time();
 
 
-	# Loop with changes
+	#
+	# LOOP WITH CHANGES
+	#
+
 	foreach my $uid (keys %{$changeQueue}) {
 		# Global user
 		my $guser = $users->{$uid};
@@ -317,6 +327,28 @@ sub session_tick {
 	}
 
 
+	#
+	# CHECK OUT CONNECTED USERS
+	#
+	foreach my $uid (keys %{$changeQueue}) {
+		# Global user
+		my $guser = $users->{$uid};
+
+		# Check for expired users
+		if ($now - $guser->{'LastUpdate'} > TIMEOUT_EXPIRE_OLD) {
+			# Looks like this user has expired?
+			# TODO: Check stats to make sure they 0
+			my $cuser = {
+				'Username' => 'Username',
+				'Status' => 'offline',
+				'LastUpdate' => $guser->{'LastUpdate'},
+			};
+			# Add to change queue
+			$changeQueue->{$uid} = $cuser;
+		}
+	}
+
+
 	# Reset tick
 	$kernel->delay(tick => 5);
 };
@@ -408,8 +440,8 @@ sub processChanges
 
 	# Loop through what can change
 	foreach my $item ('GroupID','ClassID','TrafficLimitTx','TrafficLimitRx','TrafficLimitTxBurst','TrafficLimitRxBurst') {
-		# Check if its changed...
-		if ($orig->{$item} ne $new->{$item}) {
+		# Check if its first set, if it is, check if its changed
+		if (defined($new->{$item}) && $orig->{$item} ne $new->{$item}) {
 			# If so record it & make the change
 			$res->{$item} = $orig->{$item} = $new->{$item};
 		}
