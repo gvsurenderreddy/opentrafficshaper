@@ -59,6 +59,7 @@ sub default
 	# If we not passed default by the main app, just return
 	return if ($daction ne "default");
 
+	my $users = $globals->{'users'};
 
 
 	# Build content
@@ -83,8 +84,8 @@ sub default
 	<tbody>
 EOF
 	# Body
-	foreach my $userid (keys %{$globals->{'users'}}) {
-		my $user = $globals->{'users'}->{$userid};
+	foreach my $uid (keys %{$users}) {
+		my $user = $users->{$uid};
 
 		# Make style a bit pretty
 		my $style = "";
