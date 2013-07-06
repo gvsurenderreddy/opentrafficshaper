@@ -215,10 +215,10 @@ sub server_read {
 
 # NK: FIXME for testing
 	if (!defined($trafficLimitTx)) {
-		$trafficLimitTx = 1024*1024;
+		$trafficLimitTx = 1000;
 	}
 	if (!defined($trafficLimitRx)) {
-		$trafficLimitRx = 256*1024;
+		$trafficLimitRx = 200;
 	}
 
 	# Build user
