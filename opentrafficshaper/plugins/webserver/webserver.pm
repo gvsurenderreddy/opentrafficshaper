@@ -244,7 +244,7 @@ sub httpCreateResponse
 	my $menuStr = "";
 	if (defined($menu)) {
 		$menuStr =<<EOF;
-			<div class="span1">
+			<div class="span2">
 				<div class="well sidebar-nav">
 					<ul class="nav nav-list">
 EOF
