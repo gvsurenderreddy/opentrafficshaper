@@ -49,7 +49,8 @@ our $pluginInfo = {
 	Name => "Linux tc Interface",
 	Version => VERSION,
 	
-	Init => \&init,
+	Init => \&plugin_init,
+	Start => \&plugin_start,
 
 	# Signals
 	signal_SIGHUP => \&handle_SIGHUP,
@@ -61,6 +62,7 @@ my $globals;
 my $logger;
 
 
+# TODO: move to $config
 # Our own config stuff
 my $txiface = "eth1";
 my $txiface_rate = "100";
@@ -83,7 +85,7 @@ my $tcFilters = {
 
 
 # Initialize plugin
-sub init
+sub plugin_init
 {
 	$globals = shift;
 
@@ -113,6 +115,35 @@ sub init
 	}
 
 
+	# This session is our main session, its alias is "shaper"
+	POE::Session->create(
+		inline_states => {
+			_start => \&session_init,
+			add => \&do_add,
+			change => \&do_change,
+			remove => \&do_remove,
+		}
+	);
+
+	# This is our session for communicating directly with tc, its alias is _tc
+	POE::Session->create(
+		inline_states => {
+			_start => \&tc_session_init,
+			# Public'ish
+			queue => \&tc_task_add,
+			# Internal
+			tc_child_stdout => \&tc_child_stdout,
+			tc_child_stderr => \&tc_child_stderr,
+			tc_child_close => \&tc_child_close,
+			tc_task_run_next => \&tc_task_run_next,
+		}
+	);
+}
+
+
+# Start the plugin
+sub plugin_start
+{
 	# Initialize TX interface
 	$logger->log(LOG_INFO,"[TC] Queuing tasks to initialize '$txiface'");
 	_tc_task_add_to_queue([
@@ -174,33 +205,8 @@ sub init
 				'protocol','ip',
 				'u32',
 	]);
-
-
-	# This session is our main session, its alias is "shaper"
-	POE::Session->create(
-		inline_states => {
-			_start => \&session_init,
-			add => \&do_add,
-			change => \&do_change,
-			remove => \&do_remove,
-		}
-	);
-
-	# This is our session for communicating directly with tc, its alias is _tc
-	POE::Session->create(
-		inline_states => {
-			_start => \&tc_session_init,
-			# Public'ish
-			queue => \&tc_task_add,
-			# Internal
-			tc_child_stdout => \&tc_child_stdout,
-			tc_child_stderr => \&tc_child_stderr,
-			tc_child_close => \&tc_child_close,
-			tc_task_run_next => \&tc_task_run_next,
-		}
-	);
+	$logger->log(LOG_INFO,"[TC] Started");
 }
-
 
 
 # Initialize this plugins main POE session
@@ -211,7 +217,7 @@ sub session_init {
 	# Set our alias
 	$kernel->alias_set("shaper");
 
-	$logger->log(LOG_INFO,"[TC] Started");
+	$logger->log(LOG_DEBUG,"[TC] Initialized");
 }
 
 
@@ -452,6 +458,7 @@ sub do_add {
 					'htb',
 						'rate', $user->{'TrafficLimitTx'} . "kbit",
 						'ceil', $user->{'TrafficLimitTxBurst'} . "kbit",
+						'prio',$user->{'TrafficPriority'},
 		]);
 		$kernel->post("_tc" => "queue" => [
 				'/sbin/tc','class','add',
@@ -461,6 +468,7 @@ sub do_add {
 					'htb',
 						'rate', $user->{'TrafficLimitRx'} . "kbit",
 						'ceil', $user->{'TrafficLimitRxBurst'} . "kbit",
+						'prio',$user->{'TrafficPriority'},
 		]);
 
 		#
@@ -1032,22 +1040,24 @@ sub do_change {
 	}
 
 	$kernel->post("_tc" => "queue" => [
-		'/sbin/tc','class','change',
-			'dev',$txiface,
-			'parent','1:1',
-			'classid',"1:$user->{'tc.class'}",
-			'htb',
-				'rate', $trafficLimitTx . "kbit",
-				'ceil', $trafficLimitTxBurst . "kbit",
+			'/sbin/tc','class','change',
+				'dev',$txiface,
+				'parent','1:1',
+				'classid',"1:$user->{'tc.class'}",
+				'htb',
+					'rate', $trafficLimitTx . "kbit",
+					'ceil', $trafficLimitTxBurst . "kbit",
+					'prio',$user->{'TrafficPriority'},
 	]);
 	$kernel->post("_tc" => "queue" => [
-		'/sbin/tc','class','change',
-			'dev',$rxiface,
-			'parent','1:1',
-			'classid',"1:$user->{'tc.class'}",
-			'htb',
-				'rate', $trafficLimitRx . "kbit",
-				'ceil', $trafficLimitRxBurst . "kbit",
+			'/sbin/tc','class','change',
+				'dev',$rxiface,
+				'parent','1:1',
+				'classid',"1:$user->{'tc.class'}",
+				'htb',
+					'rate', $trafficLimitRx . "kbit",
+					'ceil', $trafficLimitRxBurst . "kbit",
+					'prio',$user->{'TrafficPriority'},
 	]);
 }
 

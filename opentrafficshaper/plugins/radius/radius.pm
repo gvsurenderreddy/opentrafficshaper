@@ -53,7 +53,8 @@ our $pluginInfo = {
 	Name => "Radius",
 	Version => VERSION,
 	
-	Init => \&init,
+	Init => \&plugin_init,
+	Start => \&plugin_start,
 
 	# Signals
 	signal_SIGHUP => \&handle_SIGHUP,
@@ -69,7 +70,7 @@ my $dictionary;
 
 
 # Initialize plugin
-sub init
+sub plugin_init
 {
 	$globals = shift;
 
@@ -98,10 +99,11 @@ sub init
 	my $dict = new opentrafficshaper::plugins::radius::Radius::Dictionary;
 	foreach my $df (@{$config->{'config.dictionaries'}}) {
 		# Load dictionary
-		if (!$dict->readfile($df)) {
+		if ($dict->readfile($df)) {
+			$logger->log(LOG_INFO,"[RADIUS] Loaded dictionary '$df'.");
+		} else {
 			$logger->log(LOG_WARN,"[RADIUS] Failed to load dictionary '$df': $!");
 		}
-		$logger->log(LOG_INFO,"[RADIUS] Loaded dictionary '$df'.");
 	}
 	$logger->log(LOG_DEBUG,"[RADIUS] Loading dictionaries completed.");
 	# Store the dictionary
@@ -115,6 +117,14 @@ sub init
 		}
 	);
 }
+
+
+# Start the plugin
+sub plugin_start
+{
+	$logger->log(LOG_INFO,"[RADIUS] Started");
+}
+
 
 
 # Initialize server
@@ -133,7 +143,7 @@ sub server_init {
 	# Setup our reader
 	$kernel->select_read($socket, "get_datagram");
 
-	$logger->log(LOG_INFO,"[RADIUS] Started");
+	$logger->log(LOG_DEBUG,"[RADIUS] Initialized");
 }
 
 

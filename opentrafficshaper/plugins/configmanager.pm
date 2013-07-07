@@ -26,6 +26,7 @@ use POE;
 
 use opentrafficshaper::constants;
 use opentrafficshaper::logger;
+use opentrafficshaper::utils;
 
 
 
@@ -54,7 +55,8 @@ our $pluginInfo = {
 	Name => "Config Manager",
 	Version => VERSION,
 	
-	Init => \&init,
+	Init => \&plugin_init,
+	Start => \&plugin_start,
 
 	# Signals
 	signal_SIGHUP => \&handle_SIGHUP,
@@ -65,14 +67,21 @@ our $pluginInfo = {
 my $globals;
 my $logger;
 
-# Config
-my $config;
+# Our own config stuff
 my $groups = {
 	1 => 'Default'
 };
 my $classes = {
 	1 => 'Default'
 };
+
+# TODO: move to $config
+# Use default pool for unclassified traffic
+my $use_default_pool = 0;
+my $default_pool_txrate;
+my $default_pool_rxrate;
+my $default_pool_priority = 10;
+
 
 # Pending changes
 my $changeQueue = { };
@@ -84,7 +93,7 @@ my $userIDCounter = 1;
 
 
 # Initialize plugin
-sub init
+sub plugin_init
 {
 	$globals = shift;
 
@@ -140,6 +149,33 @@ sub init
 	}
 	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Loading traffic classes completed.");
 
+	# Check if we using a default pool or not
+	if (defined(my $dp = booleanize($globals->{'file.config'}->{'shaping'}->{'use_default_pool'}))) {
+		# If we are using the default pool, load the limits
+		if ($use_default_pool = $dp) {
+			# Pull in both config items
+			if (defined(my $txir = $globals->{'file.config'}->{'shaping'}->{'default_pool_txrate'})) {
+				$logger->log(LOG_INFO,"[CONFIGMANAGER] Set default_pool_txrate to '$txir'");
+				$default_pool_txrate = isNumber($txir);
+			} else {
+				$logger->log(LOG_WARN,"[CONFIGMANAGER] There is a problem with default_pool_txrate, config item use_default_pool disabled");
+			}
+			if (defined(my $rxir = $globals->{'file.config'}->{'shaping'}->{'default_pool_rxrate'})) {
+				$logger->log(LOG_INFO,"[CONFIGMANAGER] Set default_pool_rxrate to '$rxir'");
+				$default_pool_rxrate = isNumber($rxir);
+			} else {
+				$logger->log(LOG_WARN,"[CONFIGMANAGER] There is a problem with default_pool_rxrate, config item use_default_pool disabled");
+			}
+			# Check we have both items configured, if not deconfigure
+			if (!defined($default_pool_txrate) || !defined($default_pool_rxrate)) {
+				$use_default_pool = 0;
+				$default_pool_txrate = undef;
+				$default_pool_rxrate = undef;
+			}
+		}
+	}
+	$logger->log(LOG_INFO,"[CONFIGMANAGER] Using of default pool ". ( $use_default_pool ? "ENABLED with rates $default_pool_txrate/$default_pool_rxrate" : "DISABLED" )  );
+
 	# This is our configuration processing session
 	POE::Session->create(
 		inline_states => {
@@ -148,6 +184,13 @@ sub init
 			process_change => \&process_change,
 		}
 	);
+}
+
+
+# Start the plugin
+sub plugin_start
+{
+	$logger->log(LOG_INFO,"[CONFIGMANAGER] Started");
 }
 
 
@@ -163,7 +206,7 @@ sub session_init {
 	# Set delay on config updates
 	$kernel->delay(tick => TICK_PERIOD);
 
-	$logger->log(LOG_INFO,"[CONFIGMANAGER] Started");
+	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Initialized");
 }
 
 
@@ -356,7 +399,7 @@ sub session_tick {
 
 		# FIXME: NK Testing!
 		if (!defined($guser->{'LastUpdate'}) || !defined($guser->{'Status'})) {
-			use Data::Dumper; print STDERR "FAILURE: ".Dumper($guser);
+			use Data::Dumper; print STDERR "FAILURE: ".Dumper($uid,$guser,$users);
 			die "OH NO";
 		}	
 	}
@@ -429,6 +472,9 @@ sub process_change {
 	# Take base limits if we don't have any burst values set
 	$userChange->{'TrafficLimitTxBurst'} = defined($user->{'TrafficLimitTxBurst'}) ? $user->{'TrafficLimitTxBurst'} : $user->{'TrafficLimitTx'};
 	$userChange->{'TrafficLimitRxBurst'} = defined($user->{'TrafficLimitRxBurst'}) ? $user->{'TrafficLimitRxBurst'} : $user->{'TrafficLimitRx'};
+
+	# Optional priority, we default to 5
+	$userChange->{'TrafficPriority'} = defined($user->{'TrafficPriority'}) ? $user->{'TrafficPriority'} : 5;
 
 	# Set when this entry expires
 	$userChange->{'Expires'} = defined($user->{'Expires'}) ? $user->{'Expires'} : 0;

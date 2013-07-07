@@ -8,3 +8,7 @@
 
 - When loading individual user filters of diff traffic types, make a list of what we added so we can display in web interface
 
+- icons for users state, high usage, low usage, increasing usage
+
+- web page to view overall shaper details
+- main queues & qdiscs + default pool

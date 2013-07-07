@@ -54,7 +54,8 @@ our $pluginInfo = {
 	Name => "Webserver",
 	Version => VERSION,
 	
-	Init => \&init,
+	Init => \&plugin_init,
+	Start => \&plugin_start,
 
 	# Signals
 	signal_SIGHUP => \&handle_SIGHUP,
@@ -81,7 +82,7 @@ my $pages = {
 
 
 # Initialize plugin
-sub init
+sub plugin_init
 {
 	$globals = shift;
 
@@ -101,6 +102,23 @@ sub init
 		# Setup the sever
 		Started => \&session_init,
 	);
+}
+
+
+# Start the plugin
+sub plugin_start
+{
+	$logger->log(LOG_INFO,"[WEBSERVER] Started");
+}
+
+
+
+# Session initialization
+sub session_init
+{
+	my $kernel = $_[KERNEL];
+
+	$logger->log(LOG_DEBUG,"[WEBSERVER] Initialized");
 }
 
 
@@ -361,14 +379,6 @@ EOF
 	return $resp;
 }
 
-
-# Session initialization
-sub session_init
-{
-	my $kernel = $_[KERNEL];
-
-	$logger->log(LOG_INFO,"[WEBSERVER] Started");
-}
 
 # Handle SIGHUP
 sub handle_SIGHUP
