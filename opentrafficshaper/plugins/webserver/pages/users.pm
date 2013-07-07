@@ -91,8 +91,10 @@ EOF
 		my $style = "";
 		my $icon = "";
 		if ($user->{'Status'} eq "offline") {
+			$icon = '<i class="icon-trash"></i>';
 			$style = "warning";
 		} elsif ($user->{'Status'} eq "new") {
+			$icon = '<i class="icon-plus"></i>';
 			$style = "info";
 		} elsif ($user->{'Status'} eq "conflict") {
 			$icon = '<i class="icon-random"></i>';
