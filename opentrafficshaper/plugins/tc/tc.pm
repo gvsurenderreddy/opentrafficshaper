@@ -62,14 +62,13 @@ my $logger;
 
 
 # Our own config stuff
+my $txiface = "eth1";
+my $txiface_rate = "100";
+my $rxiface = "eth0";
+my $rxiface_rate = "100";
 
 # Queue of tasks to run
 my @taskQueue = ();
-# Interfaces
-my $rxiface = "eth0";
-my $rxrate = "10240mbit";
-my $txiface = "eth1";
-my $txrate = "10240mbit";
 # TC classes & filters
 my $tcFilterMappings;
 my $tcClasses = {
@@ -96,13 +95,21 @@ sub init
 
 
 	# Check our interfaces
+	if (defined(my $txi = $globals->{'file.config'}->{'plugin.tc'}->{'txiface'})) {
+		$logger->log(LOG_INFO,"[TC] Set txiface to '$txi'");
+		$txiface = $txi;
+	}
+	if (defined(my $txir = $globals->{'file.config'}->{'plugin.tc'}->{'txiface_rate'})) {
+		$logger->log(LOG_INFO,"[TC] Set txiface_rate to '$txir'");
+		$txiface_rate = $txir;
+	}
 	if (defined(my $rxi = $globals->{'file.config'}->{'plugin.tc'}->{'rxiface'})) {
 		$logger->log(LOG_INFO,"[TC] Set rxiface to '$rxi'");
 		$rxiface = $rxi;
 	}
-	if (defined(my $txi = $globals->{'file.config'}->{'plugin.tc'}->{'txiface'})) {
-		$logger->log(LOG_INFO,"[TC] Set txiface to '$txi'");
-		$txiface = $txi;
+	if (defined(my $rxir = $globals->{'file.config'}->{'plugin.tc'}->{'rxiface_rate'})) {
+		$logger->log(LOG_INFO,"[TC] Set rxiface_rate to '$rxir'");
+		$rxiface_rate = $rxir;
 	}
 
 
@@ -111,14 +118,14 @@ sub init
 	_tc_task_add_to_queue([
 			'/sbin/tc','qdisc','del',
 				'dev',$txiface,
-				'root'
+				'root',
 	]);
 	_tc_task_add_to_queue([
 			'/sbin/tc','qdisc','add',
 				'dev',$txiface,
 				'root',
 				'handle','1:',
-				'htb'
+				'htb',
 	]);
 	_tc_task_add_to_queue([
 			'/sbin/tc','class','add',
@@ -126,7 +133,7 @@ sub init
 				'parent','1:',
 				'classid','1:1',
 				'htb',
-					'rate',$txrate
+					'rate',$txiface_rate."mbit",
 	]);
 	_tc_task_add_to_queue([
 			'/sbin/tc','filter','add',
@@ -142,14 +149,14 @@ sub init
 	_tc_task_add_to_queue([
 			'/sbin/tc','qdisc','del',
 				'dev',$rxiface,
-				'root'
+				'root',
 	]);
 	_tc_task_add_to_queue([
 			'/sbin/tc','qdisc','add',
 				'dev',$rxiface,
 				'root',
 				'handle','1:',
-				'htb'
+				'htb',
 	]);
 	_tc_task_add_to_queue([
 			'/sbin/tc','class','add',
@@ -157,7 +164,7 @@ sub init
 				'parent','1:',
 				'classid','1:1',
 				'htb',
-					'rate',$rxrate
+					'rate',$rxiface_rate."mbit",
 	]);
 	_tc_task_add_to_queue([
 			'/sbin/tc','filter','add',
@@ -1249,7 +1256,7 @@ sub tc_child_stdout
     my ($kernel,$heap,$stdout,$task_id) = @_[KERNEL,HEAP,ARG0,ARG1];
     my $child = $heap->{task_by_wid}->{$task_id};
 
-	$logger->log(LOG_DEBUG,"[TC] TASK/$task_id: STDOUT => ".$stdout);
+	$logger->log(LOG_INFO,"[TC] TASK/$task_id: STDOUT => ".$stdout);
 }
 
 
@@ -1259,7 +1266,7 @@ sub tc_child_stderr
     my ($kernel,$heap,$stdout,$task_id) = @_[KERNEL,HEAP,ARG0,ARG1];
     my $child = $heap->{task_by_wid}->{$task_id};
 
-	$logger->log(LOG_NOTICE,"[TC] TASK/$task_id: STDERR => ".$stdout);
+	$logger->log(LOG_WARN,"[TC] TASK/$task_id: STDERR => ".$stdout);
 }
 
 
