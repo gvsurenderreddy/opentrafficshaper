@@ -241,7 +241,7 @@ sub server_read {
 		'TrafficLimitRx' => $trafficLimitRx,
 		'TrafficLimitTxBurst' => $trafficLimitTxBurst,
 		'TrafficLimitRxBurst' => $trafficLimitRxBurst,
-		'Expires' => $now + defined($globals->{'file.config'}->{'plugin.radius'}->{'expire_entries'}) ? $globals->{'file.config'}->{'plugin.radius'}->{'expire_entries'} : DEFAULT_ENTRY_EXPIRES,
+		'Expires' => $now + (defined($globals->{'file.config'}->{'plugin.radius'}->{'expire_entries'}) ? $globals->{'file.config'}->{'plugin.radius'}->{'expire_entries'} : DEFAULT_ENTRY_EXPIRES),
 		'Status' => getStatus($pkt->rawattr('Acct-Status-Type')),
 		'Source' => "plugin.radius",
 	};
@@ -249,7 +249,7 @@ sub server_read {
 	# Throw the change at the config manager
 	$kernel->post("configmanager" => "process_change" => $user);
 
-	$logger->log(LOG_DEBUG,"[RADIUS] Code: $user->{'Status'}, User: $user->{'Username'}, IP: $user->{'IP'}, Group: $user->{'GroupID'}, Class: $user->{'ClassID'}, ".
+	$logger->log(LOG_INFO,"[RADIUS] Code: $user->{'Status'}, User: $user->{'Username'}, IP: $user->{'IP'}, Group: $user->{'GroupID'}, Class: $user->{'ClassID'}, ".
 			"Limits: ".prettyUndef($trafficLimitTx)."/".prettyUndef($trafficLimitRx).", Burst: ".prettyUndef($trafficLimitTxBurst)."/".prettyUndef($trafficLimitRxBurst));
 }
 
