@@ -337,12 +337,12 @@ sub session_tick {
 	#
 	# CHECK OUT CONNECTED USERS
 	#
-	foreach my $uid (keys %{$changeQueue}) {
+	foreach my $uid (keys %{$users}) {
 		# Global user
 		my $guser = $users->{$uid};
 
 		# Check for expired users
-		if ($now > $guser->{'Expires'}) {
+		if ($guser->{'Expires'} != 0 && $guser->{'Expires'} < $now) {
 			$logger->log(LOG_INFO,"[CONFIGMANAGER] User '$guser->{'Username'}' has expired, marking offline");
 			# Looks like this user has expired?
 			my $cuser = {
@@ -353,10 +353,16 @@ sub session_tick {
 			# Add to change queue
 			$changeQueue->{$uid} = $cuser;
 		}
+
+		# FIXME: NK Testing!
+		if (!defined($guser->{'LastUpdate'}) || !defined($guser->{'Status'})) {
+			use Data::Dumper; print STDERR "FAILURE: ".Dumper($guser);
+			die "OH NO";
+		}	
 	}
 
 	# Reset tick
-	$kernel->delay(tick => 5);
+	$kernel->delay(tick => TICK_PERIOD);
 };
 
 
