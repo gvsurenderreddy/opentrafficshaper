@@ -33,6 +33,8 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 	isUsername
 	isIP
 	isNumber
+
+	booleanize
 );
 @EXPORT_OK = qw(
 );
@@ -171,6 +173,39 @@ sub isNumber
 	}
 
 	return undef;
+}
+
+
+# Booleanize the variable depending on its contents
+sub booleanize
+{
+	my $var = shift;
+
+
+	# Check if we're defined
+	if (!isVariable($var)) {
+		return undef;
+	}
+
+	# If we're a number
+	if (my $val = isNumber($var)) {
+		if ($val == 0) {
+			return 0;
+		} else {
+			return 1;
+		}
+	}
+
+	# Nuke whitespaces
+	$var =~ s/\s//g;
+
+	# Allow true, on, set, enabled, 1
+	if ($var =~ /^(?:true|on|set|enabled|1|yes)$/i) {
+		return 1;
+	}
+
+	# Invalid or unknown
+	return 0;
 }
 
 
