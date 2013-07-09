@@ -106,7 +106,8 @@ sub plugin_init
 	# Split off groups to load
 	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Loading traffic groups...");
 	# Check if we loaded an array or just text
-	my @groups = ref($globals->{'file.config'}->{'shaping'}->{'group'}) eq "ARRAY" ? @{$globals->{'file.config'}->{'shaping'}->{'group'}} : ( $globals->{'file.config'}->{'shaping'}->{'group'} );
+	my @groups = ref($globals->{'file.config'}->{'shaping'}->{'group'}) eq "ARRAY" ? @{$globals->{'file.config'}->{'shaping'}->{'group'}} : 
+			( $globals->{'file.config'}->{'shaping'}->{'group'} );
 	# Loop with groups
 	foreach my $group (@groups) {
  		# Skip comments
@@ -129,7 +130,8 @@ sub plugin_init
 	# Split off traffic classes
 	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Loading traffic classes...");
 	# Check if we loaded an array or just text
-	my @classes = ref($globals->{'file.config'}->{'shaping'}->{'class'}) eq "ARRAY" ? @{$globals->{'file.config'}->{'shaping'}->{'class'}} : ( $globals->{'file.config'}->{'shaping'}->{'class'} );
+	my @classes = ref($globals->{'file.config'}->{'shaping'}->{'class'}) eq "ARRAY" ? @{$globals->{'file.config'}->{'shaping'}->{'class'}} : 
+			( $globals->{'file.config'}->{'shaping'}->{'class'} );
 	# Loop with classes
 	foreach my $class (@classes) {
  		# Skip comments
@@ -174,7 +176,8 @@ sub plugin_init
 			}
 		}
 	}
-	$logger->log(LOG_INFO,"[CONFIGMANAGER] Using of default pool ". ( $use_default_pool ? "ENABLED with rates $default_pool_txrate/$default_pool_rxrate" : "DISABLED" )  );
+	$logger->log(LOG_INFO,"[CONFIGMANAGER] Using of default pool ". ( $use_default_pool ? 
+			"ENABLED with rates $default_pool_txrate/$default_pool_rxrate" : "DISABLED" )  );
 
 	# This is our configuration processing session
 	POE::Session->create(
@@ -230,6 +233,7 @@ sub session_tick {
 		# Changes for user
 		# Minimum required info is:
 		# - Username
+		# - IP
 		# - Status
 		# - LastUpdate
 		my $cuser = $changeQueue->{$uid};
@@ -269,33 +273,40 @@ sub session_tick {
 			} elsif ($cuser->{'Status'} eq "offline") {
 
 				# We first check if this update was received some time ago, and if it exceeds our expire time
-				# We don't want to immediately remove a user, only for him to come back on a few seconds later, the cost in exec()'s would be pretty high
+				# We don't want to immediately remove a user, only for him to come back on a few seconds later, the cost in exec()'s 
+				# would be pretty high
 				if ($now - $cuser->{'LastUpdate'} > TIMEOUT_EXPIRE_OFFLINE) {
 
 					# Remove entry if no longer live
-					if ($guser->{'shaper.live'} == SHAPER_NOTLIVE) {
+					if ($guser->{'_shaper.state'} == SHAPER_NOTLIVE) {
 						$logger->log(LOG_INFO,"[CONFIGMANAGER] User '$cuser->{'Username'}' [$uid] offline and removed from shaper");
 
 						# Remove from system
 						delete($users->{$uid});
 						# Remove from change queue
 						delete($changeQueue->{$uid});
+						# Set this UID as no longer using this IP
+						# NK: If we try remove it before the user is actually removed we could get a reconnection causing this value 
+						#     to be totally gone, which means we not tracking this user using this IP anymore, not easily solved!!
+						delete($userIPMap->{$guser->{'IP'}}->{$uid});
+						# Check if we can delete the IP too
+						if (keys %{$userIPMap->{$guser->{'IP'}}} == 0) {
+							delete($userIPMap->{$guser->{'IP'}});
+						}
 
 						# Next record, we don't want to do any updates below
 						next;
 
 					# Push to shaper
-					} elsif ($guser->{'shaper.live'} == SHAPER_LIVE) {
+					} elsif ($guser->{'_shaper.state'} == SHAPER_LIVE) {
 						$logger->log(LOG_DEBUG,"[CONFIGMANAGER] User '$cuser->{'Username'}' [$uid] offline, queue remove from shaper");
 
 						# Post removal to shaper
 						$kernel->post("shaper" => "remove" => $uid);
 
-						# Set this UID as no longer using this IP
-						delete($userIPMap->{$cuser->{'IP'}}->{$uid});
-
 					} else {
-						$logger->log(LOG_DEBUG,"[CONFIGMANAGER] User '$cuser->{'Username'}' [$uid], user in list, but offline now and expired, still live, waiting for shaper");
+						$logger->log(LOG_DEBUG,"[CONFIGMANAGER] User '$cuser->{'Username'}' [$uid], user in list, but offline now and".
+								" expired, still live, waiting for shaper");
 					}
 				}
 			}
@@ -324,14 +335,15 @@ sub session_tick {
 				) {
 					# We not going to post this to the shaper, but we are going to override the status
 					$cuser->{'Status'} = 'conflict';
-					$cuser->{'shaper.live'} = SHAPER_NOTLIVE;
+					$cuser->{'_shaper.state'} = SHAPER_NOTLIVE;
 					# Give a bit of info
+					my @conflictUsernames;
+					foreach my $uid (@ipUsers) {
+						push(@conflictUsernames,$users->{$uid}->{'Username'});
+					}
+					# Output log line
 					$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process user '".$cuser->{'Username'}."' IP '$cuser->{'IP'}' conflicts with users '".
-							join(',',
-								map { $users->{$_}->{'Username'}  } 
-								@ipUsers
-							)
-					."'.");
+							join(',',@conflictUsernames)."'.");
 
 					# We cannot trust shaping when there is more than 1 user on the IP, so we going to remove all users with this
 					# IP from the shaper below...
@@ -341,7 +353,7 @@ sub session_tick {
 							my $guser2 = $users->{$uid2};
 
 							# If the user is active or pending on the shaper, remove it
-							if ($guser2->{'shaper.live'} == SHAPER_LIVE || $guser2->{'shaper.live'} == SHAPER_PENDING) {
+							if ($guser2->{'_shaper.state'} == SHAPER_LIVE || $guser2->{'_shaper.state'} == SHAPER_PENDING) {
 								$logger->log(LOG_WARN,"[CONFIGMANAGER] Removing conflicted user '".$guser2->{'Username'}."' [$uid2] from shaper'");
 								# Post removal to shaper
 								$kernel->post("shaper" => "remove" => $uid2);
@@ -354,7 +366,7 @@ sub session_tick {
 				# All looks good, no conflicts, we're set to add this user!
 				} else {
 					# Post to the user to the shaper
-					$cuser->{'shaper.live'} = SHAPER_PENDING;
+					$cuser->{'_shaper.state'} = SHAPER_PENDING;
 					$kernel->post("shaper" => "add" => $uid);
 
 				}
@@ -367,7 +379,8 @@ sub session_tick {
 
 			# User is not in our list and this is an unknown state we're trasitioning to
 			} else {
-				$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Ignoring user '$cuser->{'Username'}' [$uid] state '$cuser->{'Status'}', not in our global list");
+				$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Ignoring user '$cuser->{'Username'}' [$uid] state '$cuser->{'Status'}', not in our".
+						" global list");
 			}
 	
 			# Remove from change queue
@@ -390,18 +403,13 @@ sub session_tick {
 			# Looks like this user has expired?
 			my $cuser = {
 				'Username' => 'Username',
+				'IP' => $guser->{'IP'},
 				'Status' => 'offline',
 				'LastUpdate' => $guser->{'LastUpdate'},
 			};
 			# Add to change queue
 			$changeQueue->{$uid} = $cuser;
 		}
-
-		# FIXME: NK Testing!
-		if (!defined($guser->{'LastUpdate'}) || !defined($guser->{'Status'})) {
-			use Data::Dumper; print STDERR "FAILURE: ".Dumper($uid,$guser,$users);
-			die "OH NO";
-		}	
 	}
 
 	# Reset tick

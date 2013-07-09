@@ -1006,7 +1006,7 @@ sub do_add {
 	}
 
 	# Mark as live
-	$user->{'shaper.live'} = SHAPER_LIVE;
+	$user->{'_shaper.state'} = SHAPER_LIVE;
 }
 
 # Change event for tc
@@ -1113,7 +1113,7 @@ sub do_remove {
 	disposeTcClass($classID);
 
 	# Mark as not live
-	$users->{$uid}->{'shaper.live'} = SHAPER_NOTLIVE;
+	$user->{'_shaper.state'} = SHAPER_NOTLIVE;
 }
 
 
