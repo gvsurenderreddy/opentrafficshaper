@@ -44,7 +44,7 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 use constant {
 	VERSION => '0.0.1',
 	DATAGRAM_MAXLEN => 8192,
-	DEFAULT_ENTRY_EXPIRES => 86400,
+	DEFAULT_EXPIRY_PERIOD => 86400,
 };
 
 
@@ -65,7 +65,10 @@ our $pluginInfo = {
 my $globals;
 my $logger;
 # Our own data storage
-my $config;
+my $config = {
+	'expiry_period' => DEFAULT_EXPIRY_PERIOD
+};
+
 my $dictionary;
 
 
@@ -108,6 +111,12 @@ sub plugin_init
 	$logger->log(LOG_DEBUG,"[RADIUS] Loading dictionaries completed.");
 	# Store the dictionary
 	$dictionary = $dict;
+
+	# Check if we must override the expiry time
+	if (defined(my $expiry = $globals->{'file.config'}->{'plugin.radius'}->{'expiry_period'})) {
+		$logger->log(LOG_INFO,"[RADIUS] Set expiry_period to '$expiry'");
+		$config->{'expiry_period'} = $expiry;
+	}
 
 	# Radius listener
 	POE::Session->create(
@@ -251,7 +260,8 @@ sub server_read {
 		'TrafficLimitRx' => $trafficLimitRx,
 		'TrafficLimitTxBurst' => $trafficLimitTxBurst,
 		'TrafficLimitRxBurst' => $trafficLimitRxBurst,
-		'Expires' => $now + (defined($globals->{'file.config'}->{'plugin.radius'}->{'expire_entries'}) ? $globals->{'file.config'}->{'plugin.radius'}->{'expire_entries'} : DEFAULT_ENTRY_EXPIRES),
+		'Expires' => $now + (defined($globals->{'file.config'}->{'plugin.radius'}->{'expire_entries'}) ? 
+				$globals->{'file.config'}->{'plugin.radius'}->{'expire_entries'} : $config->{'expiry_period'}),
 		'Status' => getStatus($pkt->rawattr('Acct-Status-Type')),
 		'Source' => "plugin.radius",
 	};
