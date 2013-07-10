@@ -402,7 +402,7 @@ sub session_tick {
 			$logger->log(LOG_INFO,"[CONFIGMANAGER] User '$guser->{'Username'}' has expired, marking offline");
 			# Looks like this user has expired?
 			my $cuser = {
-				'Username' => 'Username',
+				'Username' => $guser->{'Username'},
 				'IP' => $guser->{'IP'},
 				'Status' => 'offline',
 				'LastUpdate' => $guser->{'LastUpdate'},
