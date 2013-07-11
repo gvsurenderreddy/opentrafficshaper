@@ -45,6 +45,9 @@ use constant {
 	VERSION => '0.0.1',
 	DATAGRAM_MAXLEN => 8192,
 	DEFAULT_EXPIRY_PERIOD => 86400,
+	# IANA public enterprise number
+	# This is used as the radius vendor code
+	IANA_PEN => 42109,
 };
 
 
@@ -207,15 +210,15 @@ sub server_read {
 	# Pull in a variables from packet
 	my $username = $pkt->rawattr("User-Name");
 	my $trafficGroup;
-	if (my $attrRawVal = $pkt->vsattr(11111,'OpenTrafficShaper-Traffic-Group')) {
+	if (my $attrRawVal = $pkt->vsattr(IANA_PEN,'OpenTrafficShaper-Traffic-Group')) {
 		$trafficGroup = @{ $attrRawVal }[0];
 	}
 	my $trafficClass;
-	if (my $attrRawVal = $pkt->vsattr(11111,'OpenTrafficShaper-Traffic-Class')) {
+	if (my $attrRawVal = $pkt->vsattr(IANA_PEN,'OpenTrafficShaper-Traffic-Class')) {
 		$trafficClass = @{ $attrRawVal }[0];
 	}
 	my $trafficLimit;
-	if (my $attrRawVal = $pkt->vsattr(11111,'OpenTrafficShaper-Traffic-Limit')) {
+	if (my $attrRawVal = $pkt->vsattr(IANA_PEN,'OpenTrafficShaper-Traffic-Limit')) {
 		$trafficLimit = @{ $attrRawVal }[0];
 	}
 

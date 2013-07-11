@@ -16,7 +16,7 @@
 
 
 
-VENDOR		AllWorldIT								11111
+VENDOR		AllWorldIT								42109
 
 ATTRIBUTE	OpenTrafficShaper-Traffic-Limit         1       string          AllWorldIT
 ATTRIBUTE	OpenTrafficShaper-Traffic-Group         2       integer         AllWorldIT
