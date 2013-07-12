@@ -245,12 +245,15 @@ sub server_read {
 		$trafficClass = 1;
 	}
 
-# NK: FIXME for testing
+	# FIXME: NK - better way?
+	# If we don't have rate limits, short circuit
 	if (!defined($trafficLimitTx)) {
 		$trafficLimitTx = 1000;
+		return;
 	}
 	if (!defined($trafficLimitRx)) {
 		$trafficLimitRx = 200;
+		return;
 	}
 
 	# Build user
