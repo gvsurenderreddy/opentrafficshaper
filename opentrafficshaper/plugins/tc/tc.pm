@@ -68,6 +68,8 @@ my $txiface = "eth1";
 my $txiface_rate = "100";
 my $rxiface = "eth0";
 my $rxiface_rate = "100";
+my $ip_protocol = "ip";
+my $iphdr_offset = 0;
 
 # Queue of tasks to run
 my @taskQueue = ();
@@ -112,6 +114,14 @@ sub plugin_init
 	if (defined(my $rxir = $globals->{'file.config'}->{'plugin.tc'}->{'rxiface_rate'})) {
 		$logger->log(LOG_INFO,"[TC] Set rxiface_rate to '$rxir'");
 		$rxiface_rate = $rxir;
+	}
+	if (defined(my $proto = $globals->{'file.config'}->{'plugin.tc'}->{'protocol'})) {
+		$logger->log(LOG_INFO,"[TC] Set protocol to '$proto'");
+		$ip_protocol = $proto;
+	}
+	if (defined(my $offset = $globals->{'file.config'}->{'plugin.tc'}->{'iphdr_offset'})) {
+		$logger->log(LOG_INFO,"[TC] Set IP header offset to '$offset'");
+		$iphdr_offset = $offset;
 	}
 
 
@@ -171,7 +181,7 @@ sub plugin_start
 				'dev',$txiface,
 				'parent','1:',
 				'prio','10',
-				'protocol','ip',
+				'protocol',$ip_protocol,
 				'u32',
 	]);
 
@@ -202,7 +212,7 @@ sub plugin_start
 				'dev',$rxiface,
 				'parent','1:',
 				'prio','10',
-				'protocol','ip',
+				'protocol',$ip_protocol,
 				'u32',
 	]);
 	$logger->log(LOG_INFO,"[TC] Started");
@@ -257,7 +267,7 @@ sub do_add {
 					'parent','1:',
 					'prio','10',
 					'handle',"$filterID:",
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
 						'divisor','256',
 		]);
@@ -267,7 +277,7 @@ sub do_add {
 					'parent','1:',
 					'prio','10',
 					'handle',"$filterID:",
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
 						'divisor','256',
 		]);
@@ -277,12 +287,14 @@ sub do_add {
 					'dev',$txiface,
 					'parent','1:',
 					'prio','10',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
 						# Root hash table
 						'ht','800::',
 							'match','ip','dst',"$ip1.0.0.0/8",
-						'hashkey','mask','0x00ff0000','at',16,
+								'at',16+$iphdr_offset,
+						'hashkey','mask','0x00ff0000',
+							'at',16+$iphdr_offset,
 						# Link to our hash table
 						'link',"$filterID:"
 		]);
@@ -291,12 +303,14 @@ sub do_add {
 					'dev',$rxiface,
 					'parent','1:',
 					'prio','10',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
 						# Root hash table
 						'ht','800::',
 							'match','ip','src',"$ip1.0.0.0/8",
-						'hashkey','mask','0x00ff0000','at',16,
+								'at',12+$iphdr_offset,
+						'hashkey','mask','0x00ff0000',
+							'at',12+$iphdr_offset,
 						# Link to our hash table
 						'link',"$filterID:"
 		]);
@@ -320,7 +334,7 @@ sub do_add {
 					'parent','1:',
 					'prio','10',
 					'handle',"$filterID:",
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
 						'divisor','256',
 		]);
@@ -330,7 +344,7 @@ sub do_add {
 					'parent','1:',
 					'prio','10',
 					'handle',"$filterID:",
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
 						'divisor','256',
 		]);
@@ -340,12 +354,14 @@ sub do_add {
 					'dev',$txiface,
 					'parent','1:',
 					'prio','10',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
 						# This is the 2nd level hash table
 						'ht',"${ip1HtHex}:${ip2Hex}:",
 							'match','ip','dst',"$ip1.$ip2.0.0/16",
-						'hashkey','mask','0x0000ff00','at',16,
+								'at',16+$iphdr_offset,
+						'hashkey','mask','0x0000ff00',
+							'at',16+$iphdr_offset,
 						# That we're linking to our hash table
 						'link',"$filterID:"
 		]);
@@ -354,12 +370,14 @@ sub do_add {
 					'dev',$rxiface,
 					'parent','1:',
 					'prio','10',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
 						# This is the 2nd level hash table
 						'ht',"${ip1HtHex}:${ip2Hex}:",
 							'match','ip','src',"$ip1.$ip2.0.0/16",
-						'hashkey','mask','0x0000ff00','at',16,
+								'at',12+$iphdr_offset,
+						'hashkey','mask','0x0000ff00',
+							'at',12+$iphdr_offset,
 						# That we're linking to our hash table
 						'link',"$filterID:"
 		]);
@@ -383,7 +401,7 @@ sub do_add {
 					'parent','1:',
 					'prio','10',
 					'handle',"$filterID:",
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
 						'divisor','256',
 		]);
@@ -393,7 +411,7 @@ sub do_add {
 					'parent','1:',
 					'prio','10',
 					'handle',"$filterID:",
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
 						'divisor','256',
 		]);
@@ -403,12 +421,14 @@ sub do_add {
 					'dev',$txiface,
 					'parent','1:',
 					'prio','10',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
 						# This is the 3rd level hash table
 						'ht',"${ip2HtHex}:${ip3Hex}:",
 							'match','ip','dst',"$ip1.$ip2.$ip3.0/24",
-						'hashkey','mask','0x000000ff','at',16,
+								'at',16+$iphdr_offset,
+						'hashkey','mask','0x000000ff',
+							'at',16+$iphdr_offset,
 						# That we're linking to our hash table
 						'link',"$filterID:"
 		]);
@@ -417,12 +437,14 @@ sub do_add {
 					'dev',$rxiface,
 					'parent','1:',
 					'prio','10',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
 						# This is the 3rd level hash table
 						'ht',"${ip2HtHex}:${ip3Hex}:",
 							'match','ip','src',"$ip1.$ip2.$ip3.0/24",
-						'hashkey','mask','0x000000ff','at',16,
+								'at',12+$iphdr_offset,
+						'hashkey','mask','0x000000ff',
+							'at',12+$iphdr_offset,
 						# That we're linking to our hash table
 						'link',"$filterID:"
 		]);
@@ -507,10 +529,11 @@ sub do_add {
 					'parent','1:',
 					'prio','10',
 					'handle',$filterHandle,
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
 						'ht',"${ip3HtHex}:${ip4Hex}:",
-						'match','ip','dst',$user->{'IP'},
+							'match','ip','dst',$user->{'IP'},
+								'at',16+$iphdr_offset,
 					'flowid',"1:$classID",
 		]);
 		$kernel->post("_tc" => "queue" => [
@@ -519,10 +542,11 @@ sub do_add {
 					'parent','1:',
 					'prio','10',
 					'handle',$filterHandle,
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
 						'ht',"${ip3HtHex}:${ip4Hex}:",
-						'match','ip','src',$user->{'IP'},
+							'match','ip','src',$user->{'IP'},
+								'at',12+$iphdr_offset,
 					'flowid',"1:$classID",
 		]);
 
@@ -537,9 +561,10 @@ sub do_add {
 					'dev',$txiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','protocol','1','0xff',
+						'match','u8','0x1','0xff', # ICMP
+							'at',9+$iphdr_offset,
 					'police',
 						'rate','2kbit','burst','4k','continue',
 					'flowid',"$classID:1",
@@ -549,9 +574,10 @@ sub do_add {
 					'dev',$rxiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','protocol','1','0xff',
+						'match','u8','0x1','0xff', # ICMP
+							'at',9+$iphdr_offset,
 					'police',
 						'rate','2kbit','burst','4k','continue',
 					'flowid',"$classID:1",
@@ -562,12 +588,12 @@ sub do_add {
 					'dev',$txiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','protocol','0x6','0xff', # TCP
-						'match','u8','0x05','0x0f','at','0', # ??
-						'match','u8','0x10','0xff','at','33', # ACK
-						'match','u16','0x0000','0xffc0','at','2',
+						'match','u8','0x6','0xff', # TCP
+							'at',9+$iphdr_offset,
+						'match','u8','0x10','0xff', # ACK
+							'at',33+$iphdr_offset,
 					'police',
 						'rate','2kbit','burst','4k','continue',
 					'flowid',"$classID:1",
@@ -577,12 +603,12 @@ sub do_add {
 					'dev',$rxiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','protocol','0x6','0xff', # TCP
-						'match','u8','0x05','0x0f','at','0', # ??
-						'match','u8','0x10','0xff','at','33', # ACK
-						'match','u16','0x0000','0xffc0','at','2',
+						'match','u8','0x6','0xff', # TCP
+							'at',9+$iphdr_offset,
+						'match','u8','0x10','0xff', # ACK
+							'at',33+$iphdr_offset,
 					'police',
 						'rate','2kbit','burst','4k','continue',
 					'flowid',"$classID:1",
@@ -593,12 +619,12 @@ sub do_add {
 					'dev',$txiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','protocol','0x6','0xff', # TCP
-						'match','u8','0x05','0x0f','at','0', # ??
-						'match','u8','0x12','0x12','at','33', # SYN-ACK
-						'match','u16','0x0000','0xffc0','at','2',
+						'match','u8','0x6','0xff', # TCP
+							'at',9+$iphdr_offset,
+						'match','u8','0x12','0xff', # SYN-ACK
+							'at',33+$iphdr_offset,
 					'police',
 						'rate','2kbit','burst','4k','continue',
 					'flowid',"$classID:1",
@@ -608,12 +634,12 @@ sub do_add {
 					'dev',$rxiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','protocol','0x6','0xff', # TCP
-						'match','u8','0x05','0x0f','at','0', # ??
-						'match','u8','0x12','0x12','at','33', # SYN-ACK
-						'match','u16','0x0000','0xffc0','at','2',
+						'match','u8','0x6','0xff', # TCP
+							'at',9+$iphdr_offset,
+						'match','u8','0x12','0xff', # SYN-ACK
+							'at',33+$iphdr_offset,
 					'police',
 						'rate','2kbit','burst','4k','continue',
 					'flowid',"$classID:1",
@@ -624,12 +650,12 @@ sub do_add {
 					'dev',$txiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','protocol','0x6','0xff', # TCP
-						'match','u8','0x05','0x0f','at','0', # ??
-						'match','u8','0x01','0x01','at','33', # FIN
-						'match','u16','0x0000','0xffc0','at','2',
+						'match','u8','0x6','0xff', # TCP
+							'at',9+$iphdr_offset,
+						'match','u8','0x1','0xff', # FIN
+							'at',33+$iphdr_offset,
 					'police',
 						'rate','2kbit','burst','4k','continue',
 					'flowid',"$classID:1",
@@ -639,12 +665,12 @@ sub do_add {
 					'dev',$rxiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','protocol','0x6','0xff', # TCP
-						'match','u8','0x05','0x0f','at','0', # ??
-						'match','u8','0x01','0x01','at','33', # FIN
-						'match','u16','0x0000','0xffc0','at','2',
+						'match','u8','0x6','0xff', # TCP
+							'at',9+$iphdr_offset,
+						'match','u8','0x1','0xff', # FIN
+							'at',33+$iphdr_offset,
 					'police',
 						'rate','2kbit','burst','4k','continue',
 					'flowid',"$classID:1",
@@ -655,12 +681,12 @@ sub do_add {
 					'dev',$txiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','protocol','0x6','0xff', # TCP
-						'match','u8','0x05','0x0f','at','0', # ??
-						'match','u8','0x04','0x04','at','33', # RST
-						'match','u16','0x0000','0xffc0','at','2',
+						'match','u8','0x6','0xff', # TCP
+							'at',9+$iphdr_offset,
+						'match','u8','0x4','0xff', # RST
+							'at',33+$iphdr_offset,
 					'police',
 						'rate','2kbit','burst','4k','continue',
 					'flowid',"$classID:1",
@@ -670,12 +696,12 @@ sub do_add {
 					'dev',$rxiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','protocol','0x6','0xff', # TCP
-						'match','u8','0x05','0x0f','at','0', # ??
-						'match','u8','0x04','0x04','at','33', # RST
-						'match','u16','0x0000','0xffc0','at','2',
+						'match','u8','0x6','0xff', # TCP
+							'at',9+$iphdr_offset,
+						'match','u8','0x4','0xff', # RST
+							'at',33+$iphdr_offset,
 					'police',
 						'rate','2kbit','burst','4k','continue',
 					'flowid',"$classID:1",
@@ -686,9 +712,10 @@ sub do_add {
 					'dev',$txiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','sport','53','0xffff',
+						'match','u16','0x0035','0xffff', # SPORT 53
+							'at',20+$iphdr_offset,
 					'police',
 						'rate','2kbit','burst','4k','continue',
 					'flowid',"$classID:1",
@@ -698,9 +725,10 @@ sub do_add {
 					'dev',$txiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','dport','53','0xffff',
+						'match','u16','0x0035','0xffff', # DPORT 53
+							'at',22+$iphdr_offset,
 					'police',
 						'rate','2kbit','burst','4k','continue',
 					'flowid',"$classID:1",
@@ -710,9 +738,10 @@ sub do_add {
 					'dev',$rxiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','sport','53','0xffff',
+						'match','u16','0x0035','0xffff', # SPORT 53
+							'at',20+$iphdr_offset,
 					'police',
 						'rate','2kbit','burst','4k','continue',
 					'flowid',"$classID:1",
@@ -722,9 +751,10 @@ sub do_add {
 					'dev',$rxiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','dport','53','0xffff',
+						'match','u16','0x0035','0xffff', # DPORT 53
+							'at',22+$iphdr_offset,
 					'police',
 						'rate','2kbit','burst','4k','continue',
 					'flowid',"$classID:1",
@@ -735,9 +765,10 @@ sub do_add {
 					'dev',$txiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','sport','5060','0xffff',
+						'match','u16','0x13c4','0xffff', # SPORT 5060
+							'at',20+$iphdr_offset,
 					'police',
 						'rate','128kbit','burst','40k','continue',
 					'flowid',"$classID:1",
@@ -747,9 +778,10 @@ sub do_add {
 					'dev',$txiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','dport','5060','0xffff',
+						'match','u16','0x13c4','0xffff', # DPORT 5060
+							'at',22+$iphdr_offset,
 					'police',
 						'rate','128kbit','burst','40k','continue',
 					'flowid',"$classID:1",
@@ -759,9 +791,10 @@ sub do_add {
 					'dev',$rxiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','sport','5060','0xffff',
+						'match','u16','0x13c4','0xffff', # SPORT 5060
+							'at',20+$iphdr_offset,
 					'police',
 						'rate','128kbit','burst','40k','continue',
 					'flowid',"$classID:1",
@@ -771,9 +804,10 @@ sub do_add {
 					'dev',$rxiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','dport','5060','0xffff',
+						'match','u16','0x13c4','0xffff', # DPORT 5060
+							'at',22+$iphdr_offset,
 					'police',
 						'rate','128kbit','burst','40k','continue',
 					'flowid',"$classID:1",
@@ -784,10 +818,12 @@ sub do_add {
 					'dev',$txiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','protocol','6','0xff', # TCP
-						'match','ip','sport','25','0xffff',
+						'match','u8','0x6','0xff', # TCP
+							'at',9+$iphdr_offset,
+						'match','u16','0x19','0xffff', # SPORT 25
+							'at',20+$iphdr_offset,
 					'flowid',"$classID:2",
 		]);
 		$kernel->post("_tc" => "queue" => [
@@ -795,10 +831,12 @@ sub do_add {
 					'dev',$txiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','protocol','6','0xff', # TCP
-						'match','ip','dport','25','0xffff',
+						'match','u8','0x6','0xff', # TCP
+							'at',9+$iphdr_offset,
+						'match','u16','0x19','0xffff', # DPORT 25
+							'at',22+$iphdr_offset,
 					'flowid',"$classID:2",
 		]);
 		$kernel->post("_tc" => "queue" => [
@@ -806,10 +844,12 @@ sub do_add {
 					'dev',$rxiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','protocol','6','0xff', # TCP
-						'match','ip','sport','25','0xffff',
+						'match','u8','0x6','0xff', # TCP
+							'at',9+$iphdr_offset,
+						'match','u16','0x19','0xffff', # SPORT 25
+							'at',20+$iphdr_offset,
 					'flowid',"$classID:2",
 		]);
 		$kernel->post("_tc" => "queue" => [
@@ -817,10 +857,12 @@ sub do_add {
 					'dev',$rxiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','protocol','6','0xff', # TCP
-						'match','ip','dport','25','0xffff',
+						'match','u8','0x6','0xff', # TCP
+							'at',9+$iphdr_offset,
+						'match','u16','0x19','0xffff', # DPORT 25
+							'at',22+$iphdr_offset,
 					'flowid',"$classID:2",
 		]);
 		# POP3
@@ -829,10 +871,12 @@ sub do_add {
 					'dev',$txiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','protocol','6','0xff', # TCP
-						'match','ip','sport','110','0xffff',
+						'match','u8','0x6','0xff', # TCP
+							'at',9+$iphdr_offset,
+						'match','u16','0x6e','0xffff', # SPORT 110
+							'at',20+$iphdr_offset,
 					'flowid',"$classID:2",
 		]);
 		$kernel->post("_tc" => "queue" => [
@@ -840,10 +884,12 @@ sub do_add {
 					'dev',$txiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','protocol','6','0xff', # TCP
-						'match','ip','dport','110','0xffff',
+						'match','u8','0x6','0xff', # TCP
+							'at',9+$iphdr_offset,
+						'match','u16','0x6e','0xffff', # DPORT 110
+							'at',22+$iphdr_offset,
 					'flowid',"$classID:2",
 		]);
 		$kernel->post("_tc" => "queue" => [
@@ -851,10 +897,12 @@ sub do_add {
 					'dev',$rxiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','protocol','6','0xff', # TCP
-						'match','ip','sport','110','0xffff',
+						'match','u8','0x6','0xff', # TCP
+							'at',9+$iphdr_offset,
+						'match','u16','0x6e','0xffff', # SPORT 110
+							'at',20+$iphdr_offset,
 					'flowid',"$classID:2",
 		]);
 		$kernel->post("_tc" => "queue" => [
@@ -862,10 +910,12 @@ sub do_add {
 					'dev',$rxiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','protocol','6','0xff', # TCP
-						'match','ip','dport','110','0xffff',
+						'match','u8','0x6','0xff', # TCP
+							'at',9+$iphdr_offset,
+						'match','u16','0x6e','0xffff', # DPORT 110
+							'at',22+$iphdr_offset,
 					'flowid',"$classID:2",
 		]);
 		# IMAP
@@ -874,10 +924,12 @@ sub do_add {
 					'dev',$txiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','protocol','6','0xff', # TCP
-						'match','ip','sport','143','0xffff',
+						'match','u8','0x6','0xff', # TCP
+							'at',9+$iphdr_offset,
+						'match','u16','0x8f','0xffff', # SPORT 143
+							'at',20+$iphdr_offset,
 					'flowid',"$classID:2",
 		]);
 		$kernel->post("_tc" => "queue" => [
@@ -885,10 +937,12 @@ sub do_add {
 					'dev',$txiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','protocol','6','0xff', # TCP
-						'match','ip','dport','143','0xffff',
+						'match','u8','0x6','0xff', # TCP
+							'at',9+$iphdr_offset,
+						'match','u16','0x8f','0xffff', # DPORT 143
+							'at',22+$iphdr_offset,
 					'flowid',"$classID:2",
 		]);
 		$kernel->post("_tc" => "queue" => [
@@ -896,10 +950,12 @@ sub do_add {
 					'dev',$rxiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','protocol','6','0xff', # TCP
-						'match','ip','sport','143','0xffff',
+						'match','u8','0x6','0xff', # TCP
+							'at',9+$iphdr_offset,
+						'match','u16','0x8f','0xffff', # SPORT 143
+							'at',20+$iphdr_offset,
 					'flowid',"$classID:2",
 		]);
 		$kernel->post("_tc" => "queue" => [
@@ -907,10 +963,12 @@ sub do_add {
 					'dev',$rxiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','protocol','6','0xff', # TCP
-						'match','ip','dport','143','0xffff',
+						'match','u8','0x6','0xff', # TCP
+							'at',9+$iphdr_offset,
+						'match','u16','0x8f','0xffff', # DPORT 143
+							'at',22+$iphdr_offset,
 					'flowid',"$classID:2",
 		]);
 		# HTTP
@@ -919,10 +977,12 @@ sub do_add {
 					'dev',$txiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','protocol','6','0xff', # TCP
-						'match','ip','sport','80','0xffff',
+						'match','u8','0x6','0xff', # TCP
+							'at',9+$iphdr_offset,
+						'match','u16','0x50','0xffff', # SPORT 80
+							'at',20+$iphdr_offset,
 					'flowid',"$classID:2",
 		]);
 		$kernel->post("_tc" => "queue" => [
@@ -930,10 +990,12 @@ sub do_add {
 					'dev',$txiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','protocol','6','0xff', # TCP
-						'match','ip','dport','80','0xffff',
+						'match','u8','0x6','0xff', # TCP
+							'at',9+$iphdr_offset,
+						'match','u16','0x50','0xffff', # DPORT 80
+							'at',22+$iphdr_offset,
 					'flowid',"$classID:2",
 		]);
 		$kernel->post("_tc" => "queue" => [
@@ -941,10 +1003,12 @@ sub do_add {
 					'dev',$rxiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','protocol','6','0xff', # TCP
-						'match','ip','sport','80','0xffff',
+						'match','u8','0x6','0xff', # TCP
+							'at',9+$iphdr_offset,
+						'match','u16','0x50','0xffff', # SPORT 80
+							'at',20+$iphdr_offset,
 					'flowid',"$classID:2",
 		]);
 		$kernel->post("_tc" => "queue" => [
@@ -952,10 +1016,12 @@ sub do_add {
 					'dev',$rxiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','protocol','6','0xff', # TCP
-						'match','ip','dport','80','0xffff',
+						'match','u8','0x6','0xff', # TCP
+							'at',9+$iphdr_offset,
+						'match','u16','0x50','0xffff', # DPORT 80
+							'at',22+$iphdr_offset,
 					'flowid',"$classID:2",
 		]);
 		# HTTPS
@@ -964,10 +1030,12 @@ sub do_add {
 					'dev',$txiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','protocol','6','0xff', # TCP
-						'match','ip','sport','443','0xffff',
+						'match','u8','0x6','0xff', # TCP
+							'at',9+$iphdr_offset,
+						'match','u16','0x1bb','0xffff', # SPORT 443
+							'at',20+$iphdr_offset,
 					'flowid',"$classID:2",
 		]);
 		$kernel->post("_tc" => "queue" => [
@@ -975,10 +1043,12 @@ sub do_add {
 					'dev',$txiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','protocol','6','0xff', # TCP
-						'match','ip','dport','443','0xffff',
+						'match','u8','0x6','0xff', # TCP
+							'at',9+$iphdr_offset,
+						'match','u16','0x1bb','0xffff', # DPORT 443
+							'at',22+$iphdr_offset,
 					'flowid',"$classID:2",
 		]);
 		$kernel->post("_tc" => "queue" => [
@@ -986,10 +1056,12 @@ sub do_add {
 					'dev',$rxiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','protocol','6','0xff', # TCP
-						'match','ip','sport','443','0xffff',
+						'match','u8','0x6','0xff', # TCP
+							'at',9+$iphdr_offset,
+						'match','u16','0x1bb','0xffff', # SPORT 443
+							'at',20+$iphdr_offset,
 					'flowid',"$classID:2",
 		]);
 		$kernel->post("_tc" => "queue" => [
@@ -997,10 +1069,12 @@ sub do_add {
 					'dev',$rxiface,
 					'parent',"$classID:",
 					'prio','1',
-					'protocol','ip',
+					'protocol',$ip_protocol,
 					'u32',
-						'match','ip','protocol','6','0xff', # TCP
-						'match','ip','dport','443','0xffff',
+						'match','u8','0x6','0xff', # TCP
+							'at',9+$iphdr_offset,
+						'match','u16','0x1bb','0xffff', # DPORT 443
+							'at',22+$iphdr_offset,
 					'flowid',"$classID:2",
 		]);
 	}
@@ -1083,7 +1157,7 @@ sub do_remove {
 				'parent','1:',
 				'prio','10',
 				'handle',$filterHandle,
-				'protocol','ip',
+				'protocol',$ip_protocol,
 				'u32',
 	]);
 	$kernel->post("_tc" => "queue" => [
@@ -1092,7 +1166,7 @@ sub do_remove {
 				'parent','1:',
 				'prio','10',
 				'handle',$filterHandle,
-				'protocol','ip',
+				'protocol',$ip_protocol,
 				'u32',
 	]);
 	# Clear up the class
