@@ -478,8 +478,19 @@ sub process_change {
 	$userChange->{'TrafficLimitTx'} = $user->{'TrafficLimitTx'};
 	$userChange->{'TrafficLimitRx'} = $user->{'TrafficLimitRx'};
 	# Take base limits if we don't have any burst values set
-	$userChange->{'TrafficLimitTxBurst'} = defined($user->{'TrafficLimitTxBurst'}) ? $user->{'TrafficLimitTxBurst'} : $user->{'TrafficLimitTx'};
-	$userChange->{'TrafficLimitRxBurst'} = defined($user->{'TrafficLimitRxBurst'}) ? $user->{'TrafficLimitRxBurst'} : $user->{'TrafficLimitRx'};
+	$userChange->{'TrafficLimitTxBurst'} = $user->{'TrafficLimitTxBurst'};
+	$userChange->{'TrafficLimitRxBurst'} = $user->{'TrafficLimitRxBurst'};
+
+	# If we don't have burst limits, set them to the traffic limit, and reset the limit to 25%
+	if (!defined($userChange->{'TrafficLimitTxBurst'})) {
+		$userChange->{'TrafficLimitTxBurst'} = $userChange->{'TrafficLimitTx'};
+		$userChange->{'TrafficLimitTx'} = int($userChange->{'TrafficLimitTxBurst'}/4);
+	}
+	if (!defined($userChange->{'TrafficLimitRxBurst'})) {
+		$userChange->{'TrafficLimitRxBurst'} = $userChange->{'TrafficLimitRx'};
+		$userChange->{'TrafficLimitRx'} = int($userChange->{'TrafficLimitRxBurst'}/4);
+	}
+
 
 	# Optional priority, we default to 5
 	$userChange->{'TrafficPriority'} = defined($user->{'TrafficPriority'}) ? $user->{'TrafficPriority'} : 5;
