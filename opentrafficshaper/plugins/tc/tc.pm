@@ -41,6 +41,16 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 
 use constant {
 	VERSION => '0.0.1',
+
+	# 5% of a link can be used for very high priority traffic
+	PROTO_RATE_LIMIT => 5,
+	PROTO_RATE_BURST_MIN => 16,  # With a minimum burst of 8KiB
+	PROTO_RATE_BURST_MAXM => 1.5,  # Multiplier for burst min to get to burst max
+
+	# High priority traffic gets the first 20% of the bandidth to itself
+	PRIO_RATE_LIMIT => 20,
+	PRIO_RATE_BURST_MIN => 32,  # With a minimum burst of 40KiB
+	PRIO_RATE_BURST_MAXM => 1.5,  # Multiplier for burst min to get to burst max
 };
 
 
@@ -62,14 +72,16 @@ my $globals;
 my $logger;
 
 
-# TODO: move to $config
-# Our own config stuff
-my $txiface = "eth1";
-my $txiface_rate = "100";
-my $rxiface = "eth0";
-my $rxiface_rate = "100";
-my $ip_protocol = "ip";
-my $iphdr_offset = 0;
+# Our configuration
+my $config = {
+	'txiface' => "eth1",
+	'txiface_rate' => 100,
+	'rxiface' => "eth0",
+	'rxiface_rate' => 100,
+
+	'ip_protocol' => "ip",
+	'iphdr_offset' => 0,
+};
 
 # Queue of tasks to run
 my @taskQueue = ();
@@ -101,27 +113,27 @@ sub plugin_init
 	# Check our interfaces
 	if (defined(my $txi = $globals->{'file.config'}->{'plugin.tc'}->{'txiface'})) {
 		$logger->log(LOG_INFO,"[TC] Set txiface to '$txi'");
-		$txiface = $txi;
+		$config->{'txiface'} = $txi;
 	}
 	if (defined(my $txir = $globals->{'file.config'}->{'plugin.tc'}->{'txiface_rate'})) {
 		$logger->log(LOG_INFO,"[TC] Set txiface_rate to '$txir'");
-		$txiface_rate = $txir;
+		$config->{'txiface_rate'} = $txir;
 	}
 	if (defined(my $rxi = $globals->{'file.config'}->{'plugin.tc'}->{'rxiface'})) {
 		$logger->log(LOG_INFO,"[TC] Set rxiface to '$rxi'");
-		$rxiface = $rxi;
+		$config->{'rxiface'} = $rxi;
 	}
 	if (defined(my $rxir = $globals->{'file.config'}->{'plugin.tc'}->{'rxiface_rate'})) {
 		$logger->log(LOG_INFO,"[TC] Set rxiface_rate to '$rxir'");
-		$rxiface_rate = $rxir;
+		$config->{'rxiface_rate'} = $rxir;
 	}
 	if (defined(my $proto = $globals->{'file.config'}->{'plugin.tc'}->{'protocol'})) {
 		$logger->log(LOG_INFO,"[TC] Set protocol to '$proto'");
-		$ip_protocol = $proto;
+		$config->{'ip_protocol'} = $proto;
 	}
 	if (defined(my $offset = $globals->{'file.config'}->{'plugin.tc'}->{'iphdr_offset'})) {
 		$logger->log(LOG_INFO,"[TC] Set IP header offset to '$offset'");
-		$iphdr_offset = $offset;
+		$config->{'iphdr_offset'} = $offset;
 	}
 
 
@@ -138,14 +150,14 @@ sub plugin_init
 	# This is our session for communicating directly with tc, its alias is _tc
 	POE::Session->create(
 		inline_states => {
-			_start => \&tc_session_init,
+			_start => \&task_session_init,
 			# Public'ish
-			queue => \&tc_task_add,
+			queue => \&task_add,
 			# Internal
-			tc_child_stdout => \&tc_child_stdout,
-			tc_child_stderr => \&tc_child_stderr,
-			tc_child_close => \&tc_child_close,
-			tc_task_run_next => \&tc_task_run_next,
+			task_child_stdout => \&task_child_stdout,
+			task_child_stderr => \&task_child_stderr,
+			task_child_close => \&task_child_close,
+			task_run_next => \&task_run_next,
 		}
 	);
 }
@@ -155,66 +167,17 @@ sub plugin_init
 sub plugin_start
 {
 	# Initialize TX interface
-	$logger->log(LOG_INFO,"[TC] Queuing tasks to initialize '$txiface'");
-	_tc_task_add_to_queue([
-			'/sbin/tc','qdisc','del',
-				'dev',$txiface,
-				'root',
-	]);
-	_tc_task_add_to_queue([
-			'/sbin/tc','qdisc','add',
-				'dev',$txiface,
-				'root',
-				'handle','1:',
-				'htb',
-	]);
-	_tc_task_add_to_queue([
-			'/sbin/tc','class','add',
-				'dev',$txiface,
-				'parent','1:',
-				'classid','1:1',
-				'htb',
-					'rate',$txiface_rate."mbit",
-	]);
-	_tc_task_add_to_queue([
-			'/sbin/tc','filter','add',
-				'dev',$txiface,
-				'parent','1:',
-				'prio','10',
-				'protocol',$ip_protocol,
-				'u32',
-	]);
+	$logger->log(LOG_INFO,"[TC] Queuing tasks to initialize '$config->{'txiface'}'");
+	_tc_init_iface($config->{'txiface'},$config->{'txiface_rate'});
+	tc_addtask_optimize(undef,$config->{'txiface'},3,$config->{'txiface_rate'}*1024); # Rate is in mbit
+	_tc_sfq_iface($config->{'txiface'},3,3,$config->{'txiface_rate'});
 
 	# Initialize RX interface
-	$logger->log(LOG_INFO,"[TC] Queuing tasks to initialize '$rxiface'");
-	_tc_task_add_to_queue([
-			'/sbin/tc','qdisc','del',
-				'dev',$rxiface,
-				'root',
-	]);
-	_tc_task_add_to_queue([
-			'/sbin/tc','qdisc','add',
-				'dev',$rxiface,
-				'root',
-				'handle','1:',
-				'htb',
-	]);
-	_tc_task_add_to_queue([
-			'/sbin/tc','class','add',
-				'dev',$rxiface,
-				'parent','1:',
-				'classid','1:1',
-				'htb',
-					'rate',$rxiface_rate."mbit",
-	]);
-	_tc_task_add_to_queue([
-			'/sbin/tc','filter','add',
-				'dev',$rxiface,
-				'parent','1:',
-				'prio','10',
-				'protocol',$ip_protocol,
-				'u32',
-	]);
+	$logger->log(LOG_INFO,"[TC] Queuing tasks to initialize '$config->{'rxiface'}'");
+	_tc_init_iface($config->{'rxiface'},$config->{'rxiface_rate'});
+	tc_addtask_optimize(undef,$config->{'rxiface'},3,$config->{'rxiface_rate'}*1024); # Rate is in mbit
+	_tc_sfq_iface($config->{'rxiface'},3,3,$config->{'rxiface_rate'});
+
 	$logger->log(LOG_INFO,"[TC] Started");
 }
 
@@ -263,54 +226,54 @@ sub do_add {
 		# Create second level hash table for $ip1
 		$kernel->post("_tc" => "queue" => [
 				'/sbin/tc','filter','add',
-					'dev',$txiface,
+					'dev',$config->{'txiface'},
 					'parent','1:',
 					'prio','10',
 					'handle',"$filterID:",
-					'protocol',$ip_protocol,
+					'protocol',$config->{'ip_protocol'},
 					'u32',
 						'divisor','256',
 		]);
 		$kernel->post("_tc" => "queue" => [
 				'/sbin/tc','filter','add',
-					'dev',$rxiface,
+					'dev',$config->{'rxiface'},
 					'parent','1:',
 					'prio','10',
 					'handle',"$filterID:",
-					'protocol',$ip_protocol,
+					'protocol',$config->{'ip_protocol'},
 					'u32',
 						'divisor','256',
 		]);
 		# Link hash table
 		$kernel->post("_tc" => "queue" => [
 				'/sbin/tc','filter','add',
-					'dev',$txiface,
+					'dev',$config->{'txiface'},
 					'parent','1:',
 					'prio','10',
-					'protocol',$ip_protocol,
+					'protocol',$config->{'ip_protocol'},
 					'u32',
 						# Root hash table
 						'ht','800::',
 							'match','ip','dst',"$ip1.0.0.0/8",
-								'at',16+$iphdr_offset,
+								'at',16+$config->{'iphdr_offset'},
 						'hashkey','mask','0x00ff0000',
-							'at',16+$iphdr_offset,
+							'at',16+$config->{'iphdr_offset'},
 						# Link to our hash table
 						'link',"$filterID:"
 		]);
 		$kernel->post("_tc" => "queue" => [
 				'/sbin/tc','filter','add',
-					'dev',$rxiface,
+					'dev',$config->{'rxiface'},
 					'parent','1:',
 					'prio','10',
-					'protocol',$ip_protocol,
+					'protocol',$config->{'ip_protocol'},
 					'u32',
 						# Root hash table
 						'ht','800::',
 							'match','ip','src',"$ip1.0.0.0/8",
-								'at',12+$iphdr_offset,
+								'at',12+$config->{'iphdr_offset'},
 						'hashkey','mask','0x00ff0000',
-							'at',12+$iphdr_offset,
+							'at',12+$config->{'iphdr_offset'},
 						# Link to our hash table
 						'link',"$filterID:"
 		]);
@@ -330,54 +293,54 @@ sub do_add {
 		# Create second level hash table for $fl1
 		$kernel->post("_tc" => "queue" => [
 				'/sbin/tc','filter','add',
-					'dev',$txiface,
+					'dev',$config->{'txiface'},
 					'parent','1:',
 					'prio','10',
 					'handle',"$filterID:",
-					'protocol',$ip_protocol,
+					'protocol',$config->{'ip_protocol'},
 					'u32',
 						'divisor','256',
 		]);
 		$kernel->post("_tc" => "queue" => [
 				'/sbin/tc','filter','add',
-					'dev',$rxiface,
+					'dev',$config->{'rxiface'},
 					'parent','1:',
 					'prio','10',
 					'handle',"$filterID:",
-					'protocol',$ip_protocol,
+					'protocol',$config->{'ip_protocol'},
 					'u32',
 						'divisor','256',
 		]);
 		# Link hash table
 		$kernel->post("_tc" => "queue" => [
 				'/sbin/tc','filter','add',
-					'dev',$txiface,
+					'dev',$config->{'txiface'},
 					'parent','1:',
 					'prio','10',
-					'protocol',$ip_protocol,
+					'protocol',$config->{'ip_protocol'},
 					'u32',
 						# This is the 2nd level hash table
 						'ht',"${ip1HtHex}:${ip2Hex}:",
 							'match','ip','dst',"$ip1.$ip2.0.0/16",
-								'at',16+$iphdr_offset,
+								'at',16+$config->{'iphdr_offset'},
 						'hashkey','mask','0x0000ff00',
-							'at',16+$iphdr_offset,
+							'at',16+$config->{'iphdr_offset'},
 						# That we're linking to our hash table
 						'link',"$filterID:"
 		]);
 		$kernel->post("_tc" => "queue" => [
 				'/sbin/tc','filter','add',
-					'dev',$rxiface,
+					'dev',$config->{'rxiface'},
 					'parent','1:',
 					'prio','10',
-					'protocol',$ip_protocol,
+					'protocol',$config->{'ip_protocol'},
 					'u32',
 						# This is the 2nd level hash table
 						'ht',"${ip1HtHex}:${ip2Hex}:",
 							'match','ip','src',"$ip1.$ip2.0.0/16",
-								'at',12+$iphdr_offset,
+								'at',12+$config->{'iphdr_offset'},
 						'hashkey','mask','0x0000ff00',
-							'at',12+$iphdr_offset,
+							'at',12+$config->{'iphdr_offset'},
 						# That we're linking to our hash table
 						'link',"$filterID:"
 		]);
@@ -397,54 +360,54 @@ sub do_add {
 		# Create second level hash table for $fl1
 		$kernel->post("_tc" => "queue" => [
 				'/sbin/tc','filter','add',
-					'dev',$txiface,
+					'dev',$config->{'txiface'},
 					'parent','1:',
 					'prio','10',
 					'handle',"$filterID:",
-					'protocol',$ip_protocol,
+					'protocol',$config->{'ip_protocol'},
 					'u32',
 						'divisor','256',
 		]);
 		$kernel->post("_tc" => "queue" => [
 				'/sbin/tc','filter','add',
-					'dev',$rxiface,
+					'dev',$config->{'rxiface'},
 					'parent','1:',
 					'prio','10',
 					'handle',"$filterID:",
-					'protocol',$ip_protocol,
+					'protocol',$config->{'ip_protocol'},
 					'u32',
 						'divisor','256',
 		]);
 		# Link hash table
 		$kernel->post("_tc" => "queue" => [
 				'/sbin/tc','filter','add',
-					'dev',$txiface,
+					'dev',$config->{'txiface'},
 					'parent','1:',
 					'prio','10',
-					'protocol',$ip_protocol,
+					'protocol',$config->{'ip_protocol'},
 					'u32',
 						# This is the 3rd level hash table
 						'ht',"${ip2HtHex}:${ip3Hex}:",
 							'match','ip','dst',"$ip1.$ip2.$ip3.0/24",
-								'at',16+$iphdr_offset,
+								'at',16+$config->{'iphdr_offset'},
 						'hashkey','mask','0x000000ff',
-							'at',16+$iphdr_offset,
+							'at',16+$config->{'iphdr_offset'},
 						# That we're linking to our hash table
 						'link',"$filterID:"
 		]);
 		$kernel->post("_tc" => "queue" => [
 				'/sbin/tc','filter','add',
-					'dev',$rxiface,
+					'dev',$config->{'rxiface'},
 					'parent','1:',
 					'prio','10',
-					'protocol',$ip_protocol,
+					'protocol',$config->{'ip_protocol'},
 					'u32',
 						# This is the 3rd level hash table
 						'ht',"${ip2HtHex}:${ip3Hex}:",
 							'match','ip','src',"$ip1.$ip2.$ip3.0/24",
-								'at',12+$iphdr_offset,
+								'at',12+$config->{'iphdr_offset'},
 						'hashkey','mask','0x000000ff',
-							'at',12+$iphdr_offset,
+							'at',12+$config->{'iphdr_offset'},
 						# That we're linking to our hash table
 						'link',"$filterID:"
 		]);
@@ -474,8 +437,8 @@ sub do_add {
 		# Create main rate limiting classes
 		$kernel->post("_tc" => "queue" => [
 				'/sbin/tc','class','add',
-					'dev',$txiface,
-					'parent','1:1',
+					'dev',$config->{'txiface'},
+					'parent','1:2',
 					'classid',"1:$classID",
 					'htb',
 						'rate', $user->{'TrafficLimitTx'} . "kbit",
@@ -484,8 +447,8 @@ sub do_add {
 		]);
 		$kernel->post("_tc" => "queue" => [
 				'/sbin/tc','class','add',
-					'dev',$rxiface,
-					'parent','1:1',
+					'dev',$config->{'rxiface'},
+					'parent','1:2',
 					'classid',"1:$classID",
 					'htb',
 						'rate', $user->{'TrafficLimitRx'} . "kbit",
@@ -494,589 +457,39 @@ sub do_add {
 		]);
 
 		#
-		# DEFINE 3 PRIO BANDS
-		#
-
-		# We then prioritize traffic into 3 bands based on TOS
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','qdisc','add',
-					'dev',$txiface,
-					'parent',"1:$classID",
-					'handle',"$classID:",
-					'prio',
-						'bands','3',
-						'priomap','2','2','2','2','2','2','2','2','2','2','2','2','2','2','2','2',
-		]);
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','qdisc','add',
-					'dev',$rxiface,
-					'parent',"1:$classID",
-					'handle',"$classID:",
-					'prio',
-						'bands','3',
-						'priomap','2','2','2','2','2','2','2','2','2','2','2','2','2','2','2','2',
-		]);
-
-
-		#
 		# SETUP DEFAULT CLASSIFICATION OF TRAFFIC
 		#
 
 		# Default traffic classification to main class
 		$kernel->post("_tc" => "queue" => [
 				'/sbin/tc','filter','add',
-					'dev',$txiface,
+					'dev',$config->{'txiface'},
 					'parent','1:',
 					'prio','10',
 					'handle',$filterHandle,
-					'protocol',$ip_protocol,
+					'protocol',$config->{'ip_protocol'},
 					'u32',
 						'ht',"${ip3HtHex}:${ip4Hex}:",
 							'match','ip','dst',$user->{'IP'},
-								'at',16+$iphdr_offset,
+								'at',16+$config->{'iphdr_offset'},
 					'flowid',"1:$classID",
 		]);
 		$kernel->post("_tc" => "queue" => [
 				'/sbin/tc','filter','add',
-					'dev',$rxiface,
+					'dev',$config->{'rxiface'},
 					'parent','1:',
 					'prio','10',
 					'handle',$filterHandle,
-					'protocol',$ip_protocol,
+					'protocol',$config->{'ip_protocol'},
 					'u32',
 						'ht',"${ip3HtHex}:${ip4Hex}:",
 							'match','ip','src',$user->{'IP'},
-								'at',12+$iphdr_offset,
+								'at',12+$config->{'iphdr_offset'},
 					'flowid',"1:$classID",
 		]);
 
-
-		#
-		# CLASSIFICATIONS
-		#
-
-		# Prioritize ICMP up to a certain limit
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$txiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u8','0x1','0xff', # ICMP
-							'at',9+$iphdr_offset,
-					'police',
-						'rate','2kbit','burst','4k','continue',
-					'flowid',"$classID:1",
-		]);
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$rxiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u8','0x1','0xff', # ICMP
-							'at',9+$iphdr_offset,
-					'police',
-						'rate','2kbit','burst','4k','continue',
-					'flowid',"$classID:1",
-		]);
-		# Prioritize ACK up to a certain limit
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$txiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u8','0x6','0xff', # TCP
-							'at',9+$iphdr_offset,
-						'match','u8','0x10','0xff', # ACK
-							'at',33+$iphdr_offset,
-					'police',
-						'rate','2kbit','burst','4k','continue',
-					'flowid',"$classID:1",
-		]);
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$rxiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u8','0x6','0xff', # TCP
-							'at',9+$iphdr_offset,
-						'match','u8','0x10','0xff', # ACK
-							'at',33+$iphdr_offset,
-					'police',
-						'rate','2kbit','burst','4k','continue',
-					'flowid',"$classID:1",
-		]);
-		# Prioritize SYN-ACK up to a certain limit
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$txiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u8','0x6','0xff', # TCP
-							'at',9+$iphdr_offset,
-						'match','u8','0x12','0xff', # SYN-ACK
-							'at',33+$iphdr_offset,
-					'police',
-						'rate','2kbit','burst','4k','continue',
-					'flowid',"$classID:1",
-		]);
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$rxiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u8','0x6','0xff', # TCP
-							'at',9+$iphdr_offset,
-						'match','u8','0x12','0xff', # SYN-ACK
-							'at',33+$iphdr_offset,
-					'police',
-						'rate','2kbit','burst','4k','continue',
-					'flowid',"$classID:1",
-		]);
-		# Prioritize FIN up to a certain limit
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$txiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u8','0x6','0xff', # TCP
-							'at',9+$iphdr_offset,
-						'match','u8','0x1','0xff', # FIN
-							'at',33+$iphdr_offset,
-					'police',
-						'rate','2kbit','burst','4k','continue',
-					'flowid',"$classID:1",
-		]);
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$rxiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u8','0x6','0xff', # TCP
-							'at',9+$iphdr_offset,
-						'match','u8','0x1','0xff', # FIN
-							'at',33+$iphdr_offset,
-					'police',
-						'rate','2kbit','burst','4k','continue',
-					'flowid',"$classID:1",
-		]);
-		# Prioritize RST up to a certain limit
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$txiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u8','0x6','0xff', # TCP
-							'at',9+$iphdr_offset,
-						'match','u8','0x4','0xff', # RST
-							'at',33+$iphdr_offset,
-					'police',
-						'rate','2kbit','burst','4k','continue',
-					'flowid',"$classID:1",
-		]);
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$rxiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u8','0x6','0xff', # TCP
-							'at',9+$iphdr_offset,
-						'match','u8','0x4','0xff', # RST
-							'at',33+$iphdr_offset,
-					'police',
-						'rate','2kbit','burst','4k','continue',
-					'flowid',"$classID:1",
-		]);
-		# DNS
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$txiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u16','0x0035','0xffff', # SPORT 53
-							'at',20+$iphdr_offset,
-					'police',
-						'rate','2kbit','burst','4k','continue',
-					'flowid',"$classID:1",
-		]);
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$txiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u16','0x0035','0xffff', # DPORT 53
-							'at',22+$iphdr_offset,
-					'police',
-						'rate','2kbit','burst','4k','continue',
-					'flowid',"$classID:1",
-		]);
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$rxiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u16','0x0035','0xffff', # SPORT 53
-							'at',20+$iphdr_offset,
-					'police',
-						'rate','2kbit','burst','4k','continue',
-					'flowid',"$classID:1",
-		]);
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$rxiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u16','0x0035','0xffff', # DPORT 53
-							'at',22+$iphdr_offset,
-					'police',
-						'rate','2kbit','burst','4k','continue',
-					'flowid',"$classID:1",
-		]);
-		# VOIP
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$txiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u16','0x13c4','0xffff', # SPORT 5060
-							'at',20+$iphdr_offset,
-					'police',
-						'rate','128kbit','burst','40k','continue',
-					'flowid',"$classID:1",
-		]);
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$txiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u16','0x13c4','0xffff', # DPORT 5060
-							'at',22+$iphdr_offset,
-					'police',
-						'rate','128kbit','burst','40k','continue',
-					'flowid',"$classID:1",
-		]);
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$rxiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u16','0x13c4','0xffff', # SPORT 5060
-							'at',20+$iphdr_offset,
-					'police',
-						'rate','128kbit','burst','40k','continue',
-					'flowid',"$classID:1",
-		]);
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$rxiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u16','0x13c4','0xffff', # DPORT 5060
-							'at',22+$iphdr_offset,
-					'police',
-						'rate','128kbit','burst','40k','continue',
-					'flowid',"$classID:1",
-		]);
-		# SMTP
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$txiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u8','0x6','0xff', # TCP
-							'at',9+$iphdr_offset,
-						'match','u16','0x19','0xffff', # SPORT 25
-							'at',20+$iphdr_offset,
-					'flowid',"$classID:2",
-		]);
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$txiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u8','0x6','0xff', # TCP
-							'at',9+$iphdr_offset,
-						'match','u16','0x19','0xffff', # DPORT 25
-							'at',22+$iphdr_offset,
-					'flowid',"$classID:2",
-		]);
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$rxiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u8','0x6','0xff', # TCP
-							'at',9+$iphdr_offset,
-						'match','u16','0x19','0xffff', # SPORT 25
-							'at',20+$iphdr_offset,
-					'flowid',"$classID:2",
-		]);
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$rxiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u8','0x6','0xff', # TCP
-							'at',9+$iphdr_offset,
-						'match','u16','0x19','0xffff', # DPORT 25
-							'at',22+$iphdr_offset,
-					'flowid',"$classID:2",
-		]);
-		# POP3
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$txiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u8','0x6','0xff', # TCP
-							'at',9+$iphdr_offset,
-						'match','u16','0x6e','0xffff', # SPORT 110
-							'at',20+$iphdr_offset,
-					'flowid',"$classID:2",
-		]);
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$txiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u8','0x6','0xff', # TCP
-							'at',9+$iphdr_offset,
-						'match','u16','0x6e','0xffff', # DPORT 110
-							'at',22+$iphdr_offset,
-					'flowid',"$classID:2",
-		]);
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$rxiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u8','0x6','0xff', # TCP
-							'at',9+$iphdr_offset,
-						'match','u16','0x6e','0xffff', # SPORT 110
-							'at',20+$iphdr_offset,
-					'flowid',"$classID:2",
-		]);
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$rxiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u8','0x6','0xff', # TCP
-							'at',9+$iphdr_offset,
-						'match','u16','0x6e','0xffff', # DPORT 110
-							'at',22+$iphdr_offset,
-					'flowid',"$classID:2",
-		]);
-		# IMAP
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$txiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u8','0x6','0xff', # TCP
-							'at',9+$iphdr_offset,
-						'match','u16','0x8f','0xffff', # SPORT 143
-							'at',20+$iphdr_offset,
-					'flowid',"$classID:2",
-		]);
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$txiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u8','0x6','0xff', # TCP
-							'at',9+$iphdr_offset,
-						'match','u16','0x8f','0xffff', # DPORT 143
-							'at',22+$iphdr_offset,
-					'flowid',"$classID:2",
-		]);
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$rxiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u8','0x6','0xff', # TCP
-							'at',9+$iphdr_offset,
-						'match','u16','0x8f','0xffff', # SPORT 143
-							'at',20+$iphdr_offset,
-					'flowid',"$classID:2",
-		]);
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$rxiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u8','0x6','0xff', # TCP
-							'at',9+$iphdr_offset,
-						'match','u16','0x8f','0xffff', # DPORT 143
-							'at',22+$iphdr_offset,
-					'flowid',"$classID:2",
-		]);
-		# HTTP
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$txiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u8','0x6','0xff', # TCP
-							'at',9+$iphdr_offset,
-						'match','u16','0x50','0xffff', # SPORT 80
-							'at',20+$iphdr_offset,
-					'flowid',"$classID:2",
-		]);
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$txiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u8','0x6','0xff', # TCP
-							'at',9+$iphdr_offset,
-						'match','u16','0x50','0xffff', # DPORT 80
-							'at',22+$iphdr_offset,
-					'flowid',"$classID:2",
-		]);
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$rxiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u8','0x6','0xff', # TCP
-							'at',9+$iphdr_offset,
-						'match','u16','0x50','0xffff', # SPORT 80
-							'at',20+$iphdr_offset,
-					'flowid',"$classID:2",
-		]);
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$rxiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u8','0x6','0xff', # TCP
-							'at',9+$iphdr_offset,
-						'match','u16','0x50','0xffff', # DPORT 80
-							'at',22+$iphdr_offset,
-					'flowid',"$classID:2",
-		]);
-		# HTTPS
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$txiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u8','0x6','0xff', # TCP
-							'at',9+$iphdr_offset,
-						'match','u16','0x1bb','0xffff', # SPORT 443
-							'at',20+$iphdr_offset,
-					'flowid',"$classID:2",
-		]);
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$txiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u8','0x6','0xff', # TCP
-							'at',9+$iphdr_offset,
-						'match','u16','0x1bb','0xffff', # DPORT 443
-							'at',22+$iphdr_offset,
-					'flowid',"$classID:2",
-		]);
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$rxiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u8','0x6','0xff', # TCP
-							'at',9+$iphdr_offset,
-						'match','u16','0x1bb','0xffff', # SPORT 443
-							'at',20+$iphdr_offset,
-					'flowid',"$classID:2",
-		]);
-		$kernel->post("_tc" => "queue" => [
-				'/sbin/tc','filter','add',
-					'dev',$rxiface,
-					'parent',"$classID:",
-					'prio','1',
-					'protocol',$ip_protocol,
-					'u32',
-						'match','u8','0x6','0xff', # TCP
-							'at',9+$iphdr_offset,
-						'match','u16','0x1bb','0xffff', # DPORT 443
-							'at',22+$iphdr_offset,
-					'flowid',"$classID:2",
-		]);
+		tc_addtask_optimize($kernel,$config->{'txiface'},$classID,$user->{'TrafficLimitTx'});
+		tc_addtask_optimize($kernel,$config->{'rxiface'},$classID,$user->{'TrafficLimitRx'});
 	}
 
 	# Mark as live
@@ -1115,8 +528,8 @@ sub do_change {
 
 	$kernel->post("_tc" => "queue" => [
 			'/sbin/tc','class','change',
-				'dev',$txiface,
-				'parent','1:1',
+				'dev',$config->{'txiface'},
+				'parent','1:2',
 				'classid',"1:$user->{'tc.class'}",
 				'htb',
 					'rate', $trafficLimitTx . "kbit",
@@ -1125,8 +538,8 @@ sub do_change {
 	]);
 	$kernel->post("_tc" => "queue" => [
 			'/sbin/tc','class','change',
-				'dev',$rxiface,
-				'parent','1:1',
+				'dev',$config->{'rxiface'},
+				'parent','1:2',
 				'classid',"1:$user->{'tc.class'}",
 				'htb',
 					'rate', $trafficLimitRx . "kbit",
@@ -1153,33 +566,33 @@ sub do_remove {
 	# Clear up the filter
 	$kernel->post("_tc" => "queue" => [
 			'/sbin/tc','filter','del',
-				'dev',$txiface,
+				'dev',$config->{'txiface'},
 				'parent','1:',
 				'prio','10',
 				'handle',$filterHandle,
-				'protocol',$ip_protocol,
+				'protocol',$config->{'ip_protocol'},
 				'u32',
 	]);
 	$kernel->post("_tc" => "queue" => [
 			'/sbin/tc','filter','del',
-				'dev',$rxiface,
+				'dev',$config->{'rxiface'},
 				'parent','1:',
 				'prio','10',
 				'handle',$filterHandle,
-				'protocol',$ip_protocol,
+				'protocol',$config->{'ip_protocol'},
 				'u32',
 	]);
 	# Clear up the class
 	$kernel->post("_tc" => "queue" => [
 			'/sbin/tc','class','del',
-				'dev',$txiface,
-				'parent','1:1',
+				'dev',$config->{'txiface'},
+				'parent','1:2',
 				'classid',"1:$classID",
 	]);
 	$kernel->post("_tc" => "queue" => [
 			'/sbin/tc','class','del',
-				'dev',$rxiface,
-				'parent','1:1',
+				'dev',$config->{'rxiface'},
+				'parent','1:2',
 				'classid',"1:$classID",
 	]);
 
@@ -1252,6 +665,499 @@ sub disposeTcClass
 }
 
 
+# Function to initialize an interface
+sub _tc_init_iface
+{
+	my ($iface,$rate) = @_;
+
+
+	# Work out rates
+	my $BERate = int($rate/10); # We use 10% of the rate for Best effort
+	my $CIRate = $rate - $BERate; # Rest is for our clients
+
+	_task_add_to_queue([
+			'/sbin/tc','qdisc','del',
+				'dev',$iface,
+				'root',
+	]);
+	_task_add_to_queue([
+			'/sbin/tc','qdisc','add',
+				'dev',$iface,
+				'root',
+				'handle','1:',
+				'htb',
+					'default','3' # Push any unclassified traffic to 1:3
+	]);
+	_task_add_to_queue([
+			'/sbin/tc','class','add',
+				'dev',$iface,
+				'parent','1:',
+				'classid','1:1',
+				'htb',
+					'rate',"${rate}mbit",
+	]);
+	_task_add_to_queue([
+			'/sbin/tc','class','add',
+				'dev',$iface,
+				'parent','1:1',
+				'classid','1:2',
+				'htb',
+					'rate',"${CIRate}mbit",
+					'ceil',"${rate}mbit",
+					# Highest priority
+					'prio','5',
+	]);
+	_task_add_to_queue([
+			'/sbin/tc','class','add',
+				'dev',$iface,
+				'parent','1:1',
+				'classid','1:3',
+				'htb',
+					'rate',"${BERate}mbit",
+					'ceil',"${rate}mbit",
+					# Lowest priority
+					'prio','7',
+	]);
+}
+
+# Function to apply SFQ to the interface priority classes
+sub _tc_sfq_iface
+{
+	my ($iface,$prioClass,$prioCount,$rate) = @_;
+
+
+	# Make the queue size big enough
+	my $queueSize = ($rate * 1024 * 1024) / 8;
+
+	# RED metrics (sort of as per manpage)
+	my $redAvPkt = 1000;
+	my $redMax = int($queueSize / 4);
+	my $redMin = int($redMax / 3);
+	my $redBurst = int( ($redMin+$redMin+$redMax) / (4*$redAvPkt));
+	my $redLimit = $queueSize;
+
+	# Use $i as an increasing number to be added to the base class
+	my $i = 1;
+	_task_add_to_queue([
+			'/sbin/tc','qdisc','add',
+				'dev',$iface,
+				'parent',"$prioClass:$i",
+				'handle',$prioClass+$i.":",
+				'bfifo',
+					'limit',$queueSize,
+	]);
+
+	$i++;
+	_task_add_to_queue([
+			'/sbin/tc','qdisc','add',
+				'dev',$iface,
+				'parent',"$prioClass:$i",
+				'handle',$prioClass+$i.":",
+# FIXME: NK - try enable the below
+#				'estimator','1sec','4sec', # Quick monitoring, every 1s with 4s constraint
+				'red',
+					'min',$redMin,
+					'max',$redMax,
+					'limit',$redLimit,
+					'burst',$redBurst,
+					'avpkt',$redAvPkt,
+					'ecn'
+# XXX: Very new kernels only ... use redflowlimit in future
+#					'sfq',
+#						'divisor','16384',
+#						'headdrop',
+#						'redflowlimit',$queueSize,
+#						'ecn',
+	]);
+
+	$i++;
+	_task_add_to_queue([
+			'/sbin/tc','qdisc','add',
+				'dev',$iface,
+				'parent',"$prioClass:$i",
+				'handle',$prioClass+$i.":",
+				'red',
+					'min',$redMin,
+					'max',$redMax,
+					'limit',$redLimit,
+					'burst',$redBurst,
+					'avpkt',$redAvPkt,
+					'ecn'
+	]);
+}
+
+# Function to apply traffic optimizations to a classes
+sub tc_addtask_optimize
+{
+	my ($kernel,$iface,$classID,$rate) = @_;
+
+
+	my $callTc;
+	if (defined($kernel)) {
+		# Use our kernel object
+		$callTc = sub {
+			$kernel->post(@_);
+		};
+	} else {
+		# Fake it if we don't have a kernel and just add to the task queue
+		$callTc = sub { 
+			_task_add_to_queue($_[2]);
+		};
+	}
+
+	# Rate for things like ICMP , ACK, SYN ... etc
+	my $rateBand1 = int($rate * (PROTO_RATE_LIMIT / 100));
+	$rateBand1 = PROTO_RATE_BURST_MIN if ($rateBand1 < PROTO_RATE_BURST_MIN); 
+	my $rateBand1Burst = ($rateBand1 / 8) * PROTO_RATE_BURST_MAXM;
+	# Rate for things like VoIP/SSH/Telnet
+	my $rateBand2 = int($rate * (PRIO_RATE_LIMIT / 100));
+	$rateBand2 = PRIO_RATE_BURST_MIN if ($rateBand2 < PRIO_RATE_BURST_MIN);
+	my $rateBand2Burst = ($rateBand2 / 8) * PRIO_RATE_BURST_MAXM;
+
+	#
+	# DEFINE 3 PRIO BANDS
+	#
+
+	# We then prioritize traffic into 3 bands based on TOS
+	$callTc->("_tc" => "queue" => [
+			'/sbin/tc','qdisc','add',
+				'dev',$iface,
+				'parent',"1:$classID",
+				'handle',"$classID:",
+				'prio',
+					'bands','3',
+					'priomap','2','2','2','2','2','2','2','2','2','2','2','2','2','2','2','2',
+	]);
+
+
+	#
+	# CLASSIFICATIONS
+	#
+
+	# Prioritize ICMP up to a certain limit
+	$callTc->("_tc" => "queue" => [
+			'/sbin/tc','filter','add',
+				'dev',$iface,
+				'parent',"$classID:",
+				'prio','1',
+				'protocol',$config->{'ip_protocol'},
+				'u32',
+					'match','u8','0x1','0xff', # ICMP
+						'at',9+$config->{'iphdr_offset'},
+				'police',
+					'rate',"${rateBand1}kbit",'burst',"${rateBand1Burst}k",'continue',
+				'flowid',"$classID:1",
+	]);
+	# Prioritize ACK up to a certain limit
+	$callTc->("_tc" => "queue" => [
+			'/sbin/tc','filter','add',
+				'dev',$iface,
+				'parent',"$classID:",
+				'prio','1',
+				'protocol',$config->{'ip_protocol'},
+				'u32',
+					'match','u8','0x6','0xff', # TCP
+						'at',9+$config->{'iphdr_offset'},
+					'match','u8','0x10','0xff', # ACK
+						'at',33+$config->{'iphdr_offset'},
+				'police',
+					'rate',"${rateBand1}kbit",'burst',"${rateBand1Burst}k",'continue',
+				'flowid',"$classID:1",
+	]);
+	# Prioritize SYN-ACK up to a certain limit
+	$callTc->("_tc" => "queue" => [
+			'/sbin/tc','filter','add',
+				'dev',$iface,
+				'parent',"$classID:",
+				'prio','1',
+				'protocol',$config->{'ip_protocol'},
+				'u32',
+					'match','u8','0x6','0xff', # TCP
+						'at',9+$config->{'iphdr_offset'},
+					'match','u8','0x12','0xff', # SYN-ACK
+						'at',33+$config->{'iphdr_offset'},
+				'police',
+					'rate',"${rateBand1}kbit",'burst',"${rateBand1Burst}k",'continue',
+				'flowid',"$classID:1",
+	]);
+	# Prioritize FIN up to a certain limit
+	$callTc->("_tc" => "queue" => [
+			'/sbin/tc','filter','add',
+				'dev',$iface,
+				'parent',"$classID:",
+				'prio','1',
+				'protocol',$config->{'ip_protocol'},
+				'u32',
+					'match','u8','0x6','0xff', # TCP
+						'at',9+$config->{'iphdr_offset'},
+					'match','u8','0x1','0xff', # FIN
+						'at',33+$config->{'iphdr_offset'},
+				'police',
+					'rate',"${rateBand1}kbit",'burst',"${rateBand1Burst}k",'continue',
+				'flowid',"$classID:1",
+	]);
+	# Prioritize RST up to a certain limit
+	$callTc->("_tc" => "queue" => [
+			'/sbin/tc','filter','add',
+				'dev',$iface,
+				'parent',"$classID:",
+				'prio','1',
+				'protocol',$config->{'ip_protocol'},
+				'u32',
+					'match','u8','0x6','0xff', # TCP
+						'at',9+$config->{'iphdr_offset'},
+					'match','u8','0x4','0xff', # RST
+						'at',33+$config->{'iphdr_offset'},
+				'police',
+					'rate',"${rateBand1}kbit",'burst',"${rateBand1Burst}k",'continue',
+				'flowid',"$classID:1",
+	]);
+	# DNS
+	$callTc->("_tc" => "queue" => [
+			'/sbin/tc','filter','add',
+				'dev',$iface,
+				'parent',"$classID:",
+				'prio','1',
+				'protocol',$config->{'ip_protocol'},
+				'u32',
+					'match','u16','0x0035','0xffff', # SPORT 53
+						'at',20+$config->{'iphdr_offset'},
+				'police',
+					'rate',"${rateBand2}kbit",'burst',"${rateBand2Burst}k",'continue',
+				'flowid',"$classID:1",
+	]);
+	$callTc->("_tc" => "queue" => [
+			'/sbin/tc','filter','add',
+				'dev',$iface,
+				'parent',"$classID:",
+				'prio','1',
+				'protocol',$config->{'ip_protocol'},
+				'u32',
+					'match','u16','0x0035','0xffff', # DPORT 53
+						'at',22+$config->{'iphdr_offset'},
+				'police',
+					'rate',"${rateBand2}kbit",'burst',"${rateBand2Burst}k",'continue',
+				'flowid',"$classID:1",
+	]);
+	# VOIP
+	$callTc->("_tc" => "queue" => [
+			'/sbin/tc','filter','add',
+				'dev',$iface,
+				'parent',"$classID:",
+				'prio','1',
+				'protocol',$config->{'ip_protocol'},
+				'u32',
+					'match','u16','0x13c4','0xffff', # SPORT 5060
+						'at',20+$config->{'iphdr_offset'},
+				'police',
+					'rate',"${rateBand2}kbit",'burst',"${rateBand2Burst}k",'continue',
+				'flowid',"$classID:1",
+	]);
+	$callTc->("_tc" => "queue" => [
+			'/sbin/tc','filter','add',
+				'dev',$iface,
+				'parent',"$classID:",
+				'prio','1',
+				'protocol',$config->{'ip_protocol'},
+				'u32',
+					'match','u16','0x13c4','0xffff', # DPORT 5060
+						'at',22+$config->{'iphdr_offset'},
+				'police',
+					'rate',"${rateBand2}kbit",'burst',"${rateBand2Burst}k",'continue',
+				'flowid',"$classID:1",
+	]);
+	# SNMP
+	$callTc->("_tc" => "queue" => [
+			'/sbin/tc','filter','add',
+				'dev',$iface,
+				'parent',"$classID:",
+				'prio','1',
+				'protocol',$config->{'ip_protocol'},
+				'u32',
+					'match','u8','0x6','0xff', # TCP
+						'at',9+$config->{'iphdr_offset'},
+					'match','u16','0xa1','0xffff', # SPORT 161
+						'at',20+$config->{'iphdr_offset'},
+				'flowid',"$classID:1",
+	]);
+	$callTc->("_tc" => "queue" => [
+			'/sbin/tc','filter','add',
+				'dev',$iface,
+				'parent',"$classID:",
+				'prio','1',
+				'protocol',$config->{'ip_protocol'},
+				'u32',
+					'match','u8','0x6','0xff', # TCP
+						'at',9+$config->{'iphdr_offset'},
+					'match','u16','0xa1','0xffff', # DPORT 161
+						'at',22+$config->{'iphdr_offset'},
+				'flowid',"$classID:1",
+	]);
+	# FIXME: Make this customizable not hard coded
+	# Mikrotik Management Port
+	$callTc->("_tc" => "queue" => [
+			'/sbin/tc','filter','add',
+				'dev',$iface,
+				'parent',"$classID:",
+				'prio','1',
+				'protocol',$config->{'ip_protocol'},
+				'u32',
+					'match','u16','0x2063','0xffff', # SPORT 8291
+						'at',20+$config->{'iphdr_offset'},
+				'police',
+					'rate',"${rateBand2}kbit",'burst',"${rateBand2Burst}k",'continue',
+				'flowid',"$classID:1",
+	]);
+	$callTc->("_tc" => "queue" => [
+			'/sbin/tc','filter','add',
+				'dev',$iface,
+				'parent',"$classID:",
+				'prio','1',
+				'protocol',$config->{'ip_protocol'},
+				'u32',
+					'match','u16','0x2063','0xffff', # DPORT 8291
+						'at',22+$config->{'iphdr_offset'},
+				'police',
+					'rate',"${rateBand2}kbit",'burst',"${rateBand2Burst}k",'continue',
+				'flowid',"$classID:1",
+	]);
+	# SMTP
+	$callTc->("_tc" => "queue" => [
+			'/sbin/tc','filter','add',
+				'dev',$iface,
+				'parent',"$classID:",
+				'prio','1',
+				'protocol',$config->{'ip_protocol'},
+				'u32',
+					'match','u8','0x6','0xff', # TCP
+						'at',9+$config->{'iphdr_offset'},
+					'match','u16','0x19','0xffff', # SPORT 25
+						'at',20+$config->{'iphdr_offset'},
+				'flowid',"$classID:2",
+	]);
+	$callTc->("_tc" => "queue" => [
+			'/sbin/tc','filter','add',
+				'dev',$iface,
+				'parent',"$classID:",
+				'prio','1',
+				'protocol',$config->{'ip_protocol'},
+				'u32',
+					'match','u8','0x6','0xff', # TCP
+						'at',9+$config->{'iphdr_offset'},
+					'match','u16','0x19','0xffff', # DPORT 25
+						'at',22+$config->{'iphdr_offset'},
+				'flowid',"$classID:2",
+	]);
+	# POP3
+	$callTc->("_tc" => "queue" => [
+			'/sbin/tc','filter','add',
+				'dev',$iface,
+				'parent',"$classID:",
+				'prio','1',
+				'protocol',$config->{'ip_protocol'},
+				'u32',
+					'match','u8','0x6','0xff', # TCP
+						'at',9+$config->{'iphdr_offset'},
+					'match','u16','0x6e','0xffff', # SPORT 110
+						'at',20+$config->{'iphdr_offset'},
+				'flowid',"$classID:2",
+	]);
+	$callTc->("_tc" => "queue" => [
+			'/sbin/tc','filter','add',
+				'dev',$iface,
+				'parent',"$classID:",
+				'prio','1',
+				'protocol',$config->{'ip_protocol'},
+				'u32',
+					'match','u8','0x6','0xff', # TCP
+						'at',9+$config->{'iphdr_offset'},
+					'match','u16','0x6e','0xffff', # DPORT 110
+						'at',22+$config->{'iphdr_offset'},
+				'flowid',"$classID:2",
+	]);
+	# IMAP
+	$callTc->("_tc" => "queue" => [
+			'/sbin/tc','filter','add',
+				'dev',$iface,
+				'parent',"$classID:",
+				'prio','1',
+				'protocol',$config->{'ip_protocol'},
+				'u32',
+					'match','u8','0x6','0xff', # TCP
+						'at',9+$config->{'iphdr_offset'},
+					'match','u16','0x8f','0xffff', # SPORT 143
+						'at',20+$config->{'iphdr_offset'},
+				'flowid',"$classID:2",
+	]);
+	$callTc->("_tc" => "queue" => [
+			'/sbin/tc','filter','add',
+				'dev',$iface,
+				'parent',"$classID:",
+				'prio','1',
+				'protocol',$config->{'ip_protocol'},
+				'u32',
+					'match','u8','0x6','0xff', # TCP
+						'at',9+$config->{'iphdr_offset'},
+					'match','u16','0x8f','0xffff', # DPORT 143
+						'at',22+$config->{'iphdr_offset'},
+				'flowid',"$classID:2",
+	]);
+	# HTTP
+	$callTc->("_tc" => "queue" => [
+			'/sbin/tc','filter','add',
+				'dev',$iface,
+				'parent',"$classID:",
+				'prio','1',
+				'protocol',$config->{'ip_protocol'},
+				'u32',
+					'match','u8','0x6','0xff', # TCP
+						'at',9+$config->{'iphdr_offset'},
+					'match','u16','0x50','0xffff', # SPORT 80
+						'at',20+$config->{'iphdr_offset'},
+				'flowid',"$classID:2",
+	]);
+	$callTc->("_tc" => "queue" => [
+			'/sbin/tc','filter','add',
+				'dev',$iface,
+				'parent',"$classID:",
+				'prio','1',
+				'protocol',$config->{'ip_protocol'},
+				'u32',
+					'match','u8','0x6','0xff', # TCP
+						'at',9+$config->{'iphdr_offset'},
+					'match','u16','0x50','0xffff', # DPORT 80
+						'at',22+$config->{'iphdr_offset'},
+				'flowid',"$classID:2",
+	]);
+	# HTTPS
+	$callTc->("_tc" => "queue" => [
+			'/sbin/tc','filter','add',
+				'dev',$iface,
+				'parent',"$classID:",
+				'prio','1',
+				'protocol',$config->{'ip_protocol'},
+				'u32',
+					'match','u8','0x6','0xff', # TCP
+						'at',9+$config->{'iphdr_offset'},
+					'match','u16','0x1bb','0xffff', # SPORT 443
+						'at',20+$config->{'iphdr_offset'},
+				'flowid',"$classID:2",
+	]);
+	$callTc->("_tc" => "queue" => [
+			'/sbin/tc','filter','add',
+				'dev',$iface,
+				'parent',"$classID:",
+				'prio','1',
+				'protocol',$config->{'ip_protocol'},
+				'u32',
+					'match','u8','0x6','0xff', # TCP
+						'at',9+$config->{'iphdr_offset'},
+					'match','u16','0x1bb','0xffff', # DPORT 443
+						'at',22+$config->{'iphdr_offset'},
+				'flowid',"$classID:2",
+	]);
+}
+
 
 
 #
@@ -1259,17 +1165,17 @@ sub disposeTcClass
 #
 
 # Initialize our tc session
-sub tc_session_init {
+sub task_session_init {
 	my $kernel = $_[KERNEL];
 	# Set our alias
 	$kernel->alias_set("_tc");
 
 	# Fire things up, we trigger this to process the task queue generated during init
-	$kernel->yield("tc_task_run_next");
+	$kernel->yield("task_run_next");
 }
 
 # Add task to queue
-sub _tc_task_add_to_queue
+sub _task_add_to_queue
 {
 	my $cmd = shift;
 
@@ -1283,23 +1189,23 @@ sub _tc_task_add_to_queue
 
 
 # Run a task
-sub tc_task_add
+sub task_add
 {
 	my ($kernel,$heap,$cmd) = @_[KERNEL,HEAP,ARG0];
 
 
 	# Internal function to add command to queue
-	_tc_task_add_to_queue($cmd);
+	_task_add_to_queue($cmd);
 
 	# Trigger a run if list is empty
 	if (@taskQueue < 2) {
-		$kernel->yield("tc_task_run_next");
+		$kernel->yield("task_run_next");
 	}
 }
 
 
 # Fire up the session starter
-sub tc_task_run_next
+sub task_run_next
 {
 	my ($kernel,$heap) = @_[KERNEL,HEAP];
 
@@ -1313,9 +1219,9 @@ sub tc_task_run_next
 			# We get full lines back
 			StdioFilter => POE::Filter::Line->new(),
 			StderrFilter => POE::Filter::Line->new(),
-	        StdoutEvent => 'tc_child_stdout',
-	        StderrEvent => 'tc_child_stderr',
-			CloseEvent => 'tc_child_close',
+	        StdoutEvent => 'task_child_stdout',
+	        StderrEvent => 'task_child_stderr',
+			CloseEvent => 'task_child_close',
 		) or $logger->log(LOG_ERR,"[TC] TASK: Unable to start task");
 
 
@@ -1335,7 +1241,7 @@ sub tc_task_run_next
 
 
 # Child writes to STDOUT
-sub tc_child_stdout
+sub task_child_stdout
 {
     my ($kernel,$heap,$stdout,$task_id) = @_[KERNEL,HEAP,ARG0,ARG1];
     my $child = $heap->{task_by_wid}->{$task_id};
@@ -1345,7 +1251,7 @@ sub tc_child_stdout
 
 
 # Child writes to STDERR
-sub tc_child_stderr
+sub task_child_stderr
 {
     my ($kernel,$heap,$stdout,$task_id) = @_[KERNEL,HEAP,ARG0,ARG1];
     my $child = $heap->{task_by_wid}->{$task_id};
@@ -1355,12 +1261,12 @@ sub tc_child_stderr
 
 
 # Child closed its handles, it won't communicate with us, so remove it
-sub tc_child_close
+sub task_child_close
 {
     my ($kernel,$heap,$task_id) = @_[KERNEL,HEAP,ARG0];
     my $child = delete($heap->{task_by_wid}->{$task_id});
 
-    # May have been reaped by tc_sigchld()
+    # May have been reaped by task_sigchld()
     if (!defined($child)) {
 		$logger->log(LOG_DEBUG,"[TC] TASK/$task_id: Closed dead child");
 		return;
@@ -1371,13 +1277,13 @@ sub tc_child_close
 
 	# Start next one, if there is a next one
 	if (@taskQueue > 0) {
-		$kernel->yield("tc_task_run_next");
+		$kernel->yield("task_run_next");
 	}
 }
 
 
 # Reap the dead child
-sub tc_sigchld
+sub task_sigchld
 {
 	my ($kernel,$heap,$pid,$status) = @_[KERNEL,HEAP,ARG1,ARG2];
     my $child = delete($heap->{task_by_pid}->{$pid});
@@ -1385,7 +1291,7 @@ sub tc_sigchld
 
 	$logger->log(LOG_DEBUG,"[TC] TASK: Task with PID $pid exited with status $status");
 
-    # May have been reaped by tc_child_close()
+    # May have been reaped by task_child_close()
     return if (!defined($child));
 
     delete($heap->{task_by_wid}{$child->ID});
