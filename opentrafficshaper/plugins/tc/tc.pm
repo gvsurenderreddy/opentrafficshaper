@@ -170,13 +170,13 @@ sub plugin_start
 	$logger->log(LOG_INFO,"[TC] Queuing tasks to initialize '$config->{'txiface'}'");
 	_tc_init_iface($config->{'txiface'},$config->{'txiface_rate'});
 	tc_addtask_optimize(undef,$config->{'txiface'},3,$config->{'txiface_rate'}*1024); # Rate is in mbit
-	_tc_sfq_iface($config->{'txiface'},3,3,$config->{'txiface_rate'});
+	_tc_optimize_iface($config->{'txiface'},3,3,$config->{'txiface_rate'});
 
 	# Initialize RX interface
 	$logger->log(LOG_INFO,"[TC] Queuing tasks to initialize '$config->{'rxiface'}'");
 	_tc_init_iface($config->{'rxiface'},$config->{'rxiface_rate'});
 	tc_addtask_optimize(undef,$config->{'rxiface'},3,$config->{'rxiface_rate'}*1024); # Rate is in mbit
-	_tc_sfq_iface($config->{'rxiface'},3,3,$config->{'rxiface_rate'});
+	_tc_optimize_iface($config->{'rxiface'},3,3,$config->{'rxiface_rate'});
 
 	$logger->log(LOG_INFO,"[TC] Started");
 }
@@ -721,7 +721,7 @@ sub _tc_init_iface
 }
 
 # Function to apply SFQ to the interface priority classes
-sub _tc_sfq_iface
+sub _tc_optimize_iface
 {
 	my ($iface,$prioClass,$prioCount,$rate) = @_;
 
