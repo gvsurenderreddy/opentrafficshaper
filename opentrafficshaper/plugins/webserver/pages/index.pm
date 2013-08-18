@@ -33,16 +33,13 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 
 sub _catchall
 {
-	my ($kernel,$globals,$module,$daction,$request) = @_;
+	my ($kernel,$globals,$client_session_id,$request) = @_;
 
-
-	# If we not passed default by the main app, just return
-	return if ($daction ne "default");
 
 	# Build content
 	my $content = "";
 
-	$content .= "Hi there: $daction";
+	$content .= "Hi there: ".$request->uri->as_string();
 
 
 	return (200,$content);

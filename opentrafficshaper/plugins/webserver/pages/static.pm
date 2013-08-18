@@ -43,7 +43,7 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 
 sub _catchall
 {
-	my ($kernel,$globals,$module,$daction,$request) = @_;
+	my ($kernel,$globals,$client_session_id,$request) = @_;
 	my $logger = $globals->{'logger'};
 
 
@@ -100,7 +100,7 @@ sub _catchall
 	if (defined $ims) {
 		my $time = HTTP::Date::str2time($ims);
 		if (defined($time) && $time >= $stat->mtime) {
-			return HTTP::Response->new(HTTP::Status::RC_NOT_MODIFIED,$request->method." $daction")
+			return HTTP::Response->new(HTTP::Status::RC_NOT_MODIFIED,$request->method." ".$resource)
 		}
 	}
 	# Set header for file modified

@@ -54,13 +54,10 @@ my $menu = {
 # Default page/action
 sub default
 {
-	my ($kernel,$globals,$module,$daction,$request) = @_;
+	my ($kernel,$globals,$client_session_id,$request) = @_;
 
-	# If we not passed default by the main app, just return
-	return if ($daction ne "default");
 
 	my $users = $globals->{'users'};
-
 
 	# Build content
 	my $content = "";
@@ -141,7 +138,7 @@ EOF
 # Add action
 sub add
 {
-	my ($kernel,$globals,$module,$daction,$request) = @_;
+	my ($kernel,$globals,$client_session_id,$request) = @_;
 
 
 	# Setup our environment
