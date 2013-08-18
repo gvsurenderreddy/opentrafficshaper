@@ -128,6 +128,8 @@ sub plugin_init
 			get_datagram => \&server_read,
 		}
 	);
+
+	return 1;
 }
 
 
