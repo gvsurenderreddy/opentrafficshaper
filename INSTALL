@@ -6,8 +6,16 @@ Installing OpenTrafficShaper:
 *
 
 - POE
+Debian: libpoe-perl
+
 - Config::IniFiles
+Debian: libconfig-inifiles-perl
+
 - DateTime
+Debian: libdatetime-perl
+
+- Digest::SHA
+Debian: libdigest-sha-perl
 
 - Perl 5.6+
 
