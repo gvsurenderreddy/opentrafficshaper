@@ -23,11 +23,14 @@ use warnings;
 
 use HTML::Entities;
 use HTTP::Response;
-use HTTP::Status qw( :constants :is status_message );
-use POE qw( Component::Server::TCP Filter::HTTPD );
+use HTTP::Status qw( :constants :is );
+use POE qw( Component::Server::TCP );
+use POE::Filter::HybridHTTP;
 use URI;
 
+
 use opentrafficshaper::logger;
+use opentrafficshaper::plugins;
 
 # Pages (this is used a little below)
 use opentrafficshaper::plugins::webserver::pages::static;
@@ -42,6 +45,7 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 @EXPORT = qw(
 );
 @EXPORT_OK = qw(
+	snapin_register
 );
 
 use constant {
@@ -65,19 +69,42 @@ our $pluginInfo = {
 # Copy of system globals
 my $globals;
 my $logger;
-# This is the mapping of our pages
-my $pages = {
-	'index' => {
-		'_catchall' => \&opentrafficshaper::plugins::webserver::pages::index::_catchall,
-	},
-	'static' => {
-		'_catchall' => \&opentrafficshaper::plugins::webserver::pages::static::_catchall,
-	},
-	'users' => {
-		'default' => \&opentrafficshaper::plugins::webserver::pages::users::default,
-		'add' => \&opentrafficshaper::plugins::webserver::pages::users::add,
+
+
+# Client connections open
+my $connections = { };
+
+# Web resources
+my $resources = {
+	# HTTP
+	'HTTP' => {
+		'index' => {
+			'_catchall' => \&opentrafficshaper::plugins::webserver::pages::index::_catchall,
+		},
+		'static' => {
+			'_catchall' => \&opentrafficshaper::plugins::webserver::pages::static::_catchall,
+		},
+		'users' => {
+			'default' => \&opentrafficshaper::plugins::webserver::pages::users::default,
+			'add' => \&opentrafficshaper::plugins::webserver::pages::users::add,
+		},
 	},
 };
+
+
+
+# Add webserver snapin
+sub snapin_register
+{
+	my ($protocol,$module,$action,$data) = @_;
+
+
+	$logger->log(LOG_INFO,"[WEBSERVER] Registered snapin: protocol = $protocol, module = $module, action = $action");
+
+	# Load resource
+	$resources->{$protocol}->{$module}->{$action} = $data;
+}
+
 
 
 
@@ -94,14 +121,20 @@ sub plugin_init
 
 	# Spawn a web server on port 8088 of all interfaces.
 	POE::Component::Server::TCP->new(
-		Alias => "plugin.webserver",
 		Port => 8088,
-		ClientFilter => 'POE::Filter::HTTPD',
+		# Handle session connections & disconnections
+		ClientConnected => \&server_client_connected,
+		ClientDisconnected => \&server_client_disconnected,
+		# Filter to handle HTTP
+		ClientFilter => 'POE::Filter::HybridHTTP',
 		# Function to handle HTTP requests (as we passing through a filter)
-		ClientInput => \&handle_request,
+		ClientInput => \&server_request,
 		# Setup the sever
-		Started => \&session_init,
+		Started => \&server_session_init,
 	);
+
+
+	return 1;
 }
 
 
@@ -113,133 +146,125 @@ sub plugin_start
 
 
 
-# Session initialization
-sub session_init
+# Server session initialization
+sub server_session_init
 {
 	my $kernel = $_[KERNEL];
 
-	$logger->log(LOG_DEBUG,"[WEBSERVER] Initialized");
+	$logger->log(LOG_DEBUG,"[WEBSERVER] Server initialized");
+}
+
+
+# Signal that the client has connected
+sub server_client_connected
+{
+	my ($kernel,$heap,$session,$request) = @_[KERNEL, HEAP, SESSION, ARG0];
+	my $client_session_id = $session->ID;
+
+
+	# Save our socket on the client
+	$connections->{$client_session_id}->{'socket'} = $heap->{'client'};
+	$connections->{$client_session_id}->{'protocol'} = 'HTTP';
+}
+
+
+# Signal that the client has disconnected 
+sub server_client_disconnected
+{
+	my ($kernel,$heap,$session,$request) = @_[KERNEL, HEAP, SESSION, ARG0];
+	my $client_session_id = $session->ID;
+
+
+	# Check if we have a disconnection function to call
+	if (
+			defined($connections->{$client_session_id}->{'resource'}) &&
+			defined($connections->{$client_session_id}->{'resource'}->{'handler'}) &&
+			ref($connections->{$client_session_id}->{'resource'}->{'handler'}) eq 'HASH' && 
+			defined($connections->{$client_session_id}->{'resource'}->{'handler'}->{'on_disconnect'})
+	) {
+		# Call disconnection function
+		$connections->{$client_session_id}->{'resource'}->{'handler'}->{'on_disconnect'}->($kernel,$globals,$client_session_id);
+	}
+
+	# Remove client session
+	delete($connections->{$client_session_id});
 }
 
 
 # Handle the HTTP request
-sub handle_request
+sub server_request
 {
-	my ($kernel,$heap,$request) = @_[KERNEL, HEAP, ARG0];
+	my ($kernel,$heap,$session,$request) = @_[KERNEL, HEAP, SESSION, ARG0];
+	my $client_session_id = $session->ID;
+	my $conn = $connections->{$client_session_id};
 
 
-	# We going to init these as system so we know whats a parsing issue
-	my $module = "system";
-	my $action = "parse";
-	# This is our response
+	# Our response back if one, and if we should just close the connection or not
 	my $response;
+	my $closeWhenDone = 0;
 
+	# Its HTTP
+	if ($conn->{'protocol'} eq "HTTP") {
+		# Check the protocol we're currently handling
+		# We may have a response from the filter indicating an error
+		if (ref($request) eq "HTTP::Response") {
+			$response = $request;
 
-	# We may have a response from the filter indicating an error
-	if ($request->isa("HTTP::Response")) {
-		$heap->{client}->put($request);
-		goto END;
-	}
-
-	# We need to parse the URI nicely
-	my $requestURI = URI->new($request->uri);
-
-	# Check method & encoding
-	if ($request->method eq "POST") {
-		# We currently only accept form data
-		if ($request->content_type ne "application/x-www-form-urlencoded") {
-			$response = httpDisplayFault(HTTP_FORBIDDEN,"Method Not Allowed","The requested method and content type is not allowed.");
-			goto END;
-		}
-	}
-
-	# Split off the URL into a module and action
-	my (undef,$dmodule,$daction,@dparams) = split(/\//,$requestURI->path);
-	# If any is blank, set it to the default
-	$dmodule = "index" if (!defined($dmodule));
-	$daction = "default" if (!defined($daction));
-	# Sanitize
-	($module = $dmodule) =~ s/[^A-Za-z0-9]//g;	
-	($action = $daction) =~ s/[^A-Za-z0-9]//g;	
-	# If module name is sneaky? then just block it
-	if ($module ne $dmodule) {
-		$response = httpDisplayFault(HTTP_FORBIDDEN,"Method Not Allowed","The requested resource '$module' is not allowed.");
-		goto END;
-	}
-
-	# This is the function we going to call
-	# If we have a function name, try use it
-	if (defined($pages->{$module})) {
-		# If there is no specific action for this use the catchall
-		if (!defined($pages->{$module}->{$action}) && defined($pages->{$module}->{'_catchall'})) {
-			$action = "_catchall";
+		# Its a normal HTTP request
+		} elsif (ref($request) eq "HTTP::Request") {
+			$response = _server_request_http($kernel,$client_session_id,$request);
 		}
 
-		# Check if it exists first
-		if (defined($pages->{$module}->{$action})) {
-			my ($res,$content,$extra) = $pages->{$module}->{$action}->($kernel,$globals,$module,$daction,$request);
-
-			# Module return undef if they don't want to handle the request
-			if (!defined($res)) {
-				$response = httpDisplayFault(HTTP_NOT_FOUND,"Resource Not found","The requested resource '$daction' cannot be found");
-			} elsif (ref($res) eq "HTTP::Response") {
-				$response = $res;
-			# TODO: This is a bit dirty
-			# Extra in this case is the sidebar menu items
-			} elsif ($res == HTTP_OK) {
-				$response = httpCreateResponse($module,$daction,$content,$extra);
-			# The content in a redirect is the URL
-			} elsif ($res == HTTP_TEMPORARY_REDIRECT) {
-				$response = httpRedirect("//".$request->header('host')."/" . $content);
-			# Extra in this case is the error description 
-			} else {
-				httpDisplayFault($res,$content,$extra);
-			}
-		} else {
-			$response = httpDisplayFault(HTTP_NOT_FOUND,"Method Not found","The requested method '$action' cannot be found in '$module'");
+		# Support for HTTP/1.1 "Connection: close" header...
+		if ($request->header('Connection') eq "close") {
+			$closeWhenDone = 1;
 		}
+
+	# Its a websocket
+	} elsif ($conn->{'protocol'} eq "WebSocket") {
+			# XXX - this should call the callback
+
 	}
 
-	if (!defined($response)) {
-		$response = httpDisplayFault(HTTP_NOT_FOUND,"Resource Not found","The requested resource '$module' cannot be found");
+	# If there is a response send it
+	if (defined($response)) {
+		$conn->{'socket'}->put($response);
 	}
 
-
-END:
-	$logger->log(LOG_INFO,"[WEBSERVER] Access: ".$response->code." [$module/$action] - ".encode_entities($request->method)." ".encode_entities($request->uri)." ".encode_entities($request->protocol));
-	$heap->{client}->put($response);
-	$kernel->yield("shutdown");
+	# Check if connection must be closed
+	if ($closeWhenDone) {
+		$kernel->yield("shutdown");
+	}
 }
-
 
 
 # Display fault
 sub httpDisplayFault
 {
-	my ($code,$msg,$description) = @_;
+	my ($code,$message,$description) = @_;
 
 
 	# Throw out message to client to authenticate first
 	my $headers = HTTP::Headers->new;
 	$headers->content_type("text/html");
 
-	my $resp = HTTP::Response->new(
-			$code,$msg,
+	my $response = HTTP::Response->new(
+			$code,$message,
 			$headers,
 			<<EOF);
 <!DOCTYPE html>
 <html>
 	<head>
-		<title>$code $msg</title>
+		<title>$code $message</title>
 	</head>
 
 	<body>
-		<h1>$msg</h1>
+		<h1>$message</h1>
 		<p>$description</p>
 	</body>
 </html>
 EOF
-	return $resp;
+	return $response;
 }
 
 
@@ -255,7 +280,7 @@ sub httpRedirect
 # Create a response object
 sub httpCreateResponse
 {
-	my ($module,$daction,$content,$menu) = @_;
+	my ($module,$content,$menu) = @_;
 
 
 	# Throw out message to client to authenticate first
@@ -385,6 +410,218 @@ sub handle_SIGHUP
 {
 	$logger->log(LOG_WARN,"[WEBSERVER] Got SIGHUP, ignoring for now");
 }
+
+
+
+#
+# Internals
+#
+
+
+# Handle the normal HTTP protocol
+sub _server_request_http
+{
+	my ($kernel,$client_session_id,$request) = @_;
+	my $conn = $connections->{$client_session_id};
+
+
+	my $protocol = "HTTP"; # By default we're HTTP
+
+	# Pull off connection attributes
+	my $header_connection;
+	if (my $h_connection = $request->header('Connection')) {
+		foreach my $param (split(/[ ,]+/,$h_connection)) {
+			$header_connection->{lc($param)} = 1;
+		}
+
+		# Identify and split off upgrades
+		if (defined($header_connection->{'upgrade'}) && (my $h_upgrade = $request->header('upgrade'))) {
+			$h_upgrade = lc($h_upgrade);
+			if ($h_upgrade eq "websocket") {
+				$protocol = "HTTP=>WebSocket";
+			}
+		}
+	}
+
+	# XXX: Check method & encoding, in all protocols??
+	if ($request->method eq "POST") {
+		# We currently only accept form data
+		if ($request->content_type ne "application/x-www-form-urlencoded") {
+			return httpDisplayFault(HTTP_FORBIDDEN,"Method Not Allowed","The requested method and content type is not allowed.");
+		}
+	}
+
+	# This is going to be our response back
+	my $response;
+
+	# Parse our protocol into a module & action
+	my ($handler,$module,$action) = _parse_http_resource($request,$protocol);
+	# Short circuit if we had an error
+	if (ref($handler) eq "HTTP::Response") {
+		# There is no module or action
+		$module = ""; $action = "";
+		# Set our response
+		$response = $handler;
+		goto END;
+	}
+
+	# Function we need to call
+	my $function = $handler;
+
+	# Check if we're a hash... override if we are
+	if (ref($handler) eq "HASH") {
+		$function = $handler->{'on_request'};
+	}
+	# If its something else, blow up
+	if (ref($function) ne "CODE") {
+		return httpDisplayFault(HTTP_INTERNAL_SERVER_ERROR,"Internal server error","Server configuration error");
+	}
+
+	$logger->log(LOG_DEBUG,"Parsed HTTP request into: module='$module', action='$action'");
+
+	# Save what resource we just accessed
+	$connections->{$client_session_id}->{'resource'} = {
+		'module' => $module,
+		'action' => $action,
+		'handler' => $handler,
+	};
+
+	# This is normal HTTP request
+	if ($protocol eq "HTTP") {
+		# Do the function call now
+		my ($res,$content,$extra) = $function->($kernel,$globals,$client_session_id,$request);
+
+
+		# Module return undef if they don't want to handle the request
+		if (!defined($res)) {
+			$response = httpDisplayFault(HTTP_NOT_FOUND,"Resource Not found","The requested resource '$action' cannot be found");
+		} elsif (ref($res) eq "HTTP::Response") {
+			$response = $res;
+		# TODO: This is a bit dirty
+		# Extra in this case is the sidebar menu items
+		} elsif ($res == HTTP_OK) {
+			$response = httpCreateResponse($module,$content,$extra);
+		# The content in a redirect is the URL
+		} elsif ($res == HTTP_TEMPORARY_REDIRECT) {
+			$response = httpRedirect("//".$request->header('host')."/" . $content);
+		# Extra in this case is the error description 
+		} else {
+			$response = httpDisplayFault($res,$content,$extra);
+		}
+
+
+	# Its a websocket upgrade request
+	} elsif ($protocol eq "HTTP=>WebSocket") {
+		# Do the function call now
+		my ($res,$ret1,$ret2) = $function->($kernel,$globals,$client_session_id,$request,$conn->{'socket'});
+
+		# If we have a response defined, we rejected the upgrade
+		if (defined($res)) {
+			$response = httpDisplayFault($res,$ret1,$ret2);
+		} else {
+			# Return our upgrade response
+			$response = _server_request_http_wsupgrade($request,$module,$action);
+			# Upgrade the protocol
+			$connections->{$client_session_id}->{'protocol'} = 'WebSocket';
+		}
+	}
+
+END:
+
+	$logger->log(LOG_INFO,"[WEBSERVER] $protocol Request: ".$response->code." [$module/$action] - ".encode_entities($request->method)." ".
+			encode_entities($request->uri)." ".encode_entities($request->protocol));
+
+	return $response;
+}
+
+
+# Function to parse a HTTP resource
+sub _parse_http_resource
+{
+	my ($request,$protocol) = @_;
+	my $resource = $resources->{$protocol};
+
+
+	# No resource defined
+	if (!defined($resource)) {
+		return httpDisplayFault(HTTP_FORBIDDEN,"Protocol Not Available","The requested protocol is not available.");
+	}
+
+	# Split off the URL into a module and action
+	my (undef,$dmodule,$daction) = $request->uri->path_segments();
+	# If any is blank, set it to the default
+	$dmodule = "index" if (!defined($dmodule) || $dmodule eq "");
+	$daction = "default" if (!defined($daction));
+	# Sanitize
+	(my $module = $dmodule) =~ s/[^A-Za-z0-9]//g;	
+	(my $action = $daction) =~ s/[^A-Za-z0-9]//g;	
+
+	# If module name is sneaky? then just block it
+	if ($module ne $dmodule) {
+		return httpDisplayFault(HTTP_FORBIDDEN,"Method Not Allowed","The requested resource '$module' is not allowed.");
+	}
+
+	# If there is no resource to handle this return
+	if (!defined($resource->{$module})) {
+		return httpDisplayFault(HTTP_NOT_FOUND,"Resource Not found","The requested resource '$module' cannot be found");
+	}
+
+	# If there is no specific action for this use the catchall
+	if (!defined($resource->{$module}->{$action}) && defined($resource->{$module}->{'_catchall'})) {
+		$action = "_catchall";
+	}
+
+	# Check if it exists first
+	if (!defined($resource->{$module}->{$action})) {
+		return httpDisplayFault(HTTP_NOT_FOUND,"Method Not found","The requested method '$action' cannot be found in '$module'");
+	}
+
+	# This is the handler data, either a CODE ref or a HASH
+	my $handler = $resource->{$module}->{$action};
+
+	# Check if the destination is a hash containing stuff we can treat specially
+	if (ref($handler) eq "HASH") {
+		# If we have a list of requires, check them
+		if (defined($handler->{'requires'})) {
+			foreach my $require (@{$handler->{'requires'}}) {
+				if (!plugin_is_loaded($require)) {
+					return httpDisplayFault(HTTP_NOT_IMPLEMENTED,"Method Not Available","The requested method '$action' in '$module' is not currently available");
+				}	
+			}
+		}
+	}
+
+	return ($handler,$module,$action);
+}
+
+
+# Handle Websocket
+sub _server_request_http_wsupgrade
+{
+	my ($request,$module,$action) = @_;
+	my $response;
+
+
+
+	# Build handshake reply
+	my $headers = HTTP::Headers->new(
+		'Upgrade' => "websocket",
+		'Connection' => "upgrade",
+	);
+
+	# Build response switching protocols
+	$response = HTTP::Response->new(
+			HTTP_SWITCHING_PROTOCOLS,"Switching Protocols",
+			$headers
+	);
+
+	$logger->log(LOG_INFO,"[WEBSERVER] WebSocket Upgrade: ".$response->code." [$module/$action] - ".encode_entities($request->method)." ".
+			encode_entities($request->uri)." ".encode_entities($request->protocol));
+
+	return $response;
+}
+
+
 
 
 
