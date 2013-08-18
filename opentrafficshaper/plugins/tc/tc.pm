@@ -160,6 +160,8 @@ sub plugin_init
 			task_run_next => \&task_run_next,
 		}
 	);
+
+	return 1;
 }
 
 
@@ -217,7 +219,7 @@ sub do_add {
 	# Check if we have a entry for the /8, if not we must create our 2nd level hash table and link it
 	if (!defined($tcFilterMappings->{$ip1})) {
 		# Setup IP1's hash table
-		my $filterID  = getTcFilter();
+		my $filterID  = getTcFilter($uid);
 		$tcFilterMappings->{$ip1}->{'id'} = $filterID;
 
 
@@ -281,7 +283,7 @@ sub do_add {
 
 	# Check if we have our /16 hash entry, if not we must create the 3rd level hash table
 	if (!defined($tcFilterMappings->{$ip1}->{$ip2})) {
-		my $filterID  = getTcFilter();
+		my $filterID  = getTcFilter($uid);
 		# Set 2nd level hash table ID
 		$tcFilterMappings->{$ip1}->{$ip2}->{'id'} = $filterID;
 		# Grab some hash table ID's we need
@@ -348,7 +350,7 @@ sub do_add {
 
 	# Check if we have our /24 hash entry, if not we must create the 4th level hash table
 	if (!defined($tcFilterMappings->{$ip1}->{$ip2}->{$ip3})) {
-		my $filterID  = getTcFilter();
+		my $filterID  = getTcFilter($uid);
 		# Set 3rd level hash table ID
 		$tcFilterMappings->{$ip1}->{$ip2}->{$ip3}->{'id'} = $filterID;
 		# Grab some hash table ID's we need
@@ -419,7 +421,7 @@ sub do_add {
 	# Only if we have limits setup process them
 	if (defined($user->{'TrafficLimitTx'}) && defined($user->{'TrafficLimitRx'})) {
 		# Build users tc class ID
-		my $classID  = getTcClass();
+		my $classID  = getTcClass($uid);
 		# Grab some hash table ID's we need
 		my $ip3HtHex = $tcFilterMappings->{$ip1}->{$ip2}->{$ip3}->{'id'};
 		my $ip4Hex = toHex($ip4);
@@ -607,6 +609,9 @@ sub do_remove {
 # Function to get next available TC filter 
 sub getTcFilter
 {
+	my $uid = shift;
+
+
 	my $id = pop(@{$tcFilters->{'free'}});
 
 	# Generate new number
@@ -620,7 +625,7 @@ sub getTcFilter
 		$id = toHex($id);
 	}
 
-	$tcFilters->{'track'}->{$id} = 1;
+	$tcFilters->{'track'}->{$id} = $uid;
 
 	return $id;
 }
@@ -639,6 +644,9 @@ sub disposeTcFilter
 # Function to get next available TC class 
 sub getTcClass
 {
+	my $uid = shift;
+
+
 	my $id = pop(@{$tcClasses->{'free'}});
 
 	# Generate new number
@@ -649,7 +657,7 @@ sub getTcClass
 		$id = toHex($id);
 	}
 
-	$tcClasses->{'track'}->{$id} = 1;
+	$tcClasses->{'track'}->{$id} = $uid;
 
 	return $id;
 }
@@ -663,7 +671,13 @@ sub disposeTcClass
 	# Blank the value
 	$tcClasses->{'track'}->{$id} = undef;
 }
+# Grab user from TC class
+sub getUIDFromTcClass
+{
+	my $id = shift;
 
+	return $tcClasses->{'track'}->{$id};
+}
 
 # Function to initialize an interface
 sub _tc_init_iface
