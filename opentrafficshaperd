@@ -33,6 +33,7 @@ use Time::HiRes qw(time);
 # Our own stuff
 use opentrafficshaper::version;
 use opentrafficshaper::logger;
+use opentrafficshaper::plugins qw( plugin_register );
 
 
 # Main config
@@ -108,7 +109,7 @@ sub parseCfgCmdLine
 
 	# Check config file exists
 	if (! -f $cfg->{'config_file'}) {
-		die("No configuration file '".$cfg->{'config_file'}."' found!\n");
+		die("No configuration file '".$cfg->{'config_file'}."' found!");
 	}
 
 	# Use config file, ignore case
@@ -202,55 +203,19 @@ sub init
 	$logger->log(LOG_NOTICE,"[MAIN] Entering INITIALIZATION state");
 
 	$logger->log(LOG_INFO,"[MAIN] Initializing plugins...");
+	# We need to set the plugins global variable
+	opentrafficshaper::plugins::init($globals);
 
 	# Core configuration manager
-	my $res = eval("
-		use opentrafficshaper::plugins::configmanager;
-		plugin_register(\$globals,\"configmanager\",\$opentrafficshaper::plugins::configmanager::pluginInfo);
-	");
-	if ($@ || (defined($res) && $res != 0)) {
-		$logger->log(LOG_WARN,"[MAIN] Error loading config manager, things WILL BREAK! ($@)");
-	}
+	plugin_register("configmanager",1);
 
 	# Load plugins
-	foreach my $plugin (@{$globals->{'config'}->{'plugin_list'}}) {
-		# Load plugin
-		my $res = eval("
-			use opentrafficshaper::plugins::${plugin}::${plugin};
-			plugin_register(\$globals,\"${plugin}\",\$opentrafficshaper::plugins::${plugin}::pluginInfo);
-		");
-		if ($@ || (defined($res) && $res != 0)) {
-			$logger->log(LOG_WARN,"[MAIN] Error loading plugin '$plugin' ($@)");
-		} else {
-			$logger->log(LOG_DEBUG,"[MAIN] Plugin '$plugin' loaded.");
-		}
+	foreach my $pluginName (@{$globals->{'config'}->{'plugin_list'}}) {
+		plugin_register($pluginName,0);
 	}
+
 	$logger->log(LOG_INFO,"[MAIN] Plugins initialized.");
 }
-
-# Register plugin info
-sub plugin_register {
-	my ($globals,$plugin,$info) = @_;
-
-
-	# If no info, return
-	if (!defined($info)) {
-		$logger->log(LOG_WARN,"WARNING: Plugin info not found for plugin => $plugin\n");
-		return -1;
-	}
-
-	# Set real module name & save
-	$info->{'Plugin'} = $plugin;
-	push(@{$globals->{'plugins'}},$info);
-
-	# If we should, init the module
-	if (defined($info->{'Init'})) {
-		$info->{'Init'}($globals);
-	}
-
-	return 0;
-}
-
 
 # Function to start things up
 sub start
@@ -258,8 +223,10 @@ sub start
 	$logger->log(LOG_NOTICE,"[MAIN] Entering STARTING state");
 
 	# Loop with plugins and call the start function for those that exist
-	foreach my $plugin (@{$globals->{'plugins'}})
+	foreach my $pluginName (keys %{$globals->{'plugins'}})
 	{
+		my $plugin = $globals->{'plugins'}->{$pluginName};
+
 		# Load the function up
 		my $callStart = $plugin->{'Start'};
 		if (defined($callStart)) {
@@ -292,7 +259,7 @@ sub daemonize {
 			print(FH $$);
 			close(FH);
 		} else {
-			$logger->log(LOG_WARN,"[CORE] Unable to write PID to '".$globals->{'config'}->{'pid_file'}."': $!");
+			$logger->log(LOG_WARN,"[MAIN] Unable to write PID to '".$globals->{'config'}->{'pid_file'}."': $!");
 		}
 	}
 
@@ -332,8 +299,11 @@ sub main_signal_SIGHUP
 	$logger->log(LOG_WARN,"[MAIN] Got SIGHUP, triggering config reload");
 
 	# Loop with plugins and call the handler for SIGHUP
-	foreach my $plugin (@{$globals->{'plugins'}})
+	foreach my $pluginName (keys %{$globals->{'plugins'}})
 	{
+		my $plugin = $globals->{'plugins'}->{$pluginName};
+
+
 		# Load the function up
 		my $callSIGHUP = $plugin->{'signal_SIGHUP'};
 		if (defined($callSIGHUP)) {
@@ -353,8 +323,11 @@ sub main_signal_SIGINT
 	$logger->log(LOG_WARN,"[MAIN] Got SIGINT, shutting down...");
 
 	# Loop with plugins and call the handler for SIGINT
-	foreach my $plugin (@{$globals->{'plugins'}})
+	foreach my $pluginName (keys %{$globals->{'plugins'}})
 	{
+		my $plugin = $globals->{'plugins'}->{$pluginName};
+
+
 		# Load the function up
 		my $callSIGINT = $plugin->{'signal_SIGINT'};
 		if (defined($callSIGINT)) {
