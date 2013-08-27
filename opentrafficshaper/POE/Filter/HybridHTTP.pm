@@ -95,7 +95,7 @@ sub get_one
 
 	# Waiting for content.
 	} elsif ($self->{'state'} == ST_HTTP_CONTENT) {
-		return $self->_get_one_http_headers();
+		return $self->_get_one_http_content();
 		
 	# Websocket
 	} elsif ($self->{'state'} == ST_WEBSOCKET_STREAM) {
@@ -282,12 +282,12 @@ sub _get_one_http_headers
 	# does not include defined semantics for an entity-body, then the
 	# message-body SHOULD be ignored when handling the request.
 	# - RFC2616
-	if (!defined($content_length) || !defined($content_encoding)) {
+	if (!defined($content_length) && !defined($content_encoding)) {
 		$self->{'request'} = $request;
 		$self->_reset();
 		return [ $request ];
 	}
-	
+
 	# PG- GET shouldn't have a body. But RFC2616 talks about Content-Length
 	# for HEAD.	And My reading of RFC2616 is that HEAD is the same as GET.
 	# So logically, GET can have a body.	And RFC2616 says we SHOULD ignore
@@ -330,7 +330,7 @@ sub _get_one_http_headers
 	$self->{'state'} = ST_HTTP_CONTENT;
 	$self->{'request'} = $request; 
 
-	return [ ];
+	$self->_get_one_http_content();
 }
 
 
