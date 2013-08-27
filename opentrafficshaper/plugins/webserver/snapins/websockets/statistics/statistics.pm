@@ -113,7 +113,7 @@ sub session_init
 }
 
 
-# Signal that the client has connected
+# Send data to client
 sub do_send
 {
 	my ($kernel,$heap,$uid,$data) = @_[KERNEL, HEAP, ARG0, ARG1];
@@ -124,6 +124,8 @@ sub do_send
 		my $socket = $uSubscriptions->{$uid}->{$client_session_id};
 
 		use Data::Dumper; print STDERR "Got request to send client '$client_session_id': ".Dumper($data);
+
+#		my $json = sprintf('{"label": "%s", data: [%s] }', );
 
 		$socket->put("hello there");
 	}

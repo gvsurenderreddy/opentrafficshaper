@@ -35,7 +35,8 @@ use opentrafficshaper::plugins;
 # Pages (this is used a little below)
 use opentrafficshaper::plugins::webserver::pages::static;
 use opentrafficshaper::plugins::webserver::pages::index;
-use opentrafficshaper::plugins::webserver::pages::users;
+use opentrafficshaper::plugins::webserver::pages::limits;
+use opentrafficshaper::plugins::webserver::pages::statistics;
 
 
 # Exporter stuff
@@ -84,9 +85,12 @@ my $resources = {
 		'static' => {
 			'_catchall' => \&opentrafficshaper::plugins::webserver::pages::static::_catchall,
 		},
-		'users' => {
-			'default' => \&opentrafficshaper::plugins::webserver::pages::users::default,
-			'add' => \&opentrafficshaper::plugins::webserver::pages::users::add,
+		'limits' => {
+			'default' => \&opentrafficshaper::plugins::webserver::pages::limits::default,
+			'add' => \&opentrafficshaper::plugins::webserver::pages::limits::add,
+		},
+		'statistics' => {
+			'default' => \&opentrafficshaper::plugins::webserver::pages::statistics::default,
 		},
 	},
 };
@@ -280,7 +284,7 @@ sub httpRedirect
 # Create a response object
 sub httpCreateResponse
 {
-	my ($module,$content,$menu) = @_;
+	my ($module,$content,$options) = @_;
 
 
 	# Throw out message to client to authenticate first
@@ -289,40 +293,57 @@ sub httpCreateResponse
 
 
 	# Check if we have a menu structure, if we do, display the sidebar
+	my $styleStr = "";
 	my $menuStr = "";
-	if (defined($menu)) {
-		$menuStr =<<EOF;
-			<div class="span2">
-				<div class="well sidebar-nav">
-					<ul class="nav nav-list">
-EOF
-		# Loop with sub menu sections
-		foreach my $section (keys %{$menu}) {
-#							<li class="nav-header">Sidebar</li>
-#							<li class="active"><a href="#">Link</a></li>
-#							<li><a href="#">Link</a></li>
-#							<li class="nav-header">Sidebar</li>
-#							<li><a href="#">Link</a></li>
-			# Loop with menu items
-			foreach my $item (keys %{$menu->{$section}}) {
-				my $link = "/" . $module . "/" . $menu->{$section}->{$item};
-				# Sanitize slightly
-				$link =~ s,/+$,,;
+	my $javascriptStr = "";
+	if (defined($options)) {
+		# Check if style snippet exists
+		if (defined(my $style = $options->{'style'})) {
+			$styleStr .= $style;
+		}
 
-				# Build sections
-				$menuStr .=<<EOF;
+		# Check if menu exists
+		if (my $menu = $options->{'menu'}) {
+			$menuStr =<<EOF;
+				<ul class="nav nav-pills nav-stacked">
+EOF
+			# Loop with sub menu sections
+			foreach my $section (keys %{$menu}) {
+				# Loop with menu items
+				foreach my $item (keys %{$menu->{$section}}) {
+					my $link = "/" . $module . "/" . $menu->{$section}->{$item};
+					# Sanitize slightly
+					$link =~ s,/+$,,;
+
+					# Build sections
+					$menuStr .=<<EOF;
 						<li class="nav-header">$section</li>
 						<li><a href="$link">$item</a></li>
 EOF
+				}
+			}
+			$menuStr .=<<EOF;
+				</ul>
+EOF
+		}
+
+		# Check if we have a list of javascript assets
+		if (defined(my $javascripts = $options->{'javascripts'})) {
+			foreach my $script (@{$javascripts}) {
+				$javascriptStr .=<<EOF;
+					<script type="text/javascript" src="$script"></script>
+EOF
 			}
 		}
-		$menuStr .=<<EOF;
-					</ul>
-				</div><!--/.well -->
-			</div><!--/span-->
+		# Check if javascript snippet exists
+		if (defined(my $javascript = $options->{'javascript'})) {
+			$javascriptStr .=<<EOF;
+				<script type="text/javascript">
+$javascript
+				</script>
 EOF
+		}
 	}
-
 
 	# Build action response
 	my $resp = HTTP::Response->new(
@@ -335,72 +356,68 @@ EOF
 		<meta name="viewport" content="width=device-width, initial-scale=1.0">
 		<!-- Assets -->
 		<link href="/static/favicon.ico" rel="icon" />
-		<link href="/static/jquery-ui/css/ui-lightness/jquery-ui.min.css" rel="stylesheet" media="screen">
-		<link href="/static/bootstrap/css/bootstrap.min.css" rel="stylesheet" media="screen">
+		<link href="/static/jquery-ui/css/ui-lightness/jquery-ui.min.css" rel="stylesheet">
+		<link href="/static/bootstrap/css/bootstrap.min.css" rel="stylesheet">
 
 		<style type="text/css">
 			body {
-				padding-top: 60px;
-				padding-bottom: 40px;
+				padding-top: 50px;
 			}
-			.sidebar-nav {
-				padding: 9px 0;
+
+			.main-area {
+				padding-top: 15px;
+				padding-bottom: 15px;
 			}
-			\@media (max-width: 980px) {
-				/* Enable use of floated navbar text */
-				.navbar-text.pull-right {
-					float: none;
-					padding-left: 5px;
-					padding-right: 5px;
-				}
-			}
+$styleStr
 		</style>
-
 		<!-- End Assets -->
-		<link href="/static/bootstrap/css/bootstrap-responsive.min.css" rel="stylesheet" media="screen">
 	</head>
-	<body>
 
+	<body>
 		<div class="navbar navbar-inverse navbar-fixed-top">
-			<div class="navbar-inner">
-				<div class="container-fluid">
-					<button type="button" class="btn btn-navbar" data-toggle="collapse" data-target=".nav-collapse">
+			<div class="container">
+				<div class="navbar-header">
+					<button type="button" class="navbar-toggle" data-toggle="collapse" data-target=".navbar-collapse">
 						<span class="icon-bar"></span>
 						<span class="icon-bar"></span>
 						<span class="icon-bar"></span>
 					</button>
-   					<a class="brand" href="/">OpenTrafficShaper</a>
-					<div class="nav-collapse collapse">
-						<p class="navbar-text pull-right">Logged in as <a href="#" class="navbar-link">Username</a>	</p>
-						<ul class="nav">
-							<li class="active"><a href="#">Home</a></li>
-							<li><a href="/users">Users</a></li>
-						</ul>
-					</div><!--/.nav-collapse -->
+   					<a class="navbar-brand" href="/">OpenTrafficShaper</a>
+				</div>
+				<div class="collapse navbar-collapse">
+					<ul class="nav navbar-nav">
+						<li class="active"><a href="#">Home</a></li>
+						<li><a href="/limits">Limits</a></li>
+					</ul>
 				</div>
 			</div>
 		</div>
 
-		<div class="container-fluid">
-			<div class="row-fluid">
-					$menuStr
-				<div class="span10">
-					$content
-				</div><!--/span-->
-			</div><!--/row-->
+		<div class="main-area container">
+				<div class="col-md-2">
+$menuStr
+				</div>
+				<div class="col-md-10">
+$content
+				</div>
+			</div>
 			<hr>
 			<footer>
 				<p class="muted">v$globals->{'version'} - Copyright &copy; 2013,  <a href="http://www.allworldit.com">AllWorldIT</a></p>
 			</footer>
-		</div><!--/.fluid-container-->
+		</div>
 
-		<!-- Javascript -->
-		<script src="/static/jquery/js/jquery.min.js"></script>
-		<script src="/static/jquery-ui/js/jquery-ui.min.js"></script>
-		<script src="/static/bootstrap/js/bootstrap.min.js"></script>
-  </body>
+	</body>
+
+
+	<script type="text/javascript" src="/static/jquery/js/jquery.min.js"></script>
+	<script type="text/javascript" src="/static/jquery-ui/js/jquery-ui.min.js"></script>
+	<script type="text/javascript" src="/static/bootstrap/js/bootstrap.min.js"></script>
+$javascriptStr
+
 </html>
 EOF
+	## FIXME - Dyanmic script inclusion required
 	return $resp;
 }
 
@@ -551,11 +568,11 @@ sub _parse_http_resource
 	my (undef,$dmodule,$daction) = $request->uri->path_segments();
 	# If any is blank, set it to the default
 	$dmodule = "index" if (!defined($dmodule) || $dmodule eq "");
-	$daction = "default" if (!defined($daction));
+	$daction = "default" if (!defined($daction) || $daction eq "");
 	# Sanitize
 	(my $module = $dmodule) =~ s/[^A-Za-z0-9]//g;	
 	(my $action = $daction) =~ s/[^A-Za-z0-9]//g;	
-
+print STDERR "module = $module, action = $action\n";
 	# If module name is sneaky? then just block it
 	if ($module ne $dmodule) {
 		return httpDisplayFault(HTTP_FORBIDDEN,"Method Not Allowed","The requested resource '$module' is not allowed.");

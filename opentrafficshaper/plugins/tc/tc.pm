@@ -28,6 +28,10 @@ use opentrafficshaper::constants;
 use opentrafficshaper::logger;
 use opentrafficshaper::utils;
 
+use opentrafficshaper::plugins::configmanager qw( 
+		getLimits getLimitAttribute setLimitAttribute
+		getShaperState setShaperState
+);
 
 
 # Exporter stuff
@@ -198,17 +202,17 @@ sub session_init {
 
 # Add event for tc
 sub do_add {
-	my ($kernel,$heap,$uid) = @_[KERNEL, HEAP, ARG0];
+	my ($kernel,$heap,$lid) = @_[KERNEL, HEAP, ARG0];
 
 
 	# Pull in global
-	my $users = $globals->{'users'};
-	my $user = $users->{$uid};
+	my $limits = getLimits();
+	my $limit = $limits->{$lid};
 
-	$logger->log(LOG_DEBUG," Add '$user->{'Username'}' [$uid]\n");
+	$logger->log(LOG_DEBUG,"[TC] Add '$limit->{'Username'}' [$lid]\n");
 
 
-	my @components = split(/\./,$user->{'IP'});
+	my @components = split(/\./,$limit->{'IP'});
 
 	# Filter level 2-4
 	my $ip1 = $components[0];
@@ -219,7 +223,7 @@ sub do_add {
 	# Check if we have a entry for the /8, if not we must create our 2nd level hash table and link it
 	if (!defined($tcFilterMappings->{$ip1})) {
 		# Setup IP1's hash table
-		my $filterID  = getTcFilter($uid);
+		my $filterID  = getTcFilter($lid);
 		$tcFilterMappings->{$ip1}->{'id'} = $filterID;
 
 
@@ -283,7 +287,7 @@ sub do_add {
 
 	# Check if we have our /16 hash entry, if not we must create the 3rd level hash table
 	if (!defined($tcFilterMappings->{$ip1}->{$ip2})) {
-		my $filterID  = getTcFilter($uid);
+		my $filterID  = getTcFilter($lid);
 		# Set 2nd level hash table ID
 		$tcFilterMappings->{$ip1}->{$ip2}->{'id'} = $filterID;
 		# Grab some hash table ID's we need
@@ -350,7 +354,7 @@ sub do_add {
 
 	# Check if we have our /24 hash entry, if not we must create the 4th level hash table
 	if (!defined($tcFilterMappings->{$ip1}->{$ip2}->{$ip3})) {
-		my $filterID  = getTcFilter($uid);
+		my $filterID  = getTcFilter($lid);
 		# Set 3rd level hash table ID
 		$tcFilterMappings->{$ip1}->{$ip2}->{$ip3}->{'id'} = $filterID;
 		# Grab some hash table ID's we need
@@ -419,18 +423,18 @@ sub do_add {
 
 
 	# Only if we have limits setup process them
-	if (defined($user->{'TrafficLimitTx'}) && defined($user->{'TrafficLimitRx'})) {
-		# Build users tc class ID
-		my $classID  = getTcClass($uid);
+	if (defined($limit->{'TrafficLimitTx'}) && defined($limit->{'TrafficLimitRx'})) {
+		# Build limit tc class ID
+		my $classID  = getTcClass($lid);
 		# Grab some hash table ID's we need
 		my $ip3HtHex = $tcFilterMappings->{$ip1}->{$ip2}->{$ip3}->{'id'};
 		my $ip4Hex = toHex($ip4);
 		# Generate our filter handle
 		my $filterHandle = "${ip3HtHex}:${ip4Hex}:1";
 
-		# Save user tc class ID
-		$user->{'tc.class'} = $classID;
-		$user->{'tc.filter'} = "${ip3HtHex}:${ip4Hex}:1";
+		# Save limit tc class ID
+		setLimitAttribute($lid,'tc.class',$classID);
+		setLimitAttribute($lid,'tc.filter',"${ip3HtHex}:${ip4Hex}:1");
 
 		#
 		# SETUP MAIN TRAFFIC LIMITS
@@ -443,9 +447,9 @@ sub do_add {
 					'parent','1:2',
 					'classid',"1:$classID",
 					'htb',
-						'rate', $user->{'TrafficLimitTx'} . "kbit",
-						'ceil', $user->{'TrafficLimitTxBurst'} . "kbit",
-						'prio',$user->{'TrafficPriority'},
+						'rate', $limit->{'TrafficLimitTx'} . "kbit",
+						'ceil', $limit->{'TrafficLimitTxBurst'} . "kbit",
+						'prio', $limit->{'TrafficPriority'},
 		]);
 		$kernel->post("_tc" => "queue" => [
 				'/sbin/tc','class','add',
@@ -453,9 +457,9 @@ sub do_add {
 					'parent','1:2',
 					'classid',"1:$classID",
 					'htb',
-						'rate', $user->{'TrafficLimitRx'} . "kbit",
-						'ceil', $user->{'TrafficLimitRxBurst'} . "kbit",
-						'prio',$user->{'TrafficPriority'},
+						'rate', $limit->{'TrafficLimitRx'} . "kbit",
+						'ceil', $limit->{'TrafficLimitRxBurst'} . "kbit",
+						'prio', $limit->{'TrafficPriority'},
 		]);
 
 		#
@@ -472,7 +476,7 @@ sub do_add {
 					'protocol',$config->{'ip_protocol'},
 					'u32',
 						'ht',"${ip3HtHex}:${ip4Hex}:",
-							'match','ip','dst',$user->{'IP'},
+							'match','ip','dst',$limit->{'IP'},
 								'at',16+$config->{'iphdr_offset'},
 					'flowid',"1:$classID",
 		]);
@@ -485,35 +489,35 @@ sub do_add {
 					'protocol',$config->{'ip_protocol'},
 					'u32',
 						'ht',"${ip3HtHex}:${ip4Hex}:",
-							'match','ip','src',$user->{'IP'},
+							'match','ip','src',$limit->{'IP'},
 								'at',12+$config->{'iphdr_offset'},
 					'flowid',"1:$classID",
 		]);
 
-		tc_addtask_optimize($kernel,$config->{'txiface'},$classID,$user->{'TrafficLimitTx'});
-		tc_addtask_optimize($kernel,$config->{'rxiface'},$classID,$user->{'TrafficLimitRx'});
+		tc_addtask_optimize($kernel,$config->{'txiface'},$classID,$limit->{'TrafficLimitTx'});
+		tc_addtask_optimize($kernel,$config->{'rxiface'},$classID,$limit->{'TrafficLimitRx'});
 	}
 
 	# Mark as live
-	$user->{'_shaper.state'} = SHAPER_LIVE;
+	setShaperState($lid,SHAPER_LIVE);
 }
 
 # Change event for tc
 sub do_change {
-	my ($kernel, $uid, $changes) = @_[KERNEL, ARG0];
+	my ($kernel, $lid, $changes) = @_[KERNEL, ARG0];
 
 
 	# Pull in global
-	my $users = $globals->{'users'};
-	my $user = $users->{$uid};
+	my $limits = getLimits();
+	my $limit = $limits->{$lid};
 
-	$logger->log(LOG_DEBUG,"Processing changes for '$user->{'Username'}' [$uid]\n");
+	$logger->log(LOG_DEBUG,"Processing changes for '$limit->{'Username'}' [$lid]\n");
 
 	# We going to pull in the defaults
-	my $trafficLimitTx = $user->{'TrafficLimitTx'};
-	my $trafficLimitRx = $user->{'TrafficLimitRx'};
-	my $trafficLimitTxBurst = $user->{'TrafficLimitTxBurst'};
-	my $trafficLimitRxBurst = $user->{'TrafficLimitRxBurst'};
+	my $trafficLimitTx = $limit->{'TrafficLimitTx'};
+	my $trafficLimitRx = $limit->{'TrafficLimitRx'};
+	my $trafficLimitTxBurst = $limit->{'TrafficLimitTxBurst'};
+	my $trafficLimitRxBurst = $limit->{'TrafficLimitRxBurst'};
 	# Lets see if we can override them...
 	if (defined($changes->{'TrafficLimitTx'})) {
 		$trafficLimitTx = $changes->{'TrafficLimitTx'};
@@ -528,42 +532,45 @@ sub do_change {
 		$trafficLimitRxBurst = $changes->{'TrafficLimitRxBurst'};
 	}
 
+	my $classID = getLimitAttribute($lid,'tc.class');
+
+
 	$kernel->post("_tc" => "queue" => [
 			'/sbin/tc','class','change',
 				'dev',$config->{'txiface'},
 				'parent','1:2',
-				'classid',"1:$user->{'tc.class'}",
+				'classid',"1:$classID",
 				'htb',
 					'rate', $trafficLimitTx . "kbit",
 					'ceil', $trafficLimitTxBurst . "kbit",
-					'prio',$user->{'TrafficPriority'},
+					'prio', $limit->{'TrafficPriority'},
 	]);
 	$kernel->post("_tc" => "queue" => [
 			'/sbin/tc','class','change',
 				'dev',$config->{'rxiface'},
 				'parent','1:2',
-				'classid',"1:$user->{'tc.class'}",
+				'classid',"1:$classID",
 				'htb',
 					'rate', $trafficLimitRx . "kbit",
 					'ceil', $trafficLimitRxBurst . "kbit",
-					'prio',$user->{'TrafficPriority'},
+					'prio', $limit->{'TrafficPriority'},
 	]);
 }
 
 # Remove event for tc
 sub do_remove {
-	my ($kernel, $uid) = @_[KERNEL, ARG0];
+	my ($kernel, $lid) = @_[KERNEL, ARG0];
 
 
 	# Pull in global
-	my $users = $globals->{'users'};
-	my $user = $users->{$uid};
+	my $limits = getLimits();
+	my $limit = $limits->{$lid};
 
-	$logger->log(LOG_DEBUG," Remove '$user->{'Username'}' [$uid]\n");
+	$logger->log(LOG_DEBUG," Remove '$limit->{'Username'}' [$lid]\n");
 
 	# Grab ClassID
-	my $classID = $user->{'tc.class'};
-	my $filterHandle = $user->{'tc.filter'};
+	my $classID = getLimitAttribute($lid,'tc.class');
+	my $filterHandle = getLimitAttribute($lid,'tc.filter');
 
 	# Clear up the filter
 	$kernel->post("_tc" => "queue" => [
@@ -602,14 +609,14 @@ sub do_remove {
 	disposeTcClass($classID);
 
 	# Mark as not live
-	$user->{'_shaper.state'} = SHAPER_NOTLIVE;
+	setShaperState($lid,SHAPER_NOTLIVE);
 }
 
 
 # Function to get next available TC filter 
 sub getTcFilter
 {
-	my $uid = shift;
+	my $lid = shift;
 
 
 	my $id = pop(@{$tcFilters->{'free'}});
@@ -625,7 +632,7 @@ sub getTcFilter
 		$id = toHex($id);
 	}
 
-	$tcFilters->{'track'}->{$id} = $uid;
+	$tcFilters->{'track'}->{$id} = $lid;
 
 	return $id;
 }
@@ -644,7 +651,7 @@ sub disposeTcFilter
 # Function to get next available TC class 
 sub getTcClass
 {
-	my $uid = shift;
+	my $lid = shift;
 
 
 	my $id = pop(@{$tcClasses->{'free'}});
@@ -657,7 +664,7 @@ sub getTcClass
 		$id = toHex($id);
 	}
 
-	$tcClasses->{'track'}->{$id} = $uid;
+	$tcClasses->{'track'}->{$id} = $lid;
 
 	return $id;
 }
@@ -678,6 +685,17 @@ sub getUIDFromTcClass
 
 	return $tcClasses->{'track'}->{$id};
 }
+# Get TX iface
+sub getConfigTxIface
+{
+	return $config->{'txiface'};
+}
+# Get RX iface
+sub getConfigRxIface
+{
+	return $config->{'rxiface'};
+}
+
 
 # Function to initialize an interface
 sub _tc_init_iface

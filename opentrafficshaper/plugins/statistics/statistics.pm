@@ -28,6 +28,7 @@ use opentrafficshaper::constants;
 use opentrafficshaper::logger;
 use opentrafficshaper::utils;
 
+use opentrafficshaper::plugins::configmanager qw( getLimits );
 
 
 # Exporter stuff
@@ -37,6 +38,7 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 @EXPORT = qw(
 );
 @EXPORT_OK = qw(
+		getLastStats
 );
 
 use constant {
@@ -138,7 +140,7 @@ sub session_init {
 	$logger->log(LOG_DEBUG,"[STATISTICS] Initialized");
 }
 
-# Update users Statistics
+# Update limit Statistics
 # $uid has some special use cases:
 #	main:$iface:all	- Interface total stats
 #	main:$iface:classes	- Interface classified traffic
@@ -147,18 +149,21 @@ sub do_update {
 	my ($kernel, $item, $stats) = @_[KERNEL, ARG0, ARG1];
 
 
-	# Save entry
-	$statsCache->{$item}->{$stats->{'timestamp'}} = $stats;
-
 	# Buffer size
 	$logger->log(LOG_INFO,"[STATISTICS] Statistics update for '%s', buffered '%s' items",$item,scalar keys %{$statsCache->{$item}});
 
 	if ($item =~ /^main/) {
 	} else {
 		# Pull in global
-		my $users = $globals->{'users'};
-		my $user = $users->{$item};
+		my $limits = getLimits();
+		my $limit = $limits->{$item};
+		my $username = $limit->{'Username'};
+		
+		# Save entry
+		$statsCache->{$username}->{$stats->{'timestamp'}}->{$stats->{'direction'}} = $stats;
 
+use Data::Dumper;		print STDERR "Limit: ".Dumper($limit);
+use Data::Dumper;		print STDERR "Stats: ".Dumper($stats);
 	}
 
 
@@ -191,7 +196,8 @@ print STDERR "Pass4: $event\n";
 
 
 # Handle subscriptions to updates
-sub do_subscribe {
+sub do_subscribe 
+{
 	my ($kernel, $handler, $handlerEvent, $item) = @_[KERNEL, ARG0, ARG1, ARG2];
 
 
@@ -202,7 +208,8 @@ sub do_subscribe {
 
 
 # Handle unsubscribes
-sub do_unsubscribe {
+sub do_unsubscribe
+{
 	my ($kernel, $handler, $handlerEvent, $item) = @_[KERNEL, ARG0, ARG1, ARG2];
 
 
@@ -211,11 +218,42 @@ sub do_unsubscribe {
 	delete($subscribers->{$item}->{$handler}->{$handlerEvent});
 }
 
+# Return user last stats
+sub getLastStats
+{
+	my $username = shift;
+
+	my $statistics;
+
+	# Do we have stats for this user in the cache?
+	if (defined($statsCache->{$username})) {
+		# Grab last entry
+		my $lastTimestamp = (sort keys %{$statsCache->{$username}})[-1];
+		# We should ALWAYS have one, unless the server just booted
+		if (defined($lastTimestamp)) {
+			# Loop with both directions
+			foreach my $direction ('tx','rx') {
+				# Get a easier to use handle on the stats
+				if (my $stats = $statsCache->{$username}->{$lastTimestamp}->{$direction}) {
+					# Setup the statistics hash
+					$statistics->{$direction} = {
+						'current_rate' => $stats->{'current_rate'},
+						'current_pps' => $stats->{'current_pps'},
+					};
+				}
+			}
+		}
+	}
+
+	return $statistics;
+}
+
 
 sub handle_SIGHUP
 {
 	$logger->log(LOG_WARN,"[STATISTICS] Got SIGHUP, ignoring for now");
 }
+
 
 1;
 # vim: ts=4

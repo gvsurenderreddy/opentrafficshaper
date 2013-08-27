@@ -37,12 +37,22 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 @EXPORT = qw(
 );
 @EXPORT_OK = qw(
+		getLimits
+		setLimitAttribute
+		getLimitAttribute
+
+		getShaperState
+		setShaperState
+
+		getTrafficClasses
+
+		getPriorityName
 );
 
 use constant {
 	VERSION => '0.0.1',
 
-	# After how long does a user get removed if he's offline
+	# After how long does a limit get removed if its's deemed offline
 	TIMEOUT_EXPIRE_OFFLINE => 300,
 
 	# How often our config check ticks
@@ -85,10 +95,11 @@ my $default_pool_priority = 10;
 
 # Pending changes
 my $changeQueue = { };
-# UserID counter
-my $userIPMap = {};
-my $userIDMap = {};
-my $userIDCounter = 1;
+# Limits
+my $limits = { };
+my $limitIPMap = { };
+my $limitIDMap = { };
+my $limitIDCounter = 1;
 
 
 
@@ -218,9 +229,6 @@ sub session_tick {
 	my $kernel = $_[KERNEL];
 
 
-	# Suck in global
-	my $users = $globals->{'users'};
-
 	# Now
 	my $now = time();
 
@@ -229,186 +237,186 @@ sub session_tick {
 	# LOOP WITH CHANGES
 	#
 
-	foreach my $uid (keys %{$changeQueue}) {
-		# Changes for user
+	foreach my $lid (keys %{$changeQueue}) {
+		# Changes for limit
 		# Minimum required info is:
 		# - Username
 		# - IP
 		# - Status
 		# - LastUpdate
-		my $cuser = $changeQueue->{$uid};
+		my $climit = $changeQueue->{$lid};
 
 		#
-		# USER IN LIST
+		# LIMIT IN LIST
 		#
-		if (defined(my $guser = $users->{$uid})) {
+		if (defined(my $glimit = $limits->{$lid})) {
 
-			# This is a new user notification
-			if ($cuser->{'Status'} eq "new") {
-				$logger->log(LOG_INFO,"[CONFIGMANAGER] User '$cuser->{'Username'}' [$uid], user already live but new state provided?");
+			# This is a new limit notification
+			if ($climit->{'Status'} eq "new") {
+				$logger->log(LOG_INFO,"[CONFIGMANAGER] Limit '$climit->{'Username'}' [$lid], limit already live but new state provided?");
 
 				# Get the changes we made and push them to the shaper
-				if (my $changes = processChanges($guser,$cuser)) {
+				if (my $changes = processChanges($glimit,$climit)) {
 					# Post to shaper
-					$kernel->post("shaper" => "change" => $uid => $changes);
+					$kernel->post("shaper" => "change" => $lid => $changes);
 				}
 
 				# Remove from change queue
-				delete($changeQueue->{$uid});
+				delete($changeQueue->{$lid});
 
 			# Online or "ping" status notification
-			} elsif ($cuser->{'Status'} eq "online") {
-				$logger->log(LOG_DEBUG,"[CONFIGMANAGER] User '$cuser->{'Username'}' [$uid], user still online");
+			} elsif ($climit->{'Status'} eq "online") {
+				$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Limit '$climit->{'Username'}' [$lid], limit still online");
 
 				# Get the changes we made and push them to the shaper
-				if (my $changes = processChanges($guser,$cuser)) {
+				if (my $changes = processChanges($glimit,$climit)) {
 					# Post to shaper
-					$kernel->post("shaper" => "change" => $uid => $changes);
+					$kernel->post("shaper" => "change" => $lid => $changes);
 				}
 
 				# Remove from change queue
-				delete($changeQueue->{$uid});
+				delete($changeQueue->{$lid});
 
 			# Offline notification, this we going to treat specially
-			} elsif ($cuser->{'Status'} eq "offline") {
+			} elsif ($climit->{'Status'} eq "offline") {
 
 				# We first check if this update was received some time ago, and if it exceeds our expire time
-				# We don't want to immediately remove a user, only for him to come back on a few seconds later, the cost in exec()'s 
+				# We don't want to immediately remove a limit, only for him to come back on a few seconds later, the cost in exec()'s 
 				# would be pretty high
-				if ($now - $cuser->{'LastUpdate'} > TIMEOUT_EXPIRE_OFFLINE) {
+				if ($now - $climit->{'LastUpdate'} > TIMEOUT_EXPIRE_OFFLINE) {
 
 					# Remove entry if no longer live
-					if ($guser->{'_shaper.state'} == SHAPER_NOTLIVE) {
-						$logger->log(LOG_INFO,"[CONFIGMANAGER] User '$cuser->{'Username'}' [$uid] offline and removed from shaper");
+					if ($glimit->{'_shaper.state'} == SHAPER_NOTLIVE) {
+						$logger->log(LOG_INFO,"[CONFIGMANAGER] Limit '$climit->{'Username'}' [$lid] offline and removed from shaper");
 
 						# Remove from system
-						delete($users->{$uid});
+						delete($limits->{$lid});
 						# Remove from change queue
-						delete($changeQueue->{$uid});
+						delete($changeQueue->{$lid});
 						# Set this UID as no longer using this IP
-						# NK: If we try remove it before the user is actually removed we could get a reconnection causing this value 
-						#     to be totally gone, which means we not tracking this user using this IP anymore, not easily solved!!
-						delete($userIPMap->{$guser->{'IP'}}->{$uid});
+						# NK: If we try remove it before the limit is actually removed we could get a reconnection causing this value 
+						#     to be totally gone, which means we not tracking this limit using this IP anymore, not easily solved!!
+						delete($limitIPMap->{$glimit->{'IP'}}->{$lid});
 						# Check if we can delete the IP too
-						if (keys %{$userIPMap->{$guser->{'IP'}}} == 0) {
-							delete($userIPMap->{$guser->{'IP'}});
+						if (keys %{$limitIPMap->{$glimit->{'IP'}}} == 0) {
+							delete($limitIPMap->{$glimit->{'IP'}});
 						}
 
 						# Next record, we don't want to do any updates below
 						next;
 
 					# Push to shaper
-					} elsif ($guser->{'_shaper.state'} == SHAPER_LIVE) {
-						$logger->log(LOG_DEBUG,"[CONFIGMANAGER] User '$cuser->{'Username'}' [$uid] offline, queue remove from shaper");
+					} elsif ($glimit->{'_shaper.state'} == SHAPER_LIVE) {
+						$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Limit '$climit->{'Username'}' [$lid] offline, queue remove from shaper");
 
 						# Post removal to shaper
-						$kernel->post("shaper" => "remove" => $uid);
+						$kernel->post("shaper" => "remove" => $lid);
 
 					} else {
-						$logger->log(LOG_DEBUG,"[CONFIGMANAGER] User '$cuser->{'Username'}' [$uid], user in list, but offline now and".
+						$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Limit '$climit->{'Username'}' [$lid], limit in list, but offline now and".
 								" expired, still live, waiting for shaper");
 					}
 				}
 			}
 
-			# Update the user data
-			$guser->{'Status'} = $cuser->{'Status'};
-			$guser->{'LastUpdate'} = $cuser->{'LastUpdate'};
+			# Update the limit data
+			$glimit->{'Status'} = $climit->{'Status'};
+			$glimit->{'LastUpdate'} = $climit->{'LastUpdate'};
 			# This item is optional
-			$guser->{'Expires'} = $cuser->{'Expires'} if (defined($cuser->{'Expires'}));
+			$glimit->{'Expires'} = $climit->{'Expires'} if (defined($climit->{'Expires'}));
 
 		#
-		# USER NOT IN LIST
+		# LIMIT NOT IN LIST
 		#
 		} else {
-			# We take new and online notifications the same way here if the user is not in our global userlist already
-		   if (($cuser->{'Status'} eq "new" || $cuser->{'Status'} eq "online")) {
-				$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Processing new user '$cuser->{'Username'}' [$uid]");
+			# We take new and online notifications the same way here if the limit is not in our global limit list already
+		   if (($climit->{'Status'} eq "new" || $climit->{'Status'} eq "online")) {
+				$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Processing new limit '$climit->{'Username'}' [$lid]");
 
 				# We first going to look for IP conflicts...
-				my @ipUsers = keys %{$userIPMap->{$cuser->{'IP'}}};
+				my @ipLimits = keys %{$limitIPMap->{$climit->{'IP'}}};
 				if (
 					# If there is already an entry and its not us ...
-					( @ipUsers == 1 && !defined($userIPMap->{$cuser->{'IP'}}->{$uid}) )
+					( @ipLimits == 1 && !defined($limitIPMap->{$climit->{'IP'}}->{$lid}) )
 					# Or if there is more than 1 entry...
-					|| @ipUsers > 1 
+					|| @ipLimits > 1 
 				) {
 					# We not going to post this to the shaper, but we are going to override the status
-					$cuser->{'Status'} = 'conflict';
-					$cuser->{'_shaper.state'} = SHAPER_NOTLIVE;
+					$climit->{'Status'} = 'conflict';
+					$climit->{'_shaper.state'} = SHAPER_NOTLIVE;
 					# Give a bit of info
 					my @conflictUsernames;
-					foreach my $uid (@ipUsers) {
-						push(@conflictUsernames,$users->{$uid}->{'Username'});
+					foreach my $lid (@ipLimits) {
+						push(@conflictUsernames,$limits->{$lid}->{'Username'});
 					}
 					# Output log line
-					$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process user '".$cuser->{'Username'}."' IP '$cuser->{'IP'}' conflicts with users '".
+					$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process limit '".$climit->{'Username'}."' IP '$climit->{'IP'}' conflicts with users '".
 							join(',',@conflictUsernames)."'.");
 
-					# We cannot trust shaping when there is more than 1 user on the IP, so we going to remove all users with this
+					# We cannot trust shaping when there is more than 1 limit on the IP, so we going to remove all limits with this
 					# IP from the shaper below...
-					foreach my $uid2 (@ipUsers) {
-						# Check if the user has been setup already (all but the user we busy with, as its setup below)
-						if (defined($userIPMap->{$cuser->{'IP'}}->{$uid2})) {
-							my $guser2 = $users->{$uid2};
+					foreach my $lid2 (@ipLimits) {
+						# Check if the limit has been setup already (all but the limit we busy with, as its setup below)
+						if (defined($limitIPMap->{$climit->{'IP'}}->{$lid2})) {
+							my $glimit2 = $limits->{$lid2};
 
-							# If the user is active or pending on the shaper, remove it
-							if ($guser2->{'_shaper.state'} == SHAPER_LIVE || $guser2->{'_shaper.state'} == SHAPER_PENDING) {
-								$logger->log(LOG_WARN,"[CONFIGMANAGER] Removing conflicted user '".$guser2->{'Username'}."' [$uid2] from shaper'");
+							# If the limit is active or pending on the shaper, remove it
+							if ($glimit2->{'_shaper.state'} == SHAPER_LIVE || $glimit2->{'_shaper.state'} == SHAPER_PENDING) {
+								$logger->log(LOG_WARN,"[CONFIGMANAGER] Removing conflicted limit '".$glimit2->{'Username'}."' [$lid2] from shaper'");
 								# Post removal to shaper
-								$kernel->post("shaper" => "remove" => $uid2);
-								# Update that we're offline directly to global user table
-								$guser2->{'Status'} = 'conflict';
+								$kernel->post("shaper" => "remove" => $lid2);
+								# Update that we're offline directly to global limit table
+								$glimit2->{'Status'} = 'conflict';
 							}
 						}
 					}
 
-				# All looks good, no conflicts, we're set to add this user!
+				# All looks good, no conflicts, we're set to add this limit!
 				} else {
-					# Post to the user to the shaper
-					$cuser->{'_shaper.state'} = SHAPER_PENDING;
-					$kernel->post("shaper" => "add" => $uid);
+					# Post to the limit to the shaper
+					$climit->{'_shaper.state'} = SHAPER_PENDING;
+					$kernel->post("shaper" => "add" => $lid);
 
 				}
 
 				# Set this UID as using this IP
-				$userIPMap->{$cuser->{'IP'}}->{$uid} = 1;
+				$limitIPMap->{$climit->{'IP'}}->{$lid} = 1;
 
 				# This is now live
-				$users->{$uid} = $cuser;
+				$limits->{$lid} = $climit;
 
-			# User is not in our list and this is an unknown state we're trasitioning to
+			# Limit is not in our list and this is an unknown state we're trasitioning to
 			} else {
-				$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Ignoring user '$cuser->{'Username'}' [$uid] state '$cuser->{'Status'}', not in our".
+				$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Ignoring limit '$climit->{'Username'}' [$lid] state '$climit->{'Status'}', not in our".
 						" global list");
 			}
 	
 			# Remove from change queue
-			delete($changeQueue->{$uid});
+			delete($changeQueue->{$lid});
 		}
 
 	}
 
 
 	#
-	# CHECK OUT CONNECTED USERS
+	# CHECK OUT CONNECTED LIMITS
 	#
-	foreach my $uid (keys %{$users}) {
-		# Global user
-		my $guser = $users->{$uid};
+	foreach my $lid (keys %{$limits}) {
+		# Global limit
+		my $glimit = $limits->{$lid};
 
-		# Check for expired users
-		if ($guser->{'Expires'} != 0 && $guser->{'Expires'} < $now) {
-			$logger->log(LOG_INFO,"[CONFIGMANAGER] User '$guser->{'Username'}' has expired, marking offline");
-			# Looks like this user has expired?
-			my $cuser = {
-				'Username' => $guser->{'Username'},
-				'IP' => $guser->{'IP'},
+		# Check for expired limits
+		if ($glimit->{'Expires'} != 0 && $glimit->{'Expires'} < $now) {
+			$logger->log(LOG_INFO,"[CONFIGMANAGER] Limit '$glimit->{'Username'}' has expired, marking offline");
+			# Looks like this limit has expired?
+			my $climit = {
+				'Username' => $glimit->{'Username'},
+				'IP' => $glimit->{'IP'},
 				'Status' => 'offline',
-				'LastUpdate' => $guser->{'LastUpdate'},
+				'LastUpdate' => $glimit->{'LastUpdate'},
 			};
 			# Add to change queue
-			$changeQueue->{$uid} = $cuser;
+			$changeQueue->{$lid} = $climit;
 		}
 	}
 
@@ -444,73 +452,73 @@ sub session_tick {
 #  - online
 #  - unknown
 # Source 
-#  - This is the source of the user, typically  plugin.ModuleName
+#  - This is the source of the limit, typically  plugin.ModuleName
 sub process_change {
-	my ($kernel, $user) = @_[KERNEL, ARG0];
+	my ($kernel, $limit) = @_[KERNEL, ARG0];
 
 
 
-	# Create a unique user identifier
-	my $userUniq = $user->{'Username'} . "/" . $user->{'IP'};
+	# Create a unique limit identifier
+	my $limitUniq = $limit->{'Username'} . "/" . $limit->{'IP'};
 
 	# If we've not seen it
-	my $uid;
-	if (!defined($uid = $userIDMap->{$userUniq})) {
-		# Give it the next userID in the list
-		$userIDMap->{$userUniq} = $uid = ++$userIDCounter;
+	my $lid;
+	if (!defined($lid = $limitIDMap->{$limitUniq})) {
+		# Give it the next limitID in the list
+		$limitIDMap->{$limitUniq} = $lid = ++$limitIDCounter;
 	}
 
 	# We start off blank so we only pull in whats supported
-	my $userChange;
-	if (!($userChange->{'Username'} = $user->{'Username'})) {
-		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process user change as username is invalid.");
+	my $limitChange;
+	if (!($limitChange->{'Username'} = $limit->{'Username'})) {
+		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process limit change as username is invalid.");
 	}
-	$userChange->{'Username'} = $user->{'Username'};
-	$userChange->{'IP'} = $user->{'IP'};
+	$limitChange->{'Username'} = $limit->{'Username'};
+	$limitChange->{'IP'} = $limit->{'IP'};
 	# Check group is OK
-	if (!($userChange->{'GroupID'} = checkGroupID($user->{'GroupID'}))) {
-		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process user change for '".$user->{'Username'}."' as the GroupID is invalid.");
+	if (!($limitChange->{'GroupID'} = checkGroupID($limit->{'GroupID'}))) {
+		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process limit change for '".$limit->{'Username'}."' as the GroupID is invalid.");
 	}
 	# Check class is OK
-	if (!($userChange->{'ClassID'} = checkClassID($user->{'ClassID'}))) {
-		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process user change for '".$user->{'Username'}."' as the ClassID is invalid.");
+	if (!($limitChange->{'ClassID'} = checkClassID($limit->{'ClassID'}))) {
+		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process limit change for '".$limit->{'Username'}."' as the ClassID is invalid.");
 	}
-	$userChange->{'TrafficLimitTx'} = $user->{'TrafficLimitTx'};
-	$userChange->{'TrafficLimitRx'} = $user->{'TrafficLimitRx'};
+	$limitChange->{'TrafficLimitTx'} = $limit->{'TrafficLimitTx'};
+	$limitChange->{'TrafficLimitRx'} = $limit->{'TrafficLimitRx'};
 	# Take base limits if we don't have any burst values set
-	$userChange->{'TrafficLimitTxBurst'} = $user->{'TrafficLimitTxBurst'};
-	$userChange->{'TrafficLimitRxBurst'} = $user->{'TrafficLimitRxBurst'};
+	$limitChange->{'TrafficLimitTxBurst'} = $limit->{'TrafficLimitTxBurst'};
+	$limitChange->{'TrafficLimitRxBurst'} = $limit->{'TrafficLimitRxBurst'};
 
 	# If we don't have burst limits, set them to the traffic limit, and reset the limit to 25%
-	if (!defined($userChange->{'TrafficLimitTxBurst'})) {
-		$userChange->{'TrafficLimitTxBurst'} = $userChange->{'TrafficLimitTx'};
-		$userChange->{'TrafficLimitTx'} = int($userChange->{'TrafficLimitTxBurst'}/4);
+	if (!defined($limitChange->{'TrafficLimitTxBurst'})) {
+		$limitChange->{'TrafficLimitTxBurst'} = $limitChange->{'TrafficLimitTx'};
+		$limitChange->{'TrafficLimitTx'} = int($limitChange->{'TrafficLimitTxBurst'}/4);
 	}
-	if (!defined($userChange->{'TrafficLimitRxBurst'})) {
-		$userChange->{'TrafficLimitRxBurst'} = $userChange->{'TrafficLimitRx'};
-		$userChange->{'TrafficLimitRx'} = int($userChange->{'TrafficLimitRxBurst'}/4);
+	if (!defined($limitChange->{'TrafficLimitRxBurst'})) {
+		$limitChange->{'TrafficLimitRxBurst'} = $limitChange->{'TrafficLimitRx'};
+		$limitChange->{'TrafficLimitRx'} = int($limitChange->{'TrafficLimitRxBurst'}/4);
 	}
 
 
 	# Optional priority, we default to 5
-	$userChange->{'TrafficPriority'} = defined($user->{'TrafficPriority'}) ? $user->{'TrafficPriority'} : 5;
+	$limitChange->{'TrafficPriority'} = defined($limit->{'TrafficPriority'}) ? $limit->{'TrafficPriority'} : 5;
 
 	# Set when this entry expires
-	$userChange->{'Expires'} = defined($user->{'Expires'}) ? $user->{'Expires'} : 0;
+	$limitChange->{'Expires'} = defined($limit->{'Expires'}) ? $limit->{'Expires'} : 0;
 
 	# Check status is OK
-	if (!($userChange->{'Status'} = checkStatus($user->{'Status'}))) {
-		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process user change for '".$user->{'Username'}."' as the Status is invalid.");
+	if (!($limitChange->{'Status'} = checkStatus($limit->{'Status'}))) {
+		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process user change for '".$limit->{'Username'}."' as the Status is invalid.");
 	}
 
-	$userChange->{'Source'} = $user->{'Source'};
+	$limitChange->{'Source'} = $limit->{'Source'};
 
 	# Set the user ID before we post to the change queue
-	$userChange->{'ID'} = $uid;
-	$userChange->{'LastUpdate'} = time();
+	$limitChange->{'ID'} = $lid;
+	$limitChange->{'LastUpdate'} = time();
 
 	# Push change to change queue
-	$changeQueue->{$uid} = $userChange;
+	$changeQueue->{$lid} = $limitChange;
 }
 
 
@@ -558,6 +566,63 @@ sub checkStatus
 	return undef;
 }
 
+# Function to return list of limits
+sub getLimits
+{
+	return $limits;
+}
+
+# Function to set a limit attribute
+sub setLimitAttribute
+{
+	my ($lid,$attr,$value) = @_;
+
+	$limits->{$lid}->{'attributes'}->{$attr} = $value;
+}
+
+# Function to get a limit attribute
+sub getLimitAttribute
+{
+	my ($lid,$attr) = @_;
+
+
+	# Check if attribute exists first
+	if (defined($limits->{$lid}) && defined($limits->{$lid}->{'attributes'}) && defined($limits->{$lid}->{'attributes'}->{$attr})) {
+		return $limits->{$lid}->{'attributes'}->{$attr};
+	} else {
+		return undef;
+	}
+}
+
+# Function to set shaper state on a limit
+sub setShaperState
+{
+	my ($lid,$state) = @_;
+
+	$limits->{$lid}->{'_shaper.state'} = $state;
+}
+
+# Function to get shaper state on a limit
+sub getShaperState
+{
+	my $lid = shift;
+
+	return $limits->{$lid}->{'_shaper.state'};
+}
+
+# Function to get traffic classes
+sub getTrafficClasses
+{
+	return $classes;	
+}
+
+# Function to get priority name
+sub getPriorityName
+{
+	my $prio = shift;
+
+	return $classes->{$prio};
+}
 
 
 # Handle SIGHUP

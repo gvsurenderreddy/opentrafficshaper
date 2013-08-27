@@ -128,11 +128,25 @@ sub session_tick {
 
 	# Suck in global
 	my $users = $globals->{'users'};
+	my $tcConfig = $opentrafficshaper::plugins::tc::config;
 
 	# Now
 	my $now = time();
 
 	my $iface = "eth1";
+
+	# Work out traffic direction
+	my $direction;
+	if ($iface eq opentrafficshaper::plugins::tc::getConfigTxIface()) {
+		$direction = 'tx';
+	} elsif ($iface eq opentrafficshaper::plugins::tc::getConfigRxIface()) {
+		$direction = 'rx';
+	} else {
+		# Reset tick
+		$kernel->delay(tick => TICK_PERIOD);
+		$logger->log(LOG_ERR,"[TCSTATS] Unknown interface '$iface'");
+		return;
+	}
 
 	# TC commands to run
 	my $cmd = [ '/sbin/tc', '-s', 'class', 'show', 'dev', $iface ];
@@ -159,16 +173,13 @@ sub session_tick {
 	$heap->{task_data}->{$task->ID} = {
 		'timestamp' => $now,
 		'iface' => $iface,
+		'direction' => $direction,
 		'stats' => { }
 	};
 
 	# Build commandline string
 	my $cmdStr = join(' ',@{$cmd});
 	$logger->log(LOG_DEBUG,"[TCSTATS] TASK/".$task->ID.": Starting '$cmdStr' as ".$task->ID." with PID ".$task->PID);
-
-
-	# Reset tick
-#	$kernel->delay(tick => TICK_PERIOD);
 };
 
 
@@ -179,6 +190,7 @@ sub task_child_stdout
     my $child = $heap->{task_by_wid}->{$task_id};
     my $stats = $heap->{task_data}->{$task_id}->{'stats'};
     my $iface = $heap->{task_data}->{$task_id}->{'iface'};
+    my $direction = $heap->{task_data}->{$task_id}->{'direction'};
     my $timestamp = $heap->{task_data}->{$task_id}->{'timestamp'};
 
 
@@ -275,6 +287,7 @@ sub task_child_stdout
 			# Build our submission, this is basically copying the hash
 			my %submission = %{$stats};
 			$submission{'timestamp'} = $timestamp;
+			$submission{'direction'} = $direction;
 
 			$logger->log(LOG_DEBUG,"[TCSTATS] Submitting stats for [%s]",$item);
 			$kernel->post("statistics" => "update" => $item => \%submission);
