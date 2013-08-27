@@ -1,1 +1,3 @@
-2013-06-22
+Unzip v3.0.0 dist
+rm -f ./css/bootstrap.css ./css/bootstrap-theme.css ./js/bootstrap.js
+
