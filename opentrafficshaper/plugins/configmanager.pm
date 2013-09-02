@@ -37,7 +37,9 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 @EXPORT = qw(
 );
 @EXPORT_OK = qw(
+		getLimit
 		getLimits
+		getLimitUsername
 		setLimitAttribute
 		getLimitAttribute
 
@@ -546,14 +548,20 @@ sub processChanges
 sub checkGroupID
 {
 	my $gid = shift;
-	return $gid if (defined($groups->{$gid}));
+	if (defined($groups->{$gid})) {
+		return $gid;
+	}
+	return;
 }
 
 # Function to check the class ID exists
 sub checkClassID
 {
 	my $cid = shift;
-	return $cid if (defined($classes->{$cid}));
+	if (defined($classes->{$cid})) {
+		return $cid;
+	}
+	return;
 }
 
 # Function to check if the status is ok
@@ -563,13 +571,35 @@ sub checkStatus
 	if ($status eq "new" || $status eq "offline" || $status eq "online" || $status eq "conflict" || $status eq "unknown") {
 		return $status
 	}
-	return undef;
+	return;
 }
 
-# Function to return list of limits
+# Function to return a limit username
+sub getLimitUsername
+{
+	my $lid = shift;
+	if (defined($limits->{$lid})) {
+		return $limits->{$lid}->{'Username'};
+	}
+	return;
+}
+
+# Function to return a limit 
+sub getLimit
+{
+	my $lid = shift;
+
+	if (defined($limits->{$lid})) {
+		my %limit = %{$limits->{$lid}};
+		return \%limit;
+	}
+	return;
+}
+
+# Function to return a list of limit ID's
 sub getLimits
 {
-	return $limits;
+	return (keys %{$limits});
 }
 
 # Function to set a limit attribute
@@ -577,7 +607,12 @@ sub setLimitAttribute
 {
 	my ($lid,$attr,$value) = @_;
 
-	$limits->{$lid}->{'attributes'}->{$attr} = $value;
+
+	# Only set it if it exists
+	if (defined($limits->{$lid})) {
+		$limits->{$lid}->{'attributes'}->{$attr} = $value;
+	}
+	return;
 }
 
 # Function to get a limit attribute
@@ -589,9 +624,8 @@ sub getLimitAttribute
 	# Check if attribute exists first
 	if (defined($limits->{$lid}) && defined($limits->{$lid}->{'attributes'}) && defined($limits->{$lid}->{'attributes'}->{$attr})) {
 		return $limits->{$lid}->{'attributes'}->{$attr};
-	} else {
-		return undef;
 	}
+	return;
 }
 
 # Function to set shaper state on a limit
@@ -599,15 +633,19 @@ sub setShaperState
 {
 	my ($lid,$state) = @_;
 
-	$limits->{$lid}->{'_shaper.state'} = $state;
+	if (defined($limits->{$lid})) {
+		$limits->{$lid}->{'_shaper.state'} = $state;
+	}
 }
 
 # Function to get shaper state on a limit
 sub getShaperState
 {
 	my $lid = shift;
-
-	return $limits->{$lid}->{'_shaper.state'};
+	if (defined($limits->{$lid})) {
+		return $limits->{$lid}->{'_shaper.state'};
+	}
+	return;
 }
 
 # Function to get traffic classes
@@ -620,7 +658,6 @@ sub getTrafficClasses
 sub getPriorityName
 {
 	my $prio = shift;
-
 	return $classes->{$prio};
 }
 
