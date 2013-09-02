@@ -33,6 +33,7 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 use DateTime;
 use HTML::Entities;
 use HTTP::Status qw( :constants );
+use URI::Escape;
 
 use opentrafficshaper::logger;
 use opentrafficshaper::plugins;
@@ -74,8 +75,6 @@ sub default
 			<th></th>
 			<th>User</th>
 			<th>IP</th>
-			<th>Source</th>
-			<th>LastUpdate</th>
 			<th>Class</th>
 			<th>Group</th>
 			<th>Limits</th>
@@ -85,8 +84,12 @@ sub default
 	<tbody>
 EOF
 	# Body
-	foreach my $uid (keys %{$limits}) {
-		my $limit = $limits->{$uid};
+	foreach my $lid (getLimits()) {
+		my $limit;
+		# If we can't get the limit just move onto the next
+		if (!defined($limit = getLimit($lid))) {
+			next;
+		}
 
 		# Make style a bit pretty
 		my $style = "";
@@ -108,7 +111,8 @@ EOF
 
 
 		# If the statistics plugin is loaded pull in some stats
-		my $statsPPSTx = my $statsRateTx = my $statsPrioTx = "unavail";
+		my $statsPPSTx = my $statsRateTx = my $statsPrioTx = "-";
+		my $statsPPSRx = my $statsRateRx = my $statsPrioRx = "-";
 		if (plugin_is_loaded('statistics')) {
 			my $stats = opentrafficshaper::plugins::statistics::getLastStats($limit->{'Username'});
 			# Pull off tx stats
@@ -117,52 +121,68 @@ EOF
 				$statsRateTx = $statsTx->{'current_rate'};
 				$statsPrioTx = getPriorityName($limit->{'TrafficPriority'});
 			}
+			# Pull off rx stats
+			if (my $statsRx = $stats->{'rx'}) {
+				$statsPPSRx = $statsRx->{'current_pps'};
+				$statsRateRx = $statsRx->{'current_rate'};
+				$statsPrioRx = getPriorityName($limit->{'TrafficPriority'});
+			}
 		}
+
+		my $usernameEncoded = encode_entities($limit->{'Username'});
+		my $usernameEscaped = uri_escape($limit->{'Username'});
+
 
 		$content .= <<EOF;
 		<tr class="$style">
 			<td>$icon</td>
 			<td class="limit">
-				$limit->{'Username'}
+				$usernameEncoded
 				<span class="limit-data" style="display:none">
 					<table width="100%" border="0">
+						<tr>
+							<td>Source</td>
+							<td>$limit->{'Source'}</td>
+							<td>&nbsp;</td>
+							<td>Last Update</td>
+							<td>$lastUpdate</td>
+						</tr>
 						<tr>
 							<td>Tx Priority</td>
 							<td>$statsPrioTx</td>
 							<td>&nbsp;</td>
 							<td>Tx Priority</td>
-							<td>-</td>
+							<td>$statsPrioRx</td>
 						</tr>
 						<tr>
 							<td>Tx PPS</td>
 							<td>$statsPPSTx</td>
 							<td>&nbsp;</td>
 							<td>Rx PPS</td>
-							<td>-</td>
+							<td>$statsPPSRx</td>
 						</tr>
 						<tr>
 							<td>Tx Rate</td>
 							<td>$statsRateTx</td>
 							<td>&nbsp;</td>
 							<td>Rx Rate</td>
-							<td>-</td>
+							<td>$statsRateRx</td>
 						</tr>
 					</table>
 				</span>
 			</td>
 			<td>$limit->{'IP'}</td>
-			<td>$limit->{'Source'}</td>
-			<td>$lastUpdate</td>
 			<td>$limit->{'ClassID'}</td>
 			<td>$limit->{'GroupID'}</td>
 			<td>$limits</td>
 			<td>
+				<a href="/statistics/by-username?username=$usernameEscaped"><i class="glyphicon glyphicon-stats"></i></a>
 				<i class="glyphicon glyphicon-wrench"></i>
-				<i class="glyphicon glyphicon-stats"></i>
 			</td>
 		</tr>
 EOF
 	}
+
 	# No results
 	if (keys %{$limits} < 1) {
 		$content .=<<EOF;
