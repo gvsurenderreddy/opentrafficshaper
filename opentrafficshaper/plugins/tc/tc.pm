@@ -29,7 +29,7 @@ use opentrafficshaper::logger;
 use opentrafficshaper::utils;
 
 use opentrafficshaper::plugins::configmanager qw( 
-		getLimits getLimitAttribute setLimitAttribute
+		getLimit getLimitAttribute setLimitAttribute
 		getShaperState setShaperState
 );
 
@@ -176,17 +176,21 @@ sub plugin_init
 # Start the plugin
 sub plugin_start
 {
+	my $changeSet = TC::ChangeSet->new();
+
 	# Initialize TX interface
 	$logger->log(LOG_INFO,"[TC] Queuing tasks to initialize '$config->{'txiface'}'");
-	_tc_init_iface($config->{'txiface'},$config->{'txiface_rate'});
-	tc_addtask_optimize(undef,$config->{'txiface'},3,$config->{'txiface_rate'}*1024); # Rate is in mbit
-	_tc_optimize_iface($config->{'txiface'},3,3,$config->{'txiface_rate'});
+	_tc_iface_init($changeSet,$config->{'txiface'},$config->{'txiface_rate'});
+	_tc_class_optimize($changeSet,$config->{'txiface'},3,$config->{'txiface_rate'}*1024); # Rate is in mbit
+	_tc_iface_optimize($changeSet,$config->{'txiface'},3,3,$config->{'txiface_rate'});
 
 	# Initialize RX interface
 	$logger->log(LOG_INFO,"[TC] Queuing tasks to initialize '$config->{'rxiface'}'");
-	_tc_init_iface($config->{'rxiface'},$config->{'rxiface_rate'});
-	tc_addtask_optimize(undef,$config->{'rxiface'},3,$config->{'rxiface_rate'}*1024); # Rate is in mbit
-	_tc_optimize_iface($config->{'rxiface'},3,3,$config->{'rxiface_rate'});
+	_tc_iface_init($changeSet,$config->{'rxiface'},$config->{'rxiface_rate'});
+	_tc_class_optimize($changeSet,$config->{'rxiface'},3,$config->{'rxiface_rate'}*1024); # Rate is in mbit
+	_tc_iface_optimize($changeSet,$config->{'rxiface'},3,3,$config->{'rxiface_rate'});
+
+	_task_add_to_queue($changeSet);
 
 	$logger->log(LOG_INFO,"[TC] Started");
 }
@@ -208,12 +212,17 @@ sub session_init {
 sub do_add {
 	my ($kernel,$heap,$lid) = @_[KERNEL, HEAP, ARG0];
 
+	my $changeSet = TC::ChangeSet->new();
 
-	# Pull in global
-	my $limits = getLimits();
-	my $limit = $limits->{$lid};
 
-	$logger->log(LOG_DEBUG,"[TC] Add '$limit->{'Username'}' [$lid]\n");
+	# Pull in limit
+	my $limit;
+	if (!defined($limit = getLimit($lid))) {
+		$logger->log(LOG_ERR,"[TC] Shaper 'add' event with non existing limit '$lid'");
+		return;
+	}
+
+	$logger->log(LOG_INFO,"[TC] Add '$limit->{'Username'}' [$lid]");
 
 
 	my @components = split(/\./,$limit->{'IP'});
@@ -231,10 +240,10 @@ sub do_add {
 		$tcFilterMappings->{$ip1}->{'id'} = $filterID;
 
 
-		$logger->log(LOG_DEBUG,"Linking 2nd level hash table to '$filterID' to $ip1.0.0/8\n");
+		$logger->log(LOG_DEBUG,"[TC] Linking 2nd level hash table to '$filterID' to $ip1.0.0/8");
 
 		# Create second level hash table for $ip1
-		$kernel->post("_tc" => "queue" => [
+		$changeSet->add([
 				'/sbin/tc','filter','add',
 					'dev',$config->{'txiface'},
 					'parent','1:',
@@ -244,7 +253,7 @@ sub do_add {
 					'u32',
 						'divisor','256',
 		]);
-		$kernel->post("_tc" => "queue" => [
+		$changeSet->add([
 				'/sbin/tc','filter','add',
 					'dev',$config->{'rxiface'},
 					'parent','1:',
@@ -255,7 +264,7 @@ sub do_add {
 						'divisor','256',
 		]);
 		# Link hash table
-		$kernel->post("_tc" => "queue" => [
+		$changeSet->add([
 				'/sbin/tc','filter','add',
 					'dev',$config->{'txiface'},
 					'parent','1:',
@@ -271,7 +280,7 @@ sub do_add {
 						# Link to our hash table
 						'link',"$filterID:"
 		]);
-		$kernel->post("_tc" => "queue" => [
+		$changeSet->add([
 				'/sbin/tc','filter','add',
 					'dev',$config->{'rxiface'},
 					'parent','1:',
@@ -299,9 +308,9 @@ sub do_add {
 		my $ip2Hex = toHex($ip2);
 
 
-		$logger->log(LOG_DEBUG,"Linking 3rd level hash table to '$filterID' to $ip1.$ip2.0.0/16\n");
+		$logger->log(LOG_DEBUG,"[TC] Linking 3rd level hash table to '$filterID' to $ip1.$ip2.0.0/16");
 		# Create second level hash table for $fl1
-		$kernel->post("_tc" => "queue" => [
+		$changeSet->add([
 				'/sbin/tc','filter','add',
 					'dev',$config->{'txiface'},
 					'parent','1:',
@@ -311,7 +320,7 @@ sub do_add {
 					'u32',
 						'divisor','256',
 		]);
-		$kernel->post("_tc" => "queue" => [
+		$changeSet->add([
 				'/sbin/tc','filter','add',
 					'dev',$config->{'rxiface'},
 					'parent','1:',
@@ -322,7 +331,7 @@ sub do_add {
 						'divisor','256',
 		]);
 		# Link hash table
-		$kernel->post("_tc" => "queue" => [
+		$changeSet->add([
 				'/sbin/tc','filter','add',
 					'dev',$config->{'txiface'},
 					'parent','1:',
@@ -338,7 +347,7 @@ sub do_add {
 						# That we're linking to our hash table
 						'link',"$filterID:"
 		]);
-		$kernel->post("_tc" => "queue" => [
+		$changeSet->add([
 				'/sbin/tc','filter','add',
 					'dev',$config->{'rxiface'},
 					'parent','1:',
@@ -366,9 +375,9 @@ sub do_add {
 		my $ip3Hex = toHex($ip3);
 
 
-		$logger->log(LOG_DEBUG,"Linking 4th level hash table to '$filterID' to $ip1.$ip2.$ip3.0/24\n");
+		$logger->log(LOG_DEBUG,"[TC] Linking 4th level hash table to '$filterID' to $ip1.$ip2.$ip3.0/24");
 		# Create second level hash table for $fl1
-		$kernel->post("_tc" => "queue" => [
+		$changeSet->add([
 				'/sbin/tc','filter','add',
 					'dev',$config->{'txiface'},
 					'parent','1:',
@@ -378,7 +387,7 @@ sub do_add {
 					'u32',
 						'divisor','256',
 		]);
-		$kernel->post("_tc" => "queue" => [
+		$changeSet->add([
 				'/sbin/tc','filter','add',
 					'dev',$config->{'rxiface'},
 					'parent','1:',
@@ -389,7 +398,7 @@ sub do_add {
 						'divisor','256',
 		]);
 		# Link hash table
-		$kernel->post("_tc" => "queue" => [
+		$changeSet->add([
 				'/sbin/tc','filter','add',
 					'dev',$config->{'txiface'},
 					'parent','1:',
@@ -405,7 +414,7 @@ sub do_add {
 						# That we're linking to our hash table
 						'link',"$filterID:"
 		]);
-		$kernel->post("_tc" => "queue" => [
+		$changeSet->add([
 				'/sbin/tc','filter','add',
 					'dev',$config->{'rxiface'},
 					'parent','1:',
@@ -423,8 +432,6 @@ sub do_add {
 		]);
 
 	}
-
-
 
 	# Only if we have limits setup process them
 	if (defined($limit->{'TrafficLimitTx'}) && defined($limit->{'TrafficLimitRx'})) {
@@ -445,7 +452,7 @@ sub do_add {
 		#
 
 		# Create main rate limiting classes
-		$kernel->post("_tc" => "queue" => [
+		$changeSet->add([
 				'/sbin/tc','class','add',
 					'dev',$config->{'txiface'},
 					'parent','1:2',
@@ -455,7 +462,7 @@ sub do_add {
 						'ceil', $limit->{'TrafficLimitTxBurst'} . "kbit",
 						'prio', $limit->{'TrafficPriority'},
 		]);
-		$kernel->post("_tc" => "queue" => [
+		$changeSet->add([
 				'/sbin/tc','class','add',
 					'dev',$config->{'rxiface'},
 					'parent','1:2',
@@ -471,7 +478,7 @@ sub do_add {
 		#
 
 		# Default traffic classification to main class
-		$kernel->post("_tc" => "queue" => [
+		$changeSet->add([
 				'/sbin/tc','filter','add',
 					'dev',$config->{'txiface'},
 					'parent','1:',
@@ -484,7 +491,7 @@ sub do_add {
 								'at',16+$config->{'iphdr_offset'},
 					'flowid',"1:$classID",
 		]);
-		$kernel->post("_tc" => "queue" => [
+		$changeSet->add([
 				'/sbin/tc','filter','add',
 					'dev',$config->{'rxiface'},
 					'parent','1:',
@@ -498,24 +505,33 @@ sub do_add {
 					'flowid',"1:$classID",
 		]);
 
-		tc_addtask_optimize($kernel,$config->{'txiface'},$classID,$limit->{'TrafficLimitTx'});
-		tc_addtask_optimize($kernel,$config->{'rxiface'},$classID,$limit->{'TrafficLimitRx'});
+		_tc_class_optimize($changeSet,$config->{'txiface'},$classID,$limit->{'TrafficLimitTx'});
+		_tc_class_optimize($changeSet,$config->{'rxiface'},$classID,$limit->{'TrafficLimitRx'});
 	}
+
+	# Post changeset
+	$kernel->post("_tc" => "queue" => $changeSet);
 
 	# Mark as live
 	setShaperState($lid,SHAPER_LIVE);
 }
 
+
 # Change event for tc
 sub do_change {
 	my ($kernel, $lid, $changes) = @_[KERNEL, ARG0];
 
+	my $changeSet = TC::ChangeSet->new();
 
-	# Pull in global
-	my $limits = getLimits();
-	my $limit = $limits->{$lid};
 
-	$logger->log(LOG_DEBUG,"Processing changes for '$limit->{'Username'}' [$lid]\n");
+	# Pull in limit
+	my $limit;
+	if (!defined($limit = getLimit($lid))) {
+		$logger->log(LOG_ERR,"[TC] Shaper 'change' event with non existing limit '$lid'");
+		return;
+	}
+
+	$logger->log(LOG_INFO,"Processing changes for '$limit->{'Username'}' [$lid]");
 
 	# We going to pull in the defaults
 	my $trafficLimitTx = $limit->{'TrafficLimitTx'};
@@ -539,7 +555,7 @@ sub do_change {
 	my $classID = getLimitAttribute($lid,'tc.class');
 
 
-	$kernel->post("_tc" => "queue" => [
+	$changeSet->add([
 			'/sbin/tc','class','change',
 				'dev',$config->{'txiface'},
 				'parent','1:2',
@@ -549,7 +565,7 @@ sub do_change {
 					'ceil', $trafficLimitTxBurst . "kbit",
 					'prio', $limit->{'TrafficPriority'},
 	]);
-	$kernel->post("_tc" => "queue" => [
+	$changeSet->add([
 			'/sbin/tc','class','change',
 				'dev',$config->{'rxiface'},
 				'parent','1:2',
@@ -559,25 +575,34 @@ sub do_change {
 					'ceil', $trafficLimitRxBurst . "kbit",
 					'prio', $limit->{'TrafficPriority'},
 	]);
+
+	# Post changeset
+	$kernel->post("_tc" => "queue" => $changeSet);
 }
+
 
 # Remove event for tc
 sub do_remove {
 	my ($kernel, $lid) = @_[KERNEL, ARG0];
 
+	my $changeSet = TC::ChangeSet->new();
 
-	# Pull in global
-	my $limits = getLimits();
-	my $limit = $limits->{$lid};
 
-	$logger->log(LOG_DEBUG," Remove '$limit->{'Username'}' [$lid]\n");
+	# Pull in limit
+	my $limit;
+	if (!defined($limit = getLimit($lid))) {
+		$logger->log(LOG_ERR,"[TC] Shaper 'change' event with non existing limit '$lid'");
+		return;
+	}
+
+	$logger->log(LOG_INFO,"[TC] Remove '$limit->{'Username'}' [$lid]");
 
 	# Grab ClassID
 	my $classID = getLimitAttribute($lid,'tc.class');
 	my $filterHandle = getLimitAttribute($lid,'tc.filter');
 
 	# Clear up the filter
-	$kernel->post("_tc" => "queue" => [
+	$changeSet->add([
 			'/sbin/tc','filter','del',
 				'dev',$config->{'txiface'},
 				'parent','1:',
@@ -586,7 +611,7 @@ sub do_remove {
 				'protocol',$config->{'ip_protocol'},
 				'u32',
 	]);
-	$kernel->post("_tc" => "queue" => [
+	$changeSet->add([
 			'/sbin/tc','filter','del',
 				'dev',$config->{'rxiface'},
 				'parent','1:',
@@ -596,13 +621,13 @@ sub do_remove {
 				'u32',
 	]);
 	# Clear up the class
-	$kernel->post("_tc" => "queue" => [
+	$changeSet->add([
 			'/sbin/tc','class','del',
 				'dev',$config->{'txiface'},
 				'parent','1:2',
 				'classid',"1:$classID",
 	]);
-	$kernel->post("_tc" => "queue" => [
+	$changeSet->add([
 			'/sbin/tc','class','del',
 				'dev',$config->{'rxiface'},
 				'parent','1:2',
@@ -611,6 +636,9 @@ sub do_remove {
 
 	# And recycle the class
 	disposeTcClass($classID);
+
+	# Post changeset
+	$kernel->post("_tc" => "queue" => $changeSet);
 
 	# Mark as not live
 	setShaperState($lid,SHAPER_NOTLIVE);
@@ -640,6 +668,8 @@ sub getTcFilter
 
 	return $id;
 }
+
+
 # Function to dispose of a TC Filter
 sub disposeTcFilter
 {
@@ -673,6 +703,7 @@ sub getTcClass
 	return $id;
 }
 
+
 # Function to dispose of a TC class
 sub disposeTcClass
 {
@@ -684,6 +715,7 @@ sub disposeTcClass
 	$tcClasses->{'track'}->{$id} = undef;
 }
 
+
 # Grab user from TC class
 sub getUIDFromTcClass
 {
@@ -692,17 +724,20 @@ sub getUIDFromTcClass
 	return $tcClasses->{'track'}->{$id};
 }
 
+
 # Get interfaces we manage
 sub getInterfaces
 {
 	return ($config->{'txiface'},$config->{'rxiface'});
 }
 
+
 # Get TX iface
 sub getConfigTxIface
 {
 	return $config->{'txiface'};
 }
+
 
 # Get RX iface
 sub getConfigRxIface
@@ -712,21 +747,21 @@ sub getConfigRxIface
 
 
 # Function to initialize an interface
-sub _tc_init_iface
+sub _tc_iface_init
 {
-	my ($iface,$rate) = @_;
+	my ($changeSet,$iface,$rate) = @_;
 
 
 	# Work out rates
 	my $BERate = int($rate/10); # We use 10% of the rate for Best effort
 	my $CIRate = $rate - $BERate; # Rest is for our clients
 
-	_task_add_to_queue([
+	$changeSet->add([
 			'/sbin/tc','qdisc','del',
 				'dev',$iface,
 				'root',
 	]);
-	_task_add_to_queue([
+	$changeSet->add([
 			'/sbin/tc','qdisc','add',
 				'dev',$iface,
 				'root',
@@ -734,7 +769,7 @@ sub _tc_init_iface
 				'htb',
 					'default','3' # Push any unclassified traffic to 1:3
 	]);
-	_task_add_to_queue([
+	$changeSet->add([
 			'/sbin/tc','class','add',
 				'dev',$iface,
 				'parent','1:',
@@ -742,7 +777,7 @@ sub _tc_init_iface
 				'htb',
 					'rate',"${rate}mbit",
 	]);
-	_task_add_to_queue([
+	$changeSet->add([
 			'/sbin/tc','class','add',
 				'dev',$iface,
 				'parent','1:1',
@@ -753,7 +788,7 @@ sub _tc_init_iface
 					# Highest priority
 					'prio','5',
 	]);
-	_task_add_to_queue([
+	$changeSet->add([
 			'/sbin/tc','class','add',
 				'dev',$iface,
 				'parent','1:1',
@@ -766,10 +801,11 @@ sub _tc_init_iface
 	]);
 }
 
+
 # Function to apply SFQ to the interface priority classes
-sub _tc_optimize_iface
+sub _tc_iface_optimize
 {
-	my ($iface,$prioClass,$prioCount,$rate) = @_;
+	my ($changeSet,$iface,$prioClass,$prioCount,$rate) = @_;
 
 
 	# Make the queue size big enough
@@ -784,7 +820,7 @@ sub _tc_optimize_iface
 
 	# Use $i as an increasing number to be added to the base class
 	my $i = 1;
-	_task_add_to_queue([
+	$changeSet->add([
 			'/sbin/tc','qdisc','add',
 				'dev',$iface,
 				'parent',"$prioClass:$i",
@@ -794,7 +830,7 @@ sub _tc_optimize_iface
 	]);
 
 	$i++;
-	_task_add_to_queue([
+	$changeSet->add([
 			'/sbin/tc','qdisc','add',
 				'dev',$iface,
 				'parent',"$prioClass:$i",
@@ -817,7 +853,7 @@ sub _tc_optimize_iface
 	]);
 
 	$i++;
-	_task_add_to_queue([
+	$changeSet->add([
 			'/sbin/tc','qdisc','add',
 				'dev',$iface,
 				'parent',"$prioClass:$i",
@@ -832,24 +868,12 @@ sub _tc_optimize_iface
 	]);
 }
 
+
 # Function to apply traffic optimizations to a classes
-sub tc_addtask_optimize
+sub _tc_class_optimize
 {
-	my ($kernel,$iface,$classID,$rate) = @_;
+	my ($changeSet,$iface,$classID,$rate) = @_;
 
-
-	my $callTc;
-	if (defined($kernel)) {
-		# Use our kernel object
-		$callTc = sub {
-			$kernel->post(@_);
-		};
-	} else {
-		# Fake it if we don't have a kernel and just add to the task queue
-		$callTc = sub { 
-			_task_add_to_queue($_[2]);
-		};
-	}
 
 	# Rate for things like ICMP , ACK, SYN ... etc
 	my $rateBand1 = int($rate * (PROTO_RATE_LIMIT / 100));
@@ -865,7 +889,7 @@ sub tc_addtask_optimize
 	#
 
 	# We then prioritize traffic into 3 bands based on TOS
-	$callTc->("_tc" => "queue" => [
+	$changeSet->add([
 			'/sbin/tc','qdisc','add',
 				'dev',$iface,
 				'parent',"1:$classID",
@@ -881,7 +905,7 @@ sub tc_addtask_optimize
 	#
 
 	# Prioritize ICMP up to a certain limit
-	$callTc->("_tc" => "queue" => [
+	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
 				'parent',"$classID:",
@@ -895,7 +919,7 @@ sub tc_addtask_optimize
 				'flowid',"$classID:1",
 	]);
 	# Prioritize ACK up to a certain limit
-	$callTc->("_tc" => "queue" => [
+	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
 				'parent',"$classID:",
@@ -911,7 +935,7 @@ sub tc_addtask_optimize
 				'flowid',"$classID:1",
 	]);
 	# Prioritize SYN-ACK up to a certain limit
-	$callTc->("_tc" => "queue" => [
+	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
 				'parent',"$classID:",
@@ -927,7 +951,7 @@ sub tc_addtask_optimize
 				'flowid',"$classID:1",
 	]);
 	# Prioritize FIN up to a certain limit
-	$callTc->("_tc" => "queue" => [
+	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
 				'parent',"$classID:",
@@ -943,7 +967,7 @@ sub tc_addtask_optimize
 				'flowid',"$classID:1",
 	]);
 	# Prioritize RST up to a certain limit
-	$callTc->("_tc" => "queue" => [
+	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
 				'parent',"$classID:",
@@ -959,7 +983,7 @@ sub tc_addtask_optimize
 				'flowid',"$classID:1",
 	]);
 	# DNS
-	$callTc->("_tc" => "queue" => [
+	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
 				'parent',"$classID:",
@@ -972,7 +996,7 @@ sub tc_addtask_optimize
 					'rate',"${rateBand2}kbit",'burst',"${rateBand2Burst}k",'continue',
 				'flowid',"$classID:1",
 	]);
-	$callTc->("_tc" => "queue" => [
+	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
 				'parent',"$classID:",
@@ -986,7 +1010,7 @@ sub tc_addtask_optimize
 				'flowid',"$classID:1",
 	]);
 	# VOIP
-	$callTc->("_tc" => "queue" => [
+	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
 				'parent',"$classID:",
@@ -999,7 +1023,7 @@ sub tc_addtask_optimize
 					'rate',"${rateBand2}kbit",'burst',"${rateBand2Burst}k",'continue',
 				'flowid',"$classID:1",
 	]);
-	$callTc->("_tc" => "queue" => [
+	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
 				'parent',"$classID:",
@@ -1013,7 +1037,7 @@ sub tc_addtask_optimize
 				'flowid',"$classID:1",
 	]);
 	# SNMP
-	$callTc->("_tc" => "queue" => [
+	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
 				'parent',"$classID:",
@@ -1026,7 +1050,7 @@ sub tc_addtask_optimize
 						'at',20+$config->{'iphdr_offset'},
 				'flowid',"$classID:1",
 	]);
-	$callTc->("_tc" => "queue" => [
+	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
 				'parent',"$classID:",
@@ -1041,7 +1065,7 @@ sub tc_addtask_optimize
 	]);
 	# FIXME: Make this customizable not hard coded
 	# Mikrotik Management Port
-	$callTc->("_tc" => "queue" => [
+	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
 				'parent',"$classID:",
@@ -1054,7 +1078,7 @@ sub tc_addtask_optimize
 					'rate',"${rateBand2}kbit",'burst',"${rateBand2Burst}k",'continue',
 				'flowid',"$classID:1",
 	]);
-	$callTc->("_tc" => "queue" => [
+	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
 				'parent',"$classID:",
@@ -1068,7 +1092,7 @@ sub tc_addtask_optimize
 				'flowid',"$classID:1",
 	]);
 	# SMTP
-	$callTc->("_tc" => "queue" => [
+	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
 				'parent',"$classID:",
@@ -1081,7 +1105,7 @@ sub tc_addtask_optimize
 						'at',20+$config->{'iphdr_offset'},
 				'flowid',"$classID:2",
 	]);
-	$callTc->("_tc" => "queue" => [
+	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
 				'parent',"$classID:",
@@ -1095,7 +1119,7 @@ sub tc_addtask_optimize
 				'flowid',"$classID:2",
 	]);
 	# POP3
-	$callTc->("_tc" => "queue" => [
+	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
 				'parent',"$classID:",
@@ -1108,7 +1132,7 @@ sub tc_addtask_optimize
 						'at',20+$config->{'iphdr_offset'},
 				'flowid',"$classID:2",
 	]);
-	$callTc->("_tc" => "queue" => [
+	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
 				'parent',"$classID:",
@@ -1122,7 +1146,7 @@ sub tc_addtask_optimize
 				'flowid',"$classID:2",
 	]);
 	# IMAP
-	$callTc->("_tc" => "queue" => [
+	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
 				'parent',"$classID:",
@@ -1135,7 +1159,7 @@ sub tc_addtask_optimize
 						'at',20+$config->{'iphdr_offset'},
 				'flowid',"$classID:2",
 	]);
-	$callTc->("_tc" => "queue" => [
+	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
 				'parent',"$classID:",
@@ -1149,7 +1173,7 @@ sub tc_addtask_optimize
 				'flowid',"$classID:2",
 	]);
 	# HTTP
-	$callTc->("_tc" => "queue" => [
+	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
 				'parent',"$classID:",
@@ -1162,7 +1186,7 @@ sub tc_addtask_optimize
 						'at',20+$config->{'iphdr_offset'},
 				'flowid',"$classID:2",
 	]);
-	$callTc->("_tc" => "queue" => [
+	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
 				'parent',"$classID:",
@@ -1176,7 +1200,7 @@ sub tc_addtask_optimize
 				'flowid',"$classID:2",
 	]);
 	# HTTPS
-	$callTc->("_tc" => "queue" => [
+	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
 				'parent',"$classID:",
@@ -1189,7 +1213,7 @@ sub tc_addtask_optimize
 						'at',20+$config->{'iphdr_offset'},
 				'flowid',"$classID:2",
 	]);
-	$callTc->("_tc" => "queue" => [
+	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
 				'parent',"$classID:",
@@ -1220,19 +1244,28 @@ sub task_session_init {
 	$kernel->yield("task_run_next");
 }
 
+
 # Add task to queue
 sub _task_add_to_queue
 {
-	my $cmd = shift;
+	my $changeSet = shift;
 
 
-	# Build commandline string
-	my $cmdStr = join(' ',@{$cmd});
+	# Extract the changeset into commands
+	my $numChanges = 0;
+	foreach my $cmd ($changeSet->extract()) {
+		# Rip off path to tc command
+		shift(@{$cmd});
+		# Build commandline string
+		my $cmdStr = join(' ',@{$cmd});
+		push(@taskQueue,$cmdStr);
+		$numChanges++;
+	}
+
 	# Shove task on list
-	$logger->log(LOG_DEBUG,"[TC] TASK: Queue '$cmdStr'");
-
-	push(@taskQueue,$cmd);
+	$logger->log(LOG_DEBUG,"[TC] TASK: Queued $numChanges changes");
 }
+
 
 # Send the next command in the task direction
 sub _task_put_next
@@ -1241,14 +1274,10 @@ sub _task_put_next
 
 
 	# Task was busy, this signifies its done, so lets take the next command
-	if (my $cmd = shift(@taskQueue)) {
+	if (my $cmdStr = shift(@taskQueue)) {
 		# Remove off idle task list if its there
 		delete($heap->{'idle_tasks'}->{$task->ID});
 
-		# Chop off /sbin/tc
-		shift(@{$cmd});
-		# Build commandline string
-		my $cmdStr = join(' ',@{$cmd});
 		$task->put($cmdStr);
 		$logger->log(LOG_DEBUG,"[TC] TASK/".$task->ID.": Starting '$cmdStr' as ".$task->ID." with PID ".$task->PID);
 
@@ -1260,15 +1289,14 @@ sub _task_put_next
 }
 
 
-
 # Run a task
 sub task_add
 {
-	my ($kernel,$heap,$cmd) = @_[KERNEL,HEAP,ARG0];
+	my ($kernel,$heap,$changeSet) = @_[KERNEL,HEAP,ARG0];
 
 
 	# Internal function to add command to queue
-	_task_add_to_queue($cmd);
+	_task_add_to_queue($changeSet);
 
 	# Trigger a run if list is empty
 	#if (@taskQueue < 2) {
@@ -1417,6 +1445,50 @@ sub handle_SIGHUP
 {
 	$logger->log(LOG_WARN,"[TC] Got SIGHUP, ignoring for now");
 }
+
+
+
+
+
+
+# TC changeset item
+package TC::ChangeSet;
+
+use strict;
+use warnings;
+
+# Create object
+sub new
+{
+	my $class = shift;
+
+	my $self = {
+		'list' => [ ]
+	};
+
+	bless $self, $class;
+	return $self;
+}
+
+
+# Add a change to the list
+sub add
+{
+	my ($self,$change) = @_;
+
+	push(@{$self->{'list'}},$change);
+}
+
+
+# Return the list
+sub extract
+{
+	my $self = shift;
+
+	return @{$self->{'list'}};
+}
+
+
 
 1;
 # vim: ts=4
