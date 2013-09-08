@@ -92,7 +92,9 @@ sub plugin_init
 	# This is our session handling sending data to connections
 	POE::Session->create(
 		inline_states => {
-			_start => \&session_init,
+			_start => \&session_start,
+			_stop => \&session_stop,
+
 			'websocket.send' => \&do_send,
 		}
 	);
@@ -102,14 +104,33 @@ sub plugin_init
 
 
 # Session initialization
-sub session_init
+sub session_start
 {
-	my $kernel = $_[KERNEL];
+	my ($kernel,$heap) = @_[KERNEL,HEAP];
 
 	# Set our alias
 	$kernel->alias_set("plugin.webserver.websockets.statistics");
 
 	$logger->log(LOG_DEBUG,"[WEBSERVER] Snapin/WebSockets/Statistics - Initialized");
+}
+
+
+# Session stop
+sub session_stop
+{
+	my ($kernel,$heap) = @_[KERNEL,HEAP];
+
+	# Remove our alias
+	$kernel->alias_remove("plugin.webserver.websockets.statistics");
+
+	# Destroy data
+	$globals = undef;
+	$cSubscriptions = {};
+	$uSubscriptions = {};
+
+	$logger->log(LOG_DEBUG,"[WEBSERVER] Snapin/WebSockets/Statistics - Shutdown");
+
+	$logger = undef;
 }
 
 
