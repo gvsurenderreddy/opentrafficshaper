@@ -24,6 +24,7 @@ use warnings;
 use HTML::Entities;
 use HTTP::Response;
 use HTTP::Status qw( :constants :is );
+use JSON;
 use POE qw( Component::Server::TCP );
 use POE::Filter::HybridHTTP;
 use URI;
@@ -61,9 +62,6 @@ our $pluginInfo = {
 	
 	Init => \&plugin_init,
 	Start => \&plugin_start,
-
-	# Signals
-	signal_SIGHUP => \&handle_SIGHUP,
 };
 
 
@@ -90,7 +88,8 @@ my $resources = {
 			'add' => \&opentrafficshaper::plugins::webserver::pages::limits::add,
 		},
 		'statistics' => {
-			'default' => \&opentrafficshaper::plugins::webserver::pages::statistics::default,
+			'by-username' => \&opentrafficshaper::plugins::webserver::pages::statistics::byusername,
+			'data-by-username' => \&opentrafficshaper::plugins::webserver::pages::statistics::databyusername,
 		},
 	},
 };
@@ -134,7 +133,8 @@ sub plugin_init
 		# Function to handle HTTP requests (as we passing through a filter)
 		ClientInput => \&server_request,
 		# Setup the sever
-		Started => \&server_session_init,
+		Started => \&server_session_start,
+		Stopped => \&server_session_stop,
 	);
 
 
@@ -150,12 +150,21 @@ sub plugin_start
 
 
 
-# Server session initialization
-sub server_session_init
+# Server session started
+sub server_session_start
 {
 	my $kernel = $_[KERNEL];
 
-	$logger->log(LOG_DEBUG,"[WEBSERVER] Server initialized");
+	$logger->log(LOG_DEBUG,"[WEBSERVER] Initialized");
+}
+
+
+# Server session stopped
+sub server_session_stop
+{
+	my $kernel = $_[KERNEL];
+
+	$logger->log(LOG_DEBUG,"[WEBSERVER] Shutdown");
 }
 
 
@@ -289,67 +298,73 @@ sub httpCreateResponse
 
 	# Throw out message to client to authenticate first
 	my $headers = HTTP::Headers->new;
-	$headers->content_type("text/html");
+	my $payload = "";
 
+	# Check if we have a specific return type, if not set default
+	if (!defined($options->{'type'})) {
+		$options->{'type'} = 'webpage';
+	}
 
-	# Check if we have a menu structure, if we do, display the sidebar
-	my $styleStr = "";
-	my $menuStr = "";
-	my $javascriptStr = "";
-	if (defined($options)) {
-		# Check if style snippet exists
-		if (defined(my $style = $options->{'style'})) {
-			$styleStr .= $style;
-		}
+	# If we returning a webpage, handle it that way
+	if ($options->{'type'} eq 'webpage') {
+		# Set header
+		$headers->content_type("text/html");
 
-		# Check if menu exists
-		if (my $menu = $options->{'menu'}) {
-			$menuStr =<<EOF;
-				<ul class="nav nav-pills nav-stacked">
+		# Check if we have a menu structure, if we do, display the sidebar
+		my $styleStr = "";
+		my $menuStr = "";
+		my $javascriptStr = "";
+		if (defined($options)) {
+			# Check if style snippet exists
+			if (defined(my $style = $options->{'style'})) {
+				$styleStr .= $style;
+			}
+
+			# Check if menu exists
+			if (my $menu = $options->{'menu'}) {
+				$menuStr =<<EOF;
+					<ul class="nav nav-pills nav-stacked">
 EOF
-			# Loop with sub menu sections
-			foreach my $section (keys %{$menu}) {
-				# Loop with menu items
-				foreach my $item (keys %{$menu->{$section}}) {
-					my $link = "/" . $module . "/" . $menu->{$section}->{$item};
-					# Sanitize slightly
-					$link =~ s,/+$,,;
+				# Loop with sub menu sections
+				foreach my $section (keys %{$menu}) {
+					# Loop with menu items
+					foreach my $item (keys %{$menu->{$section}}) {
+						my $link = "/" . $module . "/" . $menu->{$section}->{$item};
+						# Sanitize slightly
+						$link =~ s,/+$,,;
 
-					# Build sections
-					$menuStr .=<<EOF;
-						<li class="nav-header">$section</li>
-						<li><a href="$link">$item</a></li>
+						# Build sections
+						$menuStr .=<<EOF;
+							<li class="nav-header">$section</li>
+							<li><a href="$link">$item</a></li>
+EOF
+					}
+				}
+				$menuStr .=<<EOF;
+					</ul>
+EOF
+			}
+
+			# Check if we have a list of javascript assets
+			if (defined(my $javascripts = $options->{'javascripts'})) {
+				foreach my $script (@{$javascripts}) {
+					$javascriptStr .=<<EOF;
+						<script type="text/javascript" src="$script"></script>
 EOF
 				}
 			}
-			$menuStr .=<<EOF;
-				</ul>
-EOF
-		}
-
-		# Check if we have a list of javascript assets
-		if (defined(my $javascripts = $options->{'javascripts'})) {
-			foreach my $script (@{$javascripts}) {
+			# Check if javascript snippet exists
+			if (defined(my $javascript = $options->{'javascript'})) {
 				$javascriptStr .=<<EOF;
-					<script type="text/javascript" src="$script"></script>
+					<script type="text/javascript">
+$javascript
+					</script>
 EOF
 			}
 		}
-		# Check if javascript snippet exists
-		if (defined(my $javascript = $options->{'javascript'})) {
-			$javascriptStr .=<<EOF;
-				<script type="text/javascript">
-$javascript
-				</script>
-EOF
-		}
-	}
 
-	# Build action response
-	my $resp = HTTP::Response->new(
-			HTTP_OK,"Ok",
-			$headers,
-			<<EOF);
+		# Create the payload we returning
+		$payload = <<EOF;
 <!DOCTYPE html>
 	<head>
 		<title>OpenTrafficShaper - Enterprise Traffic Shaper</title>
@@ -417,17 +432,23 @@ $javascriptStr
 
 </html>
 EOF
-	## FIXME - Dyanmic script inclusion required
+
+	# Maybe we're json?
+	} elsif ($options->{'type'} eq 'json') {
+		# Set header
+		$headers->content_type("application/json");
+		$payload = encode_json($content);
+	}
+
+	# Build action response
+	my $resp = HTTP::Response->new(
+			HTTP_OK,"Ok",
+			$headers,
+			$payload
+	);
+
 	return $resp;
 }
-
-
-# Handle SIGHUP
-sub handle_SIGHUP
-{
-	$logger->log(LOG_WARN,"[WEBSERVER] Got SIGHUP, ignoring for now");
-}
-
 
 
 #
@@ -571,8 +592,8 @@ sub _parse_http_resource
 	$daction = "default" if (!defined($daction) || $daction eq "");
 	# Sanitize
 	(my $module = $dmodule) =~ s/[^A-Za-z0-9]//g;	
-	(my $action = $daction) =~ s/[^A-Za-z0-9]//g;	
-print STDERR "module = $module, action = $action\n";
+	(my $action = $daction) =~ s/[^A-Za-z0-9\-]//g;	
+
 	# If module name is sneaky? then just block it
 	if ($module ne $dmodule) {
 		return httpDisplayFault(HTTP_FORBIDDEN,"Method Not Allowed","The requested resource '$module' is not allowed.");
@@ -637,8 +658,6 @@ sub _server_request_http_wsupgrade
 
 	return $response;
 }
-
-
 
 
 
