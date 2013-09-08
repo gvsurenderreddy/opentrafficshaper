@@ -21,7 +21,13 @@ use warnings;
 
 # Set the dirs we look for library files in
 use lib('/usr/local/lib/opentrafficshaper-1.0','/usr/lib/opentrafficshaper-1.0',
-		'/usr/lib64/opentrafficshaper-1.0','opentrafficshaper','awitpt');
+		'/usr/lib64/opentrafficshaper-1.0','opentrafficshaper','awitpt', 'lib');
+
+# Enable assertions
+BEGIN {
+	package POE::Kernel;
+	use constant ASSERT_DEFAULT => 1;
+}
 
 # System stuff we need
 use Config::IniFiles;
@@ -190,6 +196,8 @@ sub init
 	$globals->{'logger'} = $logger;
 	$globals->{'version'} = VERSION;
 
+	$logger->log(LOG_NOTICE,"[MAIN] Entering INITIALIZATION state");
+
 	# Setup master session
 	POE::Session->create(
 		inline_states => {
@@ -199,8 +207,6 @@ sub init
 			'main_SIGINT' => \&main_signal_SIGINT,
 		},
 	);
-
-	$logger->log(LOG_NOTICE,"[MAIN] Entering INITIALIZATION state");
 
 	$logger->log(LOG_INFO,"[MAIN] Initializing plugins...");
 	# We need to set the plugins global variable
@@ -284,56 +290,32 @@ sub main_session_start
 	$kernel->sig('INT', 'main_SIGINT');
 }
 
+
 # Function to dispose of anything as a final stage to shutting down
 sub main_session_stop
 {
-	$logger->log(LOG_WARN,"[MAIN] Exiting");
+	$logger->log(LOG_DEBUG,"[MAIN] Shutdown");
 }
+
 
 # Function to handle SIGHUP
 sub main_signal_SIGHUP
 {
 	my ($kernel,$signal_name) = @_[KERNEL,ARG0];
 
-
-	$logger->log(LOG_WARN,"[MAIN] Got SIGHUP, triggering config reload");
-
-	# Loop with plugins and call the handler for SIGHUP
-	foreach my $pluginName (keys %{$globals->{'plugins'}})
-	{
-		my $plugin = $globals->{'plugins'}->{$pluginName};
-
-
-		# Load the function up
-		my $callSIGHUP = $plugin->{'signal_SIGHUP'};
-		if (defined($callSIGHUP)) {
-			$callSIGHUP->();
-		}
-	}
+	$logger->log(LOG_NOTICE,"[MAIN] Got SIGHUP");
 
 	$kernel->sig_handled();
 }
+
 
 # Function to handle SIGINT
 sub main_signal_SIGINT
 {
 	my ($kernel, $signal_name) = @_[KERNEL, ARG0];
 
+	$logger->log(LOG_NOTICE,"[MAIN] Got SIGINT, shutting down...");
 
-	$logger->log(LOG_WARN,"[MAIN] Got SIGINT, shutting down...");
-
-	# Loop with plugins and call the handler for SIGINT
-	foreach my $pluginName (keys %{$globals->{'plugins'}})
-	{
-		my $plugin = $globals->{'plugins'}->{$pluginName};
-
-
-		# Load the function up
-		my $callSIGINT = $plugin->{'signal_SIGINT'};
-		if (defined($callSIGINT)) {
-			$callSIGINT->();
-		}
-	}
 	$kernel->signal($kernel,'handle_SIGINT');
 }
 
