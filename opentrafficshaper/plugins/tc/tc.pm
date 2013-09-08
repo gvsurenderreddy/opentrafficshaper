@@ -1,6 +1,6 @@
 # OpenTrafficShaper Linux tc traffic shaping
 # Copyright (C) 2007-2013, AllWorldIT
-# 
+#
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
@@ -28,7 +28,7 @@ use opentrafficshaper::constants;
 use opentrafficshaper::logger;
 use opentrafficshaper::utils;
 
-use opentrafficshaper::plugins::configmanager qw( 
+use opentrafficshaper::plugins::configmanager qw(
 		getLimit getLimitAttribute setLimitAttribute
 		getShaperState setShaperState
 );
@@ -65,19 +65,15 @@ use constant {
 our $pluginInfo = {
 	Name => "Linux tc Interface",
 	Version => VERSION,
-	
+
 	Init => \&plugin_init,
 	Start => \&plugin_start,
-
-	# Signals
-	signal_SIGHUP => \&handle_SIGHUP,
 };
 
 
 # Copy of system globals
 my $globals;
 my $logger;
-
 
 # Our configuration
 my $config = {
@@ -144,38 +140,7 @@ sub plugin_init
 	}
 
 
-	# This session is our main session, its alias is "shaper"
-	POE::Session->create(
-		inline_states => {
-			_start => \&session_init,
-			add => \&do_add,
-			change => \&do_change,
-			remove => \&do_remove,
-		}
-	);
-
-	# This is our session for communicating directly with tc, its alias is _tc
-	POE::Session->create(
-		inline_states => {
-			_start => \&task_session_init,
-			# Public'ish
-			queue => \&task_add,
-			# Internal
-			task_child_stdout => \&task_child_stdout,
-			task_child_stderr => \&task_child_stderr,
-			task_child_close => \&task_child_close,
-			task_child_stdin => \&task_child_stdin,
-			task_run_next => \&task_run_next,
-		}
-	);
-
-	return 1;
-}
-
-
-# Start the plugin
-sub plugin_start
-{
+	# We going to queue the initialization in plugin initialization so nothing at all can come before us
 	my $changeSet = TC::ChangeSet->new();
 
 	# Initialize TX interface
@@ -192,13 +157,55 @@ sub plugin_start
 
 	_task_add_to_queue($changeSet);
 
+
+	# This session is our main session, its alias is "shaper"
+	POE::Session->create(
+		inline_states => {
+			_start => \&session_start,
+			_stop => \&session_stop,
+
+			add => \&do_add,
+			change => \&do_change,
+			remove => \&do_remove,
+		}
+	);
+
+	# This is our session for communicating directly with tc, its alias is _tc
+	POE::Session->create(
+		inline_states => {
+			_start => \&task_session_start,
+			_stop => sub { },
+
+			# Public'ish
+			queue => \&task_add,
+			# Internal
+			task_child_stdout => \&task_child_stdout,
+			task_child_stderr => \&task_child_stderr,
+			task_child_stdin => \&task_child_stdin,
+			task_child_error => \&task_child_error,
+			task_child_close => \&task_child_close,
+			task_run_next => \&task_run_next,
+			# Signals
+			handle_SIGCHLD => \&task_handle_SIGCHLD,
+			handle_SIGINT => \&task_handle_SIGINT,
+		}
+	);
+
+	return 1;
+}
+
+
+# Start the plugin
+sub plugin_start
+{
 	$logger->log(LOG_INFO,"[TC] Started");
 }
 
 
 # Initialize this plugins main POE session
-sub session_init {
-	my $kernel = $_[KERNEL];
+sub session_start
+{
+	my ($kernel,$heap) = @_[KERNEL,HEAP];
 
 
 	# Set our alias
@@ -208,8 +215,30 @@ sub session_init {
 }
 
 
+# Initialize this plugins main POE session
+sub session_stop
+{
+	my ($kernel,$heap) = @_[KERNEL,HEAP];
+
+
+	# Remove our alias
+	$kernel->alias_remove("shaper");
+
+	# Blow away data
+	$globals = undef;
+	@taskQueue = ();
+	$tcFilterMappings = undef;
+	# XXX: Destroy the rest too like config
+
+	$logger->log(LOG_DEBUG,"[TC] Shutdown");
+
+	$logger = undef;
+}
+
+
 # Add event for tc
-sub do_add {
+sub do_add
+{
 	my ($kernel,$heap,$lid) = @_[KERNEL, HEAP, ARG0];
 
 	my $changeSet = TC::ChangeSet->new();
@@ -518,7 +547,8 @@ sub do_add {
 
 
 # Change event for tc
-sub do_change {
+sub do_change
+{
 	my ($kernel, $lid, $changes) = @_[KERNEL, ARG0];
 
 	my $changeSet = TC::ChangeSet->new();
@@ -582,7 +612,8 @@ sub do_change {
 
 
 # Remove event for tc
-sub do_remove {
+sub do_remove
+{
 	my ($kernel, $lid) = @_[KERNEL, ARG0];
 
 	my $changeSet = TC::ChangeSet->new();
@@ -645,7 +676,7 @@ sub do_remove {
 }
 
 
-# Function to get next available TC filter 
+# Function to get next available TC filter
 sub getTcFilter
 {
 	my $lid = shift;
@@ -682,7 +713,7 @@ sub disposeTcFilter
 }
 
 
-# Function to get next available TC class 
+# Function to get next available TC class
 sub getTcClass
 {
 	my $lid = shift;
@@ -716,12 +747,12 @@ sub disposeTcClass
 }
 
 
-# Grab user from TC class
-sub getUIDFromTcClass
+# Grab limit ID from TC class
+sub getLIDFromTcClass
 {
-	my $id = shift;
+	my $class = shift;
 
-	return $tcClasses->{'track'}->{$id};
+	return $tcClasses->{'track'}->{$class};
 }
 
 
@@ -877,7 +908,7 @@ sub _tc_class_optimize
 
 	# Rate for things like ICMP , ACK, SYN ... etc
 	my $rateBand1 = int($rate * (PROTO_RATE_LIMIT / 100));
-	$rateBand1 = PROTO_RATE_BURST_MIN if ($rateBand1 < PROTO_RATE_BURST_MIN); 
+	$rateBand1 = PROTO_RATE_BURST_MIN if ($rateBand1 < PROTO_RATE_BURST_MIN);
 	my $rateBand1Burst = ($rateBand1 / 8) * PROTO_RATE_BURST_MAXM;
 	# Rate for things like VoIP/SSH/Telnet
 	my $rateBand2 = int($rate * (PRIO_RATE_LIMIT / 100));
@@ -1235,10 +1266,15 @@ sub _tc_class_optimize
 #
 
 # Initialize our tc session
-sub task_session_init {
+sub task_session_start
+{
 	my $kernel = $_[KERNEL];
+
 	# Set our alias
 	$kernel->alias_set("_tc");
+
+	# Setup handing of console INT
+	$kernel->sig('INT', 'handle_SIGINT');
 
 	# Fire things up, we trigger this to process the task queue generated during init
 	$kernel->yield("task_run_next");
@@ -1344,14 +1380,14 @@ sub task_run_next
 
 
 		# Intercept SIGCHLD
-		$kernel->sig_child($task_id, "sig_child");
+		$kernel->sig_child($task->PID, "handle_SIGCHLD");
 
 		# Wheel events include the wheel's ID.
 		$heap->{'task_by_wid'}->{$task_id} = $task;
 		# Signal events include the process ID.
 		$heap->{'task_by_pid'}->{$task_id} = $task;
 
-		_task_put_next($heap,$task);	
+		_task_put_next($heap,$task);
 	}
 }
 
@@ -1387,21 +1423,13 @@ sub task_child_stdin
 	_task_put_next($heap,$task);
 }
 
-# Child encountered an error
-sub task_child_error
-{
-	my ($operation, $errnum, $errstr, $task_id) = @_[ARG0..ARG3];
-
-	$errstr = "remote end closed" if $operation eq "read" and !$errnum;
-	$logger->log(LOG_ERR,"[TC] Task $task_id generated $operation error $errnum: $errstr");
-}
 
 
 # Child closed its handles, it won't communicate with us, so remove it
 sub task_child_close
 {
 	my ($kernel,$heap,$task_id) = @_[KERNEL,HEAP,ARG0];
-	my $task = delete($heap->{'task_by_wid'}->{$task_id});
+	my $task = $heap->{'task_by_wid'}->{$task_id};
 
 	# May have been reaped by task_sigchld()
 	if (!defined($task)) {
@@ -1412,8 +1440,38 @@ sub task_child_close
 	$logger->log(LOG_DEBUG,"[TC] TASK/$task_id: Closed PID ".$task->PID);
 
 	# Remove other references
+	delete($heap->{'task_by_wid'}->{$task_id});
 	delete($heap->{'task_by_pid'}->{$task->PID});
-	delete($heap->{'idle_tasks'}->{$task->PID});
+	delete($heap->{'idle_tasks'}->{$task_id});
+
+	# Start next one, if there is a next one
+	if (@taskQueue) {
+		$kernel->yield("task_run_next");
+	}
+}
+
+
+# Child got an error event, lets remove it too
+sub task_child_error
+{
+	my ($kernel,$heap,$operation,$errnum,$errstr,$task_id) = @_[KERNEL,HEAP,ARG0..ARG3];
+	my $task = $heap->{'task_by_wid'}->{$task_id};
+
+	if ($operation eq "read" && !$errnum) {
+		$errstr = "Remote end closed"
+	}
+
+	$logger->log(LOG_ERR,"[TC] Task $task_id generated $operation error $errnum: '$errstr'");
+
+	# If there is no task, return
+	if (!defined($task)) {
+		return;
+	}
+
+	# Remove other references
+	delete($heap->{'task_by_wid'}->{$task_id});
+	delete($heap->{'task_by_pid'}->{$task->PID});
+	delete($heap->{'idle_tasks'}->{$task_id});
 
 	# Start next one, if there is a next one
 	if (@taskQueue) {
@@ -1423,10 +1481,10 @@ sub task_child_close
 
 
 # Reap the dead child
-sub task_sigchld
+sub task_handle_SIGCHLD
 {
 	my ($kernel,$heap,$pid,$status) = @_[KERNEL,HEAP,ARG1,ARG2];
-	my $task = delete($heap->{'task_by_pid'}->{$pid});
+	my $task = $heap->{'task_by_pid'}->{$pid};
 
 
 	$logger->log(LOG_DEBUG,"[TC] TASK: Task with PID $pid exited with status $status");
@@ -1435,15 +1493,26 @@ sub task_sigchld
 	return if (!defined($task));
 
 	# Remove other references
-	delete($heap->{'task_by_wid'}{$task->ID});
-	delete($heap->{'idle_tasks'}->{$task->PID});
+	delete($heap->{'task_by_wid'}->{$task->ID});
+	delete($heap->{'task_by_pid'}->{$pid});
+	delete($heap->{'idle_tasks'}->{$task->ID});
 }
 
 
-# Handle SIGHUP
-sub handle_SIGHUP
+# Handle SIGINT
+sub task_handle_SIGINT
 {
-	$logger->log(LOG_WARN,"[TC] Got SIGHUP, ignoring for now");
+	my ($kernel,$heap,$signal_name) = @_[KERNEL,HEAP,ARG0];
+
+	# Shutdown stdin on all children, this will terminate /sbin/tc
+	foreach my $task_id (keys %{$heap->{'task_by_wid'}}) {
+		my $task = $heap->{'task_by_wid'}{$task_id};
+#		$kernel->sig_child($task->PID, "asig_child");
+#		$task->kill("INT"); #NK: doesn't work
+		$kernel->post($task,"shutdown_stdin"); #NK: doesn't work
+	}
+
+	$logger->log(LOG_WARN,"[TC] Killed children processes");
 }
 
 
