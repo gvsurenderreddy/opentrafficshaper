@@ -58,9 +58,6 @@ our $pluginInfo = {
 	
 	Init => \&plugin_init,
 	Start => \&plugin_start,
-
-	# Signals
-	signal_SIGHUP => \&handle_SIGHUP,
 };
 
 
@@ -124,8 +121,10 @@ sub plugin_init
 	# Radius listener
 	POE::Session->create(
 		inline_states => {
-			_start => \&server_init,
-			get_datagram => \&server_read,
+			_start => \&session_start,
+			_stop => \&session_stop,
+
+			get_datagram => \&session_read,
 		}
 	);
 
@@ -142,27 +141,52 @@ sub plugin_start
 
 
 # Initialize server
-sub server_init {
-	my $kernel = $_[KERNEL];
+sub session_start
+{
+	my ($kernel,$heap) = @_[KERNEL,HEAP];
 
-	my $socket = IO::Socket::INET->new(
-		Proto	 => 'udp',
-		LocalPort => '1813',
-	);
-	die "Couldn't create server socket: $!" unless $socket;
+	# Create socket for radius
+	if (!defined($heap->{'socket'} = IO::Socket::INET->new(
+			Proto	 => 'udp',
+			LocalPort => '1813',
+	))) {
+		$logger->log(LOG_ERR,"Failed to create Radius listening socket: $!");
+		return;
+	}
 
 	# Set our alias
 	$kernel->alias_set("plugin.radius");
 
 	# Setup our reader
-	$kernel->select_read($socket, "get_datagram");
+	$kernel->select_read($heap->{'socket'}, "get_datagram");
 
 	$logger->log(LOG_DEBUG,"[RADIUS] Initialized");
 }
 
 
+# Shut down server
+sub session_stop
+{
+	my ($kernel,$heap) = @_[KERNEL,HEAP];
+
+	# Tear down the socket select
+	if (defined($heap->{'socket'})) {
+		$kernel->select_read($heap->{'socket'},undef);
+	}
+
+	# Blow everything away
+	$globals = undef;
+	$dictionary = undef;
+
+	$logger->log(LOG_DEBUG,"[RADIUS] Shutdown");
+
+	$logger = undef;
+}
+
+
 # Read event for server
-sub server_read {
+sub session_read
+{
 	my ($kernel, $socket) = @_[KERNEL, ARG0];
 
 
@@ -323,12 +347,6 @@ sub getKbit
 	return $newCounter;
 }
 
-
-# Handle SIGHUP
-sub handle_SIGHUP
-{
-	$logger->log(LOG_WARN,"[RADIUS] Got SIGHUP, ignoring for now");
-}
 
 1;
 # vim: ts=4
