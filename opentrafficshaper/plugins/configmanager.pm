@@ -1,6 +1,6 @@
 # OpenTrafficShaper configuration manager
 # Copyright (C) 2007-2013, AllWorldIT
-# 
+#
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
@@ -59,19 +59,57 @@ use constant {
 
 	# How often our config check ticks
 	TICK_PERIOD => 5,
+
 };
+
+# Mandatory config attributes
+sub CONFIG_ATTRIBUTES {
+	qw(
+		Username IP
+		GroupID ClassID
+		TrafficLimitTx TrafficLimitRx TrafficLimitTxBurst TrafficLimitRxBurst
+		Expires Status
+		Source
+	)
+}
+
+# Changeset attributes - things that can be changed on the fly
+sub CHANGESET_ATTRIBUTES {
+	qw(
+		GroupID ClassID
+		TrafficLimitTx TrafficLimitRx TrafficLimitTxBurst TrafficLimitRxBurst
+		Expires
+	)
+}
+
+# Persistent attributes supported
+sub PERSISTENT_ATTRIBUTES {
+	qw(
+		Username IP
+		GroupID ClassID
+		TrafficLimitTx TrafficLimitRx TrafficLimitTxBurst TrafficLimitRxBurst
+		Expires Created
+		Source
+	)
+}
+
+# Override attributes supported
+sub OVERRIDE_ATTRIBUTES {
+	qw(
+		Username IP
+		GroupID ClassID
+		TrafficLimitTx TrafficLimitRx TrafficLimitTxBurst TrafficLimitRxBurst
+	)
+}
 
 
 # Plugin info
 our $pluginInfo = {
 	Name => "Config Manager",
 	Version => VERSION,
-	
+
 	Init => \&plugin_init,
 	Start => \&plugin_start,
-
-	# Signals
-	signal_SIGHUP => \&handle_SIGHUP,
 };
 
 
@@ -79,30 +117,35 @@ our $pluginInfo = {
 my $globals;
 my $logger;
 
-# Our own config stuff
-my $groups = {
-	1 => 'Default'
+# Configuration for this plugin
+my $config = {
+	# Use default pool for unclassified traffic
+	'use_default_pool' => 0,
+	'default_pool_txrate' => undef,
+	'default_pool_rxrate' => undef,
+	'default_pool_priority' => 10,
+	# Traffic groups
+	'groups' => {
+		1 => 'Default'
+	},
+	# Traffic classes
+	'classes' => {
+		1 => 'Default'
+	},
+	# State file
+	'statefile' => '/var/lib/opentrafficshaper/configmanager.state',
 };
-my $classes = {
-	1 => 'Default'
-};
-
-# TODO: move to $config
-# Use default pool for unclassified traffic
-my $use_default_pool = 0;
-my $default_pool_txrate;
-my $default_pool_rxrate;
-my $default_pool_priority = 10;
 
 
 # Pending changes
 my $changeQueue = { };
-# Limits
+
+# Main variables handling our limits
 my $limits = { };
 my $limitIPMap = { };
 my $limitIDMap = { };
 my $limitIDCounter = 1;
-
+my $overrides = { };
 
 
 # Initialize plugin
@@ -119,12 +162,12 @@ sub plugin_init
 	# Split off groups to load
 	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Loading traffic groups...");
 	# Check if we loaded an array or just text
-	my @groups = ref($globals->{'file.config'}->{'shaping'}->{'group'}) eq "ARRAY" ? @{$globals->{'file.config'}->{'shaping'}->{'group'}} : 
+	my @groups = ref($globals->{'file.config'}->{'shaping'}->{'group'}) eq "ARRAY" ? @{$globals->{'file.config'}->{'shaping'}->{'group'}} :
 			( $globals->{'file.config'}->{'shaping'}->{'group'} );
 	# Loop with groups
 	foreach my $group (@groups) {
- 		# Skip comments
- 		next if ($group =~ /^\s*#/);
+		# Skip comments
+		next if ($group =~ /^\s*#/);
 		# Split off group ID and group name
 		my ($groupID,$groupName) = split(/:/,$group);
 		if (!defined($groupID) || int($groupID) < 1) {
@@ -135,7 +178,7 @@ sub plugin_init
 			$logger->log(LOG_WARN,"[CONFIGMANAGER] Failed to load traffic group definition '$group': Name is invalid");
 			next;
 		}
-		$groups->{$groupID} = $groupName;
+		$config->{'groups'}->{$groupID} = $groupName;
 		$logger->log(LOG_INFO,"[CONFIGMANAGER] Loaded traffic group '$groupName' with ID $groupID.");
 	}
 	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Loading traffic groups completed.");
@@ -143,12 +186,12 @@ sub plugin_init
 	# Split off traffic classes
 	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Loading traffic classes...");
 	# Check if we loaded an array or just text
-	my @classes = ref($globals->{'file.config'}->{'shaping'}->{'class'}) eq "ARRAY" ? @{$globals->{'file.config'}->{'shaping'}->{'class'}} : 
+	my @classes = ref($globals->{'file.config'}->{'shaping'}->{'class'}) eq "ARRAY" ? @{$globals->{'file.config'}->{'shaping'}->{'class'}} :
 			( $globals->{'file.config'}->{'shaping'}->{'class'} );
 	# Loop with classes
 	foreach my $class (@classes) {
- 		# Skip comments
- 		next if ($class =~ /^\s*#/);
+		# Skip comments
+		next if ($class =~ /^\s*#/);
 		# Split off class ID and class name
 		my ($classID,$className) = split(/:/,$class);
 		if (!defined($classID) || int($classID) < 1) {
@@ -159,7 +202,7 @@ sub plugin_init
 			$logger->log(LOG_WARN,"[CONFIGMANAGER] Failed to load traffic class definition '$class': Name is invalid");
 			next;
 		}
-		$classes->{$classID} = $className;
+		$config->{'classes'}->{$classID} = $className;
 		$logger->log(LOG_INFO,"[CONFIGMANAGER] Loaded traffic class '$className' with ID $classID.");
 	}
 	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Loading traffic classes completed.");
@@ -167,37 +210,45 @@ sub plugin_init
 	# Check if we using a default pool or not
 	if (defined(my $dp = booleanize($globals->{'file.config'}->{'shaping'}->{'use_default_pool'}))) {
 		# If we are using the default pool, load the limits
-		if ($use_default_pool = $dp) {
+		if ($config->{'use_default_pool'} = $dp) {
 			# Pull in both config items
 			if (defined(my $txir = $globals->{'file.config'}->{'shaping'}->{'default_pool_txrate'})) {
 				$logger->log(LOG_INFO,"[CONFIGMANAGER] Set default_pool_txrate to '$txir'");
-				$default_pool_txrate = isNumber($txir);
+				$config->{'default_pool_txrate'} = isNumber($txir);
 			} else {
 				$logger->log(LOG_WARN,"[CONFIGMANAGER] There is a problem with default_pool_txrate, config item use_default_pool disabled");
 			}
 			if (defined(my $rxir = $globals->{'file.config'}->{'shaping'}->{'default_pool_rxrate'})) {
 				$logger->log(LOG_INFO,"[CONFIGMANAGER] Set default_pool_rxrate to '$rxir'");
-				$default_pool_rxrate = isNumber($rxir);
+				$config->{'default_pool_rxrate'} = isNumber($rxir);
 			} else {
 				$logger->log(LOG_WARN,"[CONFIGMANAGER] There is a problem with default_pool_rxrate, config item use_default_pool disabled");
 			}
 			# Check we have both items configured, if not deconfigure
-			if (!defined($default_pool_txrate) || !defined($default_pool_rxrate)) {
-				$use_default_pool = 0;
-				$default_pool_txrate = undef;
-				$default_pool_rxrate = undef;
+			if (!defined($config->{'default_pool_txrate'}) || !defined($config->{'default_pool_rxrate'})) {
+				$config->{'use_default_pool'} = 0;
 			}
 		}
 	}
-	$logger->log(LOG_INFO,"[CONFIGMANAGER] Using of default pool ". ( $use_default_pool ? 
-			"ENABLED with rates $default_pool_txrate/$default_pool_rxrate" : "DISABLED" )  );
+	$logger->log(LOG_INFO,"[CONFIGMANAGER] Using of default pool ". ( $config->{'use_default_pool'} ?
+			"ENABLED with rates $config->{'default_pool_txrate'}/$config->{'default_pool_rxrate'}" : "DISABLED" )  );
+
+	# Check if we have a state file
+	if (defined(my $statefile = $globals->{'file.config'}->{'system'}->{'statefile'})) {
+		$config->{'statefile'} = $statefile;
+		$logger->log(LOG_INFO,"[CONFIGMANAGER] Set statefile to '$statefile'");
+	}
 
 	# This is our configuration processing session
 	POE::Session->create(
 		inline_states => {
-			_start => \&session_init,
+			_start => \&session_start,
+			_stop => \&session_stop,
+
 			tick => \&session_tick,
 			process_change => \&process_change,
+
+			handle_SIGHUP => \&handle_SIGHUP,
 		}
 	);
 }
@@ -206,23 +257,59 @@ sub plugin_init
 # Start the plugin
 sub plugin_start
 {
-	$logger->log(LOG_INFO,"[CONFIGMANAGER] Started");
+	$logger->log(LOG_INFO,"[CONFIGMANAGER] Started with ".( keys %{$changeQueue} )." queued items");
 }
 
 
 
 # Initialize config manager
-sub session_init {
-	my $kernel = $_[KERNEL];
+sub session_start
+{
+	my ($kernel,$heap) = @_[KERNEL,HEAP];
 
 
 	# Set our alias
 	$kernel->alias_set("configmanager");
 
+	# Load config
+	if (-f $config->{'statefile'}) {
+		_load_statefile();
+	} else {
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Statefile '$config->{'statefile'}' cannot be opened: $!");
+	}
+
 	# Set delay on config updates
 	$kernel->delay(tick => TICK_PERIOD);
 
+	$kernel->sig('HUP', 'handle_SIGHUP');
+
 	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Initialized");
+}
+
+
+# Stop the session
+sub session_stop
+{
+	my ($kernel,$heap) = @_[KERNEL,HEAP];
+
+
+	$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Shutting down, saving configuration...");
+
+	_write_statefile();
+
+	# Blow away all data
+	$globals = undef;
+	$changeQueue = { };
+	$limits = { };
+	$limitIPMap = { };
+	$limitIDMap = { };
+	$limitIDCounter = 1;
+	$overrides = { };
+	# XXX: Blow away rest? config?
+
+	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Shutdown");
+
+	$logger = undef;
 }
 
 
@@ -258,7 +345,7 @@ sub session_tick {
 				$logger->log(LOG_INFO,"[CONFIGMANAGER] Limit '$climit->{'Username'}' [$lid], limit already live but new state provided?");
 
 				# Get the changes we made and push them to the shaper
-				if (my $changes = processChanges($glimit,$climit)) {
+				if (my $changes = _getChangeset($glimit,$climit)) {
 					# Post to shaper
 					$kernel->post("shaper" => "change" => $lid => $changes);
 				}
@@ -271,7 +358,7 @@ sub session_tick {
 				$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Limit '$climit->{'Username'}' [$lid], limit still online");
 
 				# Get the changes we made and push them to the shaper
-				if (my $changes = processChanges($glimit,$climit)) {
+				if (my $changes = _getChangeset($glimit,$climit)) {
 					# Post to shaper
 					$kernel->post("shaper" => "change" => $lid => $changes);
 				}
@@ -283,7 +370,7 @@ sub session_tick {
 			} elsif ($climit->{'Status'} eq "offline") {
 
 				# We first check if this update was received some time ago, and if it exceeds our expire time
-				# We don't want to immediately remove a limit, only for him to come back on a few seconds later, the cost in exec()'s 
+				# We don't want to immediately remove a limit, only for him to come back on a few seconds later, the cost in exec()'s
 				# would be pretty high
 				if ($now - $climit->{'LastUpdate'} > TIMEOUT_EXPIRE_OFFLINE) {
 
@@ -296,7 +383,7 @@ sub session_tick {
 						# Remove from change queue
 						delete($changeQueue->{$lid});
 						# Set this UID as no longer using this IP
-						# NK: If we try remove it before the limit is actually removed we could get a reconnection causing this value 
+						# NK: If we try remove it before the limit is actually removed we could get a reconnection causing this value
 						#     to be totally gone, which means we not tracking this limit using this IP anymore, not easily solved!!
 						delete($limitIPMap->{$glimit->{'IP'}}->{$lid});
 						# Check if we can delete the IP too
@@ -324,8 +411,7 @@ sub session_tick {
 			# Update the limit data
 			$glimit->{'Status'} = $climit->{'Status'};
 			$glimit->{'LastUpdate'} = $climit->{'LastUpdate'};
-			# This item is optional
-			$glimit->{'Expires'} = $climit->{'Expires'} if (defined($climit->{'Expires'}));
+			$glimit->{'Expires'} = $climit->{'Expires'};
 
 		#
 		# LIMIT NOT IN LIST
@@ -341,7 +427,7 @@ sub session_tick {
 					# If there is already an entry and its not us ...
 					( @ipLimits == 1 && !defined($limitIPMap->{$climit->{'IP'}}->{$lid}) )
 					# Or if there is more than 1 entry...
-					|| @ipLimits > 1 
+					|| @ipLimits > 1
 				) {
 					# We not going to post this to the shaper, but we are going to override the status
 					$climit->{'Status'} = 'conflict';
@@ -392,7 +478,7 @@ sub session_tick {
 				$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Ignoring limit '$climit->{'Username'}' [$lid] state '$climit->{'Status'}', not in our".
 						" global list");
 			}
-	
+
 			# Remove from change queue
 			delete($changeQueue->{$lid});
 		}
@@ -407,8 +493,13 @@ sub session_tick {
 		# Global limit
 		my $glimit = $limits->{$lid};
 
+
+if (!defined($glimit->{'Expires'})) {
+	use Data::Dumper; warn "UNDEFINED: ".Dumper($glimit,$lid);
+}
+
 		# Check for expired limits
-		if ($glimit->{'Expires'} != 0 && $glimit->{'Expires'} < $now) {
+		if ($glimit->{'Expires'} && $glimit->{'Expires'} < $now) {
 			$logger->log(LOG_INFO,"[CONFIGMANAGER] Limit '$glimit->{'Username'}' has expired, marking offline");
 			# Looks like this limit has expired?
 			my $climit = {
@@ -428,6 +519,179 @@ sub session_tick {
 
 
 # Process shaper change
+sub process_change
+{
+	my ($kernel, $limit) = @_[KERNEL, ARG0];
+
+	_process_change($limit);
+}
+
+
+# Function to check the group ID exists
+sub checkGroupID
+{
+	my $gid = shift;
+	if (defined($config->{'groups'}->{$gid})) {
+		return $gid;
+	}
+	return;
+}
+
+
+# Function to check the class ID exists
+sub checkClassID
+{
+	my $cid = shift;
+	if (defined($config->{'classes'}->{$cid})) {
+		return $cid;
+	}
+	return;
+}
+
+
+# Function to check if the status is ok
+sub checkStatus
+{
+	my $status = shift;
+	if ($status eq "new" || $status eq "offline" || $status eq "online" || $status eq "conflict" || $status eq "unknown") {
+		return $status
+	}
+	return;
+}
+
+
+# Function to return a limit username
+sub getLimitUsername
+{
+	my $lid = shift;
+	if (defined($limits->{$lid})) {
+		return $limits->{$lid}->{'Username'};
+	}
+	return;
+}
+
+
+# Function to return a limit
+sub getLimit
+{
+	my $lid = shift;
+
+	if (defined($limits->{$lid})) {
+		my %limit = %{$limits->{$lid}};
+		return \%limit;
+	}
+	return;
+}
+
+
+# Function to return a list of limit ID's
+sub getLimits
+{
+	return (keys %{$limits});
+}
+
+# Function to set a limit attribute
+sub setLimitAttribute
+{
+	my ($lid,$attr,$value) = @_;
+
+
+	# Only set it if it exists
+	if (defined($limits->{$lid})) {
+		$limits->{$lid}->{'attributes'}->{$attr} = $value;
+	}
+	return;
+}
+
+
+# Function to get a limit attribute
+sub getLimitAttribute
+{
+	my ($lid,$attr) = @_;
+
+
+	# Check if attribute exists first
+	if (defined($limits->{$lid}) && defined($limits->{$lid}->{'attributes'}) && defined($limits->{$lid}->{'attributes'}->{$attr})) {
+		return $limits->{$lid}->{'attributes'}->{$attr};
+	}
+	return;
+}
+
+
+# Function to set shaper state on a limit
+sub setShaperState
+{
+	my ($lid,$state) = @_;
+
+	if (defined($limits->{$lid})) {
+		$limits->{$lid}->{'_shaper.state'} = $state;
+	}
+}
+
+
+# Function to get shaper state on a limit
+sub getShaperState
+{
+	my $lid = shift;
+	if (defined($limits->{$lid})) {
+		return $limits->{$lid}->{'_shaper.state'};
+	}
+	return;
+}
+
+
+# Function to get traffic classes
+sub getTrafficClasses
+{
+	my %classes = %{$config->{'classes'}};
+
+	return \%classes;
+}
+
+
+# Function to get priority name
+sub getPriorityName
+{
+	my $prio = shift;
+	return $config->{'classes'}->{$prio};
+}
+
+
+# Handle SIGHUP
+sub handle_SIGHUP
+{
+	my ($kernel, $heap, $signal_name) = @_[KERNEL, HEAP, ARG0];
+
+	$logger->log(LOG_WARN,"[CONFIGMANAGER] Got SIGHUP, ignoring for now");
+}
+
+
+
+#
+# Internal functions
+#
+
+# Function to compute the changes between two users
+sub _getChangeset
+{
+	my ($orig,$new) = @_;
+
+	my $res;
+
+	# Loop through what can change
+	foreach my $item (CHANGESET_ATTRIBUTES) {
+		# Check if its first set, if it is, check if its changed
+		if (defined($new->{$item}) && $orig->{$item} ne $new->{$item}) {
+			# If so record it & make the change
+			$res->{$item} = $orig->{$item} = $new->{$item};
+		}
+	}
+
+	return $res;
+}
+
+
+# This is the real function
 # Supoprted user attributes:
 #
 # Username
@@ -453,37 +717,30 @@ sub session_tick {
 #  - offline
 #  - online
 #  - unknown
-# Source 
+# Source
 #  - This is the source of the limit, typically  plugin.ModuleName
-sub process_change {
-	my ($kernel, $limit) = @_[KERNEL, ARG0];
+sub _process_change
+{
+	my $limit = shift;
 
-
-
-	# Create a unique limit identifier
-	my $limitUniq = $limit->{'Username'} . "/" . $limit->{'IP'};
-
-	# If we've not seen it
-	my $lid;
-	if (!defined($lid = $limitIDMap->{$limitUniq})) {
-		# Give it the next limitID in the list
-		$limitIDMap->{$limitUniq} = $lid = ++$limitIDCounter;
-	}
 
 	# We start off blank so we only pull in whats supported
 	my $limitChange;
 	if (!($limitChange->{'Username'} = $limit->{'Username'})) {
 		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process limit change as username is invalid.");
+		return;
 	}
 	$limitChange->{'Username'} = $limit->{'Username'};
 	$limitChange->{'IP'} = $limit->{'IP'};
 	# Check group is OK
 	if (!($limitChange->{'GroupID'} = checkGroupID($limit->{'GroupID'}))) {
 		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process limit change for '".$limit->{'Username'}."' as the GroupID is invalid.");
+		return;
 	}
 	# Check class is OK
 	if (!($limitChange->{'ClassID'} = checkClassID($limit->{'ClassID'}))) {
 		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process limit change for '".$limit->{'Username'}."' as the ClassID is invalid.");
+		return;
 	}
 	$limitChange->{'TrafficLimitTx'} = $limit->{'TrafficLimitTx'};
 	$limitChange->{'TrafficLimitRx'} = $limit->{'TrafficLimitRx'};
@@ -508,12 +765,25 @@ sub process_change {
 	# Set when this entry expires
 	$limitChange->{'Expires'} = defined($limit->{'Expires'}) ? $limit->{'Expires'} : 0;
 
+	# Set when this entry was created
+	$limitChange->{'Created'} = defined($limit->{'Created'}) ? $limit->{'Created'} : time();
+
 	# Check status is OK
 	if (!($limitChange->{'Status'} = checkStatus($limit->{'Status'}))) {
 		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process user change for '".$limit->{'Username'}."' as the Status is invalid.");
+		return;
 	}
 
 	$limitChange->{'Source'} = $limit->{'Source'};
+
+	# Create a unique limit identifier
+	my $limitUniq = $limit->{'Username'} . "/" . $limit->{'IP'};
+	# If we've not seen it
+	my $lid;
+	if (!defined($lid = $limitIDMap->{$limitUniq})) {
+		# Give it the next limitID in the list
+		$limitIDMap->{$limitUniq} = $lid = ++$limitIDCounter;
+	}
 
 	# Set the user ID before we post to the change queue
 	$limitChange->{'ID'} = $lid;
@@ -524,149 +794,132 @@ sub process_change {
 }
 
 
-# Function to compute the changes between two users
-sub processChanges
+# Load our statefile
+sub _load_statefile
 {
-	my ($orig,$new) = @_;
+	# Check if the state file exists first of all
+	if (! -e $config->{'statefile'}) {
+		$logger->log(LOG_INFO,"[CONFIGMANAGER] Statefile '".$config->{'statefile'}."' doesn't exist");
+		return;
+	}
 
-	my $res;
+	# Pull in a hash for our statefile
+	my %stateHash;
+	if (! tie %stateHash, 'Config::IniFiles', ( -file => $config->{'statefile'} )) {
+		my $reason = $1 || "Config file blank?";
+		$logger->log(LOG_ERR,"[CONFIGMANAGER] Failed to open statefile '".$config->{'statefile'}."': $reason");
+		# NK: Breaks load on blank file
+		# Set it to undef so we don't overwrite it...
+		#$config->{'statefile'} = undef;
+		return;
+	}
+	# Grab the object handle
+	my $state = tied( %stateHash );
 
-	# Loop through what can change
-	foreach my $item ('GroupID','ClassID','TrafficLimitTx','TrafficLimitRx','TrafficLimitTxBurst','TrafficLimitRxBurst') {
-		# Check if its first set, if it is, check if its changed
-		if (defined($new->{$item}) && $orig->{$item} ne $new->{$item}) {
-			# If so record it & make the change
-			$res->{$item} = $orig->{$item} = $new->{$item};
+	# Loop with user overrides
+	foreach my $section ($state->GroupMembers('override')) {
+		my $override = $stateHash{$section};
+
+		# Our user override
+		my $ouser;
+		foreach my $attr (OVERRIDE_ATTRIBUTES) {
+			if (defined($override->{$attr})) {
+				$ouser->{$attr} = $override->{$attr};
+			}
+		}
+
+		# Check username & IP are defined
+		if (!defined($ouser->{'Username'})) {
+			$logger->log(LOG_WARN,"[CONFIGMANAGER] Failed to load user override with no username '$section'");
+			next;
+		}
+
+		$overrides->{$ouser->{'Username'}} = $ouser;
+	}
+
+	# Loop with persistent users
+	foreach my $section ($state->GroupMembers('persist')) {
+		my $user = $stateHash{$section};
+
+		# User to push through to process change
+		my $cuser;
+		foreach my $attr (PERSISTENT_ATTRIBUTES) {
+			if (defined($user->{$attr})) {
+				$cuser->{$attr} = $user->{$attr};
+			}
+		}
+		# This is a new entry
+		$cuser->{'Status'} = 'new';
+
+		# Check username & IP are defined
+		if (!defined($cuser->{'Username'}) || !defined($cuser->{'IP'})) {
+			$logger->log(LOG_WARN,"[CONFIGMANAGER] Failed to load persistent user with no username or no IP '$section'");
+			next;
+		}
+
+		# Process this user
+		_process_change($cuser);
+	}
+}
+
+
+# Write out statefile
+sub _write_statefile
+{
+	# Check if the state file exists first of all
+	if (!defined($config->{'statefile'})) {
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] No statefile defined. Possible initial load error?");
+		return;
+	}
+
+	# Create new state file object
+	my $state = new Config::IniFiles();
+
+	# Loop with persistent users, these are users with expires = 0
+	foreach my $lid (keys %{$limits}) {
+		# Skip over expiring entries, we only want persistent ones
+		# XXX: Should we not just save all of them? load?
+		next if ($limits->{$lid}->{'Expires'});
+		# Pull in the section name
+		my $section = "persist " . $limits->{$lid}->{'Username'};
+
+		# Add a new section for this user
+		$state->AddSection($section);
+		# Items we want for persistent entries
+		foreach my $pItem (PERSISTENT_ATTRIBUTES) {
+			# Set items up
+			if (defined(my $value = $limits->{$lid}->{$pItem})) {
+				$state->newval($section,$pItem,$value);
+			}
 		}
 	}
 
-	return $res;
-}
+	# Loop with overrides
+	foreach my $username (keys %{$overrides}) {
+		# Pull in the section name
+		my $section = "override " . $username;
 
+		# Add a new section for this user
+		$state->AddSection($section);
+		# Items we want for override entries
+		foreach my $pItem (OVERRIDE_ATTRIBUTES) {
+			# Set items up
+			if (defined(my $value = $overrides->{$username}->{$pItem})) {
+				$state->newval($section,$pItem,$value);
+			}
+		}
 
-# Function to check the group ID exists
-sub checkGroupID
-{
-	my $gid = shift;
-	if (defined($groups->{$gid})) {
-		return $gid;
 	}
-	return;
-}
 
-# Function to check the class ID exists
-sub checkClassID
-{
-	my $cid = shift;
-	if (defined($classes->{$cid})) {
-		return $cid;
+	# Check for an error
+	if (!defined($state->WriteConfig($config->{'statefile'}))) {
+		$logger->log(LOG_ERR,"[CONFIGMANAGER] Failed to write statefile '".$config->{'statefile'}."': $!");
+		return;
 	}
-	return;
+
+	$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Configuration saved");
 }
 
-# Function to check if the status is ok
-sub checkStatus
-{
-	my $status = shift;
-	if ($status eq "new" || $status eq "offline" || $status eq "online" || $status eq "conflict" || $status eq "unknown") {
-		return $status
-	}
-	return;
-}
-
-# Function to return a limit username
-sub getLimitUsername
-{
-	my $lid = shift;
-	if (defined($limits->{$lid})) {
-		return $limits->{$lid}->{'Username'};
-	}
-	return;
-}
-
-# Function to return a limit 
-sub getLimit
-{
-	my $lid = shift;
-
-	if (defined($limits->{$lid})) {
-		my %limit = %{$limits->{$lid}};
-		return \%limit;
-	}
-	return;
-}
-
-# Function to return a list of limit ID's
-sub getLimits
-{
-	return (keys %{$limits});
-}
-
-# Function to set a limit attribute
-sub setLimitAttribute
-{
-	my ($lid,$attr,$value) = @_;
-
-
-	# Only set it if it exists
-	if (defined($limits->{$lid})) {
-		$limits->{$lid}->{'attributes'}->{$attr} = $value;
-	}
-	return;
-}
-
-# Function to get a limit attribute
-sub getLimitAttribute
-{
-	my ($lid,$attr) = @_;
-
-
-	# Check if attribute exists first
-	if (defined($limits->{$lid}) && defined($limits->{$lid}->{'attributes'}) && defined($limits->{$lid}->{'attributes'}->{$attr})) {
-		return $limits->{$lid}->{'attributes'}->{$attr};
-	}
-	return;
-}
-
-# Function to set shaper state on a limit
-sub setShaperState
-{
-	my ($lid,$state) = @_;
-
-	if (defined($limits->{$lid})) {
-		$limits->{$lid}->{'_shaper.state'} = $state;
-	}
-}
-
-# Function to get shaper state on a limit
-sub getShaperState
-{
-	my $lid = shift;
-	if (defined($limits->{$lid})) {
-		return $limits->{$lid}->{'_shaper.state'};
-	}
-	return;
-}
-
-# Function to get traffic classes
-sub getTrafficClasses
-{
-	return $classes;	
-}
-
-# Function to get priority name
-sub getPriorityName
-{
-	my $prio = shift;
-	return $classes->{$prio};
-}
-
-
-# Handle SIGHUP
-sub handle_SIGHUP
-{
-	$logger->log(LOG_WARN,"[CONFIGMANAGER] Got SIGHUP, ignoring for now");
-}
 
 1;
 # vim: ts=4
