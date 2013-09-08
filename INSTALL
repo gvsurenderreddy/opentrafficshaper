@@ -17,6 +17,9 @@ Debian: libdatetime-perl
 - Digest::SHA
 Debian: libdigest-sha-perl
 
+- JSON
+Debian: libjson-perl
+
 - Perl 5.6+
 
 
