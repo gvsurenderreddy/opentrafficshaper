@@ -28,7 +28,6 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 @EXPORT = qw(
 	prettyUndef
 	toHex
-	parseFormContent
 	isVariable
 	isUsername
 	isIP
@@ -37,6 +36,8 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 	booleanize
 );
 @EXPORT_OK = qw(
+	parseFormContent
+	parseURIQuery
 );
 
 
@@ -72,6 +73,22 @@ sub parseFormContent
 		$value =~ tr/+/ /;
 		$value =~ s/%(..)/pack("C", hex($1))/eg;
 		$res{$name} = $value;
+	}
+
+	return \%res;
+}
+
+# Parse query data
+sub parseURIQuery
+{
+	my $request = shift;
+	my %res;
+
+	use URI::QueryParam;
+
+	# Pull in URL params
+	foreach my $key ($request->uri->query_param) {
+		$res{$key} = $request->uri->query_param($key);
 	}
 
 	return \%res;
