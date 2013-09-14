@@ -38,6 +38,7 @@ use opentrafficshaper::plugins::webserver::pages::static;
 use opentrafficshaper::plugins::webserver::pages::index;
 use opentrafficshaper::plugins::webserver::pages::limits;
 use opentrafficshaper::plugins::webserver::pages::statistics;
+use opentrafficshaper::plugins::webserver::pages::configmanager;
 
 
 # Exporter stuff
@@ -90,6 +91,10 @@ my $resources = {
 		'statistics' => {
 			'by-username' => \&opentrafficshaper::plugins::webserver::pages::statistics::byusername,
 			'data-by-username' => \&opentrafficshaper::plugins::webserver::pages::statistics::databyusername,
+		},
+		'configmanager' => {
+			'default' => \&opentrafficshaper::plugins::webserver::pages::configmanager::default,
+			'add' => \&opentrafficshaper::plugins::webserver::pages::configmanager::add,
 		},
 	},
 };
@@ -235,8 +240,7 @@ sub server_request
 
 	# Its a websocket
 	} elsif ($conn->{'protocol'} eq "WebSocket") {
-			# XXX - this should call the callback
-
+		# XXX - this should call the callback
 	}
 
 	# If there is a response send it
@@ -327,6 +331,9 @@ sub httpCreateResponse
 EOF
 				# Loop with sub menu sections
 				foreach my $section (keys %{$menu}) {
+					$menuStr .=<<EOF;
+						<li class="nav-header">$section</li>
+EOF
 					# Loop with menu items
 					foreach my $item (keys %{$menu->{$section}}) {
 						my $link = "/" . $module . "/" . $menu->{$section}->{$item};
@@ -335,7 +342,6 @@ EOF
 
 						# Build sections
 						$menuStr .=<<EOF;
-							<li class="nav-header">$section</li>
 							<li><a href="$link">$item</a></li>
 EOF
 					}
@@ -403,6 +409,7 @@ $styleStr
 					<ul class="nav navbar-nav">
 						<li class="active"><a href="#">Home</a></li>
 						<li><a href="/limits">Limits</a></li>
+						<li><a href="/configmanager">ConfigManager</a></li>
 					</ul>
 				</div>
 			</div>
@@ -515,7 +522,7 @@ sub _server_request_http
 		return httpDisplayFault(HTTP_INTERNAL_SERVER_ERROR,"Internal server error","Server configuration error");
 	}
 
-	$logger->log(LOG_DEBUG,"Parsed HTTP request into: module='$module', action='$action'");
+	$logger->log(LOG_DEBUG,"[WEBSERVER] Parsed HTTP request into: module='$module', action='$action'");
 
 	# Save what resource we just accessed
 	$connections->{$client_session_id}->{'resource'} = {
