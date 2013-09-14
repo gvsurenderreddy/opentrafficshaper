@@ -43,12 +43,17 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 		setLimitAttribute
 		getLimitAttribute
 
+		getOverride
+		getOverrides
+
 		getShaperState
 		setShaperState
 
 		getTrafficClasses
 
-		getPriorityName
+		getTrafficClassName
+
+		isTrafficClassValid
 );
 
 use constant {
@@ -63,42 +68,61 @@ use constant {
 };
 
 # Mandatory config attributes
-sub CONFIG_ATTRIBUTES {
+sub LIMIT_REQUIRED_ATTRIBUTES {
 	qw(
 		Username IP
 		GroupID ClassID
-		TrafficLimitTx TrafficLimitRx TrafficLimitTxBurst TrafficLimitRxBurst
+		TrafficLimitTx TrafficLimitRx
 		Expires Status
 		Source
 	)
 }
 
-# Changeset attributes - things that can be changed on the fly
-sub CHANGESET_ATTRIBUTES {
+# Limit Changeset attributes - things that can be changed on the fly in the shaper
+sub LIMIT_CHANGESET_ATTRIBUTES {
 	qw(
 		GroupID ClassID
 		TrafficLimitTx TrafficLimitRx TrafficLimitTxBurst TrafficLimitRxBurst
-		Expires
 	)
 }
 
 # Persistent attributes supported
-sub PERSISTENT_ATTRIBUTES {
+sub LIMIT_PERSISTENT_ATTRIBUTES {
 	qw(
 		Username IP
 		GroupID ClassID
-		TrafficLimitTx TrafficLimitRx TrafficLimitTxBurst TrafficLimitRxBurst
+		TrafficLimitTx TrafficLimitRx TrafficLimitTxBurst TrafficLimitRxBurst TrafficPriority
+		FriendlyName Notes
 		Expires Created
 		Source
 	)
 }
 
-# Override attributes supported
-sub OVERRIDE_ATTRIBUTES {
+# Mandatory override attribute, one is required
+sub OVERRIDE_REQUIRED_ATTRIBUTES {
 	qw(
+		Username IP
+		GroupID
+	)
+}
+# Override changeset attributes
+sub OVERRIDE_CHANGESET_ATTRIBUTES {
+	qw(
+		ClassID
+		TrafficLimitTx TrafficLimitRx TrafficLimitTxBurst TrafficLimitRxBurst
+	)
+}
+# Override attributes supported for persistent storage
+sub OVERRIDE_PERSISTENT_ATTRIBUTES {
+	qw(
+		Key
 		Username IP
 		GroupID ClassID
 		TrafficLimitTx TrafficLimitRx TrafficLimitTxBurst TrafficLimitRxBurst
+		FriendlyName Notes
+		Expires Created
+		Source
+		LastUpdate
 	)
 }
 
@@ -140,11 +164,76 @@ my $config = {
 # Pending changes
 my $changeQueue = { };
 
-# Main variables handling our limits
+#
+# LIMITS
+#
+# Supoprted user attributes:
+# * Username
+#    - Users username
+# * IP
+#    - Users IP
+# * GroupID
+#    - Group ID
+# * ClassID
+#    - Class ID
+# * TrafficLimitTx
+#    - Traffic limit in kbps
+# * TrafficLimitRx
+#    - Traffic limit in kbps
+# * TrafficLimitTxBurst
+#    - Traffic bursting limit in kbps
+# * TrafficLimitRxBurst
+#    - Traffic bursting limit in kbps
+# * Expires
+#    - Unix timestamp when this entry expires, 0 if never
+# * FriendlyName
+#    - Used for display purposes instead of username if specified
+# * Notes
+#    - Notes on this limit
+# * Status
+#    - new
+#    - offline
+#    - online
+#    - unknown
+# * Source
+#    - This is the source of the limit, typically  plugin.ModuleName
 my $limits = { };
 my $limitIPMap = { };
 my $limitIDMap = { };
 my $limitIDCounter = 1;
+
+#
+# OVERRIDES
+#
+# Selection criteria:
+# * Username
+#    - Users username
+# * IP
+#    - Users IP
+# * GroupID
+#    - Group ID
+#
+# Overrides:
+# * ClassID
+#    - Class ID
+# * TrafficLimitTx
+#    - Traffic limit in kbps
+# * TrafficLimitRx
+#    - Traffic limit in kbps
+# * TrafficLimitTxBurst
+#    - Traffic bursting limit in kbps
+# * TrafficLimitRxBurst
+#    - Traffic bursting limit in kbps
+#
+# Parameters:
+# * FriendlyName
+#    - Used for display purposes
+# * Expires
+#    - Unix timestamp when this entry expires, 0 if never
+# * Notes
+#    - Notes on this limit
+# * Source
+#    - This is the source of the limit, typically  plugin.ModuleName
 my $overrides = { };
 
 
@@ -246,7 +335,9 @@ sub plugin_init
 			_stop => \&session_stop,
 
 			tick => \&session_tick,
-			process_change => \&process_change,
+
+			process_limit_change => \&process_limit_change,
+			process_override_change => \&process_override_change,
 
 			handle_SIGHUP => \&handle_SIGHUP,
 		}
@@ -273,7 +364,7 @@ sub session_start
 
 	# Load config
 	if (-f $config->{'statefile'}) {
-		_load_statefile();
+		_load_statefile($kernel);
 	} else {
 		$logger->log(LOG_WARN,"[CONFIGMANAGER] Statefile '$config->{'statefile'}' cannot be opened: $!");
 	}
@@ -314,13 +405,530 @@ sub session_stop
 
 
 # Time ticker for processing changes
-sub session_tick {
+sub session_tick
+{
 	my $kernel = $_[KERNEL];
+
+	_process_limit_change_queue($kernel);
+
+	# Reset tick
+	$kernel->delay(tick => TICK_PERIOD);
+}
+
+# Process limit change
+sub process_limit_change
+{
+	my ($kernel, $limit) = @_[KERNEL, ARG0];
+
+	_process_limit_change($limit);
+}
+
+# Process override change
+sub process_override_change
+{
+	my ($kernel, $override) = @_[KERNEL, ARG0];
+
+	_process_override_change($override);
+}
+
+
+# Function to check the group ID exists
+sub checkGroupID
+{
+	my $gid = shift;
+	if (defined($config->{'groups'}->{$gid})) {
+		return $gid;
+	}
+	return;
+}
+
+
+# Function to check the class ID exists
+sub checkClassID
+{
+	my $cid = shift;
+	if (defined($config->{'classes'}->{$cid})) {
+		return $cid;
+	}
+	return;
+}
+
+
+# Function to check if the status is ok
+sub checkStatus
+{
+	my $status = shift;
+	if ($status eq "new" || $status eq "offline" || $status eq "online" || $status eq "conflict" || $status eq "unknown") {
+		return $status
+	}
+	return;
+}
+
+
+# Function to return a limit username
+sub getLimitUsername
+{
+	my $lid = shift;
+	if (defined($limits->{$lid})) {
+		return $limits->{$lid}->{'Username'};
+	}
+	return;
+}
+
+
+# Function to return a limit
+sub getLimit
+{
+	my $lid = shift;
+
+	if (defined($limits->{$lid})) {
+		my %limit = %{$limits->{$lid}};
+		return \%limit;
+	}
+	return;
+}
+
+
+# Function to return a list of limit ID's
+sub getLimits
+{
+	return (keys %{$limits});
+}
+
+
+# Function to set a limit attribute
+sub setLimitAttribute
+{
+	my ($lid,$attr,$value) = @_;
+
+
+	# Only set it if it exists
+	if (defined($limits->{$lid})) {
+		$limits->{$lid}->{'attributes'}->{$attr} = $value;
+	}
+	return;
+}
+
+
+# Function to get a limit attribute
+sub getLimitAttribute
+{
+	my ($lid,$attr) = @_;
+
+
+	# Check if attribute exists first
+	if (defined($limits->{$lid}) && defined($limits->{$lid}->{'attributes'}) && defined($limits->{$lid}->{'attributes'}->{$attr})) {
+		return $limits->{$lid}->{'attributes'}->{$attr};
+	}
+	return;
+}
+
+
+# Function to return a override
+sub getOverride
+{
+	my $oid = shift;
+
+	if (defined($overrides->{$oid})) {
+		my %override = %{$overrides->{$oid}};
+		return \%override;
+	}
+	return;
+}
+
+
+# Function to return a list of override ID's
+sub getOverrides
+{
+	return (keys %{$overrides});
+}
+
+
+# Function to set shaper state on a limit
+sub setShaperState
+{
+	my ($lid,$state) = @_;
+
+	if (defined($limits->{$lid})) {
+		$limits->{$lid}->{'_shaper.state'} = $state;
+	}
+}
+
+
+# Function to get shaper state on a limit
+sub getShaperState
+{
+	my $lid = shift;
+	if (defined($limits->{$lid})) {
+		return $limits->{$lid}->{'_shaper.state'};
+	}
+	return;
+}
+
+
+# Function to get traffic classes
+sub getTrafficClasses
+{
+	my %classes = %{$config->{'classes'}};
+
+	return \%classes;
+}
+
+
+# Function to get class name
+sub getTrafficClassName
+{
+	my $class = shift;
+	return $config->{'classes'}->{$class};
+}
+
+
+# Function to check if traffic class is valid
+sub isTrafficClassValid
+{
+	my $class = shift;
+	if (defined($config->{'classes'}->{$class})) {
+		return $class;
+	}
+	return;
+}
+
+
+# Handle SIGHUP
+sub handle_SIGHUP
+{
+	my ($kernel, $heap, $signal_name) = @_[KERNEL, HEAP, ARG0];
+
+	$logger->log(LOG_WARN,"[CONFIGMANAGER] Got SIGHUP, ignoring for now");
+}
+
+
+
+#
+# Internal functions
+#
+
+# Function to compute the changes between two users
+sub _getLimitChangeset
+{
+	my ($orig,$new) = @_;
+
+	my $res;
+
+	# Loop through what can change
+	foreach my $item (LIMIT_CHANGESET_ATTRIBUTES) {
+		# Check if its first set, if it is, check if its changed
+		if (defined($new->{$item}) && $orig->{$item} ne $new->{$item}) {
+			# If so record it & make the change
+			$res->{$item} = $orig->{$item} = $new->{$item};
+		}
+	}
+
+	return $res;
+}
+
+
+# This is the real function
+sub _process_limit_change
+{
+	my $limit = shift;
+
+
+	# Check if we have all the attributes we need
+	my $isInvalid;
+	foreach my $attr (LIMIT_REQUIRED_ATTRIBUTES) {
+		if (!defined($limit->{$attr})) {
+			$isInvalid = $attr;
+			last;
+		}
+	}
+	if ($isInvalid) {
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process limit change as not attributes is missing: '$isInvalid'");
+		return;
+	}
+
+	# We start off blank so we only pull in whats supported
+	my $limitChange;
+	if (!defined($limitChange->{'Username'} = $limit->{'Username'})) {
+		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process limit change as username is invalid.");
+		return;
+	}
+	$limitChange->{'Username'} = $limit->{'Username'};
+	$limitChange->{'IP'} = $limit->{'IP'};
+	# Check group is OK
+	if (!defined($limitChange->{'GroupID'} = checkGroupID($limit->{'GroupID'}))) {
+		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process limit change for '".$limit->{'Username'}."' as the GroupID is invalid.");
+		return;
+	}
+	# Check class is OK
+	if (!defined($limitChange->{'ClassID'} = checkClassID($limit->{'ClassID'}))) {
+		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process limit change for '".$limit->{'Username'}."' as the ClassID is invalid.");
+		return;
+	}
+	$limitChange->{'TrafficLimitTx'} = $limit->{'TrafficLimitTx'};
+	$limitChange->{'TrafficLimitRx'} = $limit->{'TrafficLimitRx'};
+	# Take base limits if we don't have any burst values set
+	$limitChange->{'TrafficLimitTxBurst'} = $limit->{'TrafficLimitTxBurst'};
+	$limitChange->{'TrafficLimitRxBurst'} = $limit->{'TrafficLimitRxBurst'};
+
+	# If we don't have burst limits, set them to the traffic limit, and reset the limit to 25%
+	if (!defined($limitChange->{'TrafficLimitTxBurst'})) {
+		$limitChange->{'TrafficLimitTxBurst'} = $limitChange->{'TrafficLimitTx'};
+		$limitChange->{'TrafficLimitTx'} = int($limitChange->{'TrafficLimitTxBurst'}/4);
+	}
+	if (!defined($limitChange->{'TrafficLimitRxBurst'})) {
+		$limitChange->{'TrafficLimitRxBurst'} = $limitChange->{'TrafficLimitRx'};
+		$limitChange->{'TrafficLimitRx'} = int($limitChange->{'TrafficLimitRxBurst'}/4);
+	}
+
+
+	# Optional priority, we default to 5
+	$limitChange->{'TrafficPriority'} = defined($limit->{'TrafficPriority'}) ? $limit->{'TrafficPriority'} : 5;
+
+	# Set when this entry expires
+	$limitChange->{'Expires'} = defined($limit->{'Expires'}) ? $limit->{'Expires'} : 0;
+
+	# Set friendly name and notes
+	$limitChange->{'FriendlyName'} = $limit->{'FriendlyName'};
+	$limitChange->{'Notes'} = $limit->{'Notes'};
+
+	# Set when this entry was created
+	$limitChange->{'Created'} = defined($limit->{'Created'}) ? $limit->{'Created'} : time();
+
+	# Check status is OK
+	if (!($limitChange->{'Status'} = checkStatus($limit->{'Status'}))) {
+		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process user change for '".$limit->{'Username'}."' as the Status is invalid.");
+		return;
+	}
+
+	$limitChange->{'Source'} = $limit->{'Source'};
+
+	# Create a unique limit identifier
+	my $limitUniq = $limit->{'Username'} . "/" . $limit->{'IP'};
+	# If we've not seen it
+	my $lid;
+	if (!defined($lid = $limitIDMap->{$limitUniq})) {
+		# Give it the next limitID in the list
+		$limitIDMap->{$limitUniq} = $lid = ++$limitIDCounter;
+	}
+
+	# Set the user ID before we post to the change queue
+	$limitChange->{'ID'} = $lid;
+	$limitChange->{'LastUpdate'} = time();
+	# Push change to change queue
+	$changeQueue->{$lid} = $limitChange;
+}
+
+
+# This is the real process_override_change function
+sub _process_override_change
+{
+	my $override = shift;
+
+
+	# Pull in mandatory items and check if the result is valid
+	my $overrideChange;
+	my $isValid = 0;
+	foreach my $item (OVERRIDE_REQUIRED_ATTRIBUTES) {
+		$overrideChange->{$item} = $override->{$item};
+		$isValid++;
+	}
+	# Make sure we have at least 1
+	if (!$isValid) {
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process override as there is no selection attribute");
+		return;
+	}
+
+	# Pull in attributes that can be changed
+	foreach my $item (OVERRIDE_CHANGESET_ATTRIBUTES) {
+		$overrideChange->{$item} = $override->{$item};
+	}
+
+	# Check group is OK
+	if (defined($overrideChange->{'GroupID'}) && !checkGroupID($overrideChange->{'GroupID'})) {
+		$logger->log(LOG_DEBUG,'[CONFIGMANAGER] Cannot process override for "User: %s, IP: %s, GroupID: %s" as the GroupID is invalid.',
+			prettyUndef($overrideChange->{'Username'}),prettyUndef($overrideChange->{'IP'}),prettyUndef($overrideChange->{'GroupID'})
+		);
+		return;
+	}
+
+	# Check class is OK
+	if (defined($overrideChange->{'ClassID'}) && !checkClassID($overrideChange->{'ClassID'})) {
+		$logger->log(LOG_DEBUG,'[CONFIGMANAGER] Cannot process override for "User: %s, IP: %s, GroupID: %s" as the ClassID is invalid.',
+			prettyUndef($overrideChange->{'Username'}),prettyUndef($overrideChange->{'IP'}),prettyUndef($overrideChange->{'GroupID'})
+		);
+		return;
+	}
+
+	# Set when this entry expires
+	$overrideChange->{'Expires'} = defined($override->{'Expires'}) ? $override->{'Expires'} : 0;
+
+	# Set friendly name and notes
+	$overrideChange->{'FriendlyName'} = $override->{'FriendlyName'};
+	$overrideChange->{'Notes'} = $override->{'Notes'};
+
+	# Set when this entry was created
+	$overrideChange->{'Created'} = defined($override->{'Created'}) ? $override->{'Created'} : time();
+
+	$overrideChange->{'LastUpdate'} = time();
+
+	# This is our key for this entry
+	my $oid = sprintf('%s%%%s%%%s',
+			defined($overrideChange->{'Username'}) ? $overrideChange->{'Username'} : "",
+			defined($overrideChange->{'IP'}) ? $overrideChange->{'IP'} : "",
+			defined($overrideChange->{'GroupID'}) ? $overrideChange->{'GroupID'} : ""
+	);
+	# Set the user ID before we post to the change queue
+	$overrideChange->{'Key'} = $oid;
+
+	$overrides->{$oid} = $overrideChange;
+}
+
+
+# Load our statefile
+sub _load_statefile
+{
+	my $kernel = shift;
+
+
+	# Check if the state file exists first of all
+	if (! -e $config->{'statefile'}) {
+		$logger->log(LOG_INFO,"[CONFIGMANAGER] Statefile '".$config->{'statefile'}."' doesn't exist");
+		return;
+	}
+
+	# Pull in a hash for our statefile
+	my %stateHash;
+	if (! tie %stateHash, 'Config::IniFiles', ( -file => $config->{'statefile'} )) {
+		my $reason = $1 || "Config file blank?";
+		$logger->log(LOG_ERR,"[CONFIGMANAGER] Failed to open statefile '".$config->{'statefile'}."': $reason");
+		# NK: Breaks load on blank file
+		# Set it to undef so we don't overwrite it...
+		#$config->{'statefile'} = undef;
+		return;
+	}
+	# Grab the object handle
+	my $state = tied( %stateHash );
+
+	# Loop with user overrides
+	foreach my $section ($state->GroupMembers('override')) {
+		my $override = $stateHash{$section};
+
+		# Our user override
+		my $ouser;
+		foreach my $attr (OVERRIDE_PERSISTENT_ATTRIBUTES) {
+			if (defined($override->{$attr})) {
+				$ouser->{$attr} = $override->{$attr};
+			}
+		}
+
+		# Check username, IP or gorup ID is defined
+		if (!defined($ouser->{'Key'})) {
+			$logger->log(LOG_WARN,"[CONFIGMANAGER] Failed to load override with no Key '$section'");
+			next;
+		}
+
+		$overrides->{$ouser->{'Key'}} = $ouser;
+	}
+
+	# Loop with persistent users
+	foreach my $section ($state->GroupMembers('persist')) {
+		my $user = $stateHash{$section};
+
+		# User to push through to process change
+		my $cuser;
+		foreach my $attr (LIMIT_PERSISTENT_ATTRIBUTES) {
+			if (defined($user->{$attr})) {
+				$cuser->{$attr} = $user->{$attr};
+			}
+		}
+		# This is a new entry
+		$cuser->{'Status'} = 'new';
+
+		# Check username & IP are defined
+		if (!defined($cuser->{'Username'}) || !defined($cuser->{'IP'})) {
+			$logger->log(LOG_WARN,"[CONFIGMANAGER] Failed to load persistent user with no username or IP '$section'");
+			next;
+		}
+
+		# Process this user
+		_process_limit_change($cuser);
+	}
+}
+
+
+# Write out statefile
+sub _write_statefile
+{
+	# Check if the state file exists first of all
+	if (!defined($config->{'statefile'})) {
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] No statefile defined. Possible initial load error?");
+		return;
+	}
+
+	# Only write out if we actually have users, else we may of crashed?
+	if (keys %{$limits} < 1) {
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Not writing state file as there are no active users");
+		return;
+	}
+
+	# Create new state file object
+	my $state = new Config::IniFiles();
+
+	# Loop with persistent users, these are users with expires = 0
+	foreach my $lid (keys %{$limits}) {
+		# Skip over expiring entries, we only want persistent ones
+		# XXX: Should we not just save all of them? load?
+		next if ($limits->{$lid}->{'Expires'});
+		# Pull in the section name
+		my $section = "persist " . $limits->{$lid}->{'Username'};
+
+		# Add a new section for this user
+		$state->AddSection($section);
+		# Items we want for persistent entries
+		foreach my $pItem (LIMIT_PERSISTENT_ATTRIBUTES) {
+			# Set items up
+			if (defined(my $value = $limits->{$lid}->{$pItem})) {
+				$state->newval($section,$pItem,$value);
+			}
+		}
+	}
+
+	# Loop with overrides
+	foreach my $username (keys %{$overrides}) {
+		# Pull in the section name
+		my $section = "override " . $username;
+
+		# Add a new section for this user
+		$state->AddSection($section);
+		# Items we want for override entries
+		foreach my $pItem (OVERRIDE_PERSISTENT_ATTRIBUTES) {
+			# Set items up
+			if (defined(my $value = $overrides->{$username}->{$pItem})) {
+				$state->newval($section,$pItem,$value);
+			}
+		}
+
+	}
+
+	# Check for an error
+	if (!defined($state->WriteConfig($config->{'statefile'}))) {
+		$logger->log(LOG_ERR,"[CONFIGMANAGER] Failed to write statefile '".$config->{'statefile'}."': $!");
+		return;
+	}
+
+	$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Configuration saved");
+}
+
+
+# Do the actual queue processing
+sub _process_limit_change_queue
+{
+	my $kernel = shift;
 
 
 	# Now
 	my $now = time();
-
 
 	#
 	# LOOP WITH CHANGES
@@ -345,7 +953,7 @@ sub session_tick {
 				$logger->log(LOG_INFO,"[CONFIGMANAGER] Limit '$climit->{'Username'}' [$lid], limit already live but new state provided?");
 
 				# Get the changes we made and push them to the shaper
-				if (my $changes = _getChangeset($glimit,$climit)) {
+				if (my $changes = _getLimitChangeset($glimit,$climit)) {
 					# Post to shaper
 					$kernel->post("shaper" => "change" => $lid => $changes);
 				}
@@ -358,7 +966,7 @@ sub session_tick {
 				$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Limit '$climit->{'Username'}' [$lid], limit still online");
 
 				# Get the changes we made and push them to the shaper
-				if (my $changes = _getChangeset($glimit,$climit)) {
+				if (my $changes = _getLimitChangeset($glimit,$climit)) {
 					# Post to shaper
 					$kernel->post("shaper" => "change" => $lid => $changes);
 				}
@@ -412,6 +1020,14 @@ sub session_tick {
 			$glimit->{'Status'} = $climit->{'Status'};
 			$glimit->{'LastUpdate'} = $climit->{'LastUpdate'};
 			$glimit->{'Expires'} = $climit->{'Expires'};
+
+			# Set these if they exist
+			if (defined($climit->{'FriendlyName'})) {
+				$glimit->{'FriendlyName'} = $climit->{'FriendlyName'};
+			}
+			if (defined($climit->{'Notes'})) {
+				$glimit->{'Notes'} = $climit->{'Notes'};
+			}
 
 		#
 		# LIMIT NOT IN LIST
@@ -493,11 +1109,6 @@ sub session_tick {
 		# Global limit
 		my $glimit = $limits->{$lid};
 
-
-if (!defined($glimit->{'Expires'})) {
-	use Data::Dumper; warn "UNDEFINED: ".Dumper($glimit,$lid);
-}
-
 		# Check for expired limits
 		if ($glimit->{'Expires'} && $glimit->{'Expires'} < $now) {
 			$logger->log(LOG_INFO,"[CONFIGMANAGER] Limit '$glimit->{'Username'}' has expired, marking offline");
@@ -512,412 +1123,6 @@ if (!defined($glimit->{'Expires'})) {
 			$changeQueue->{$lid} = $climit;
 		}
 	}
-
-	# Reset tick
-	$kernel->delay(tick => TICK_PERIOD);
-};
-
-
-# Process shaper change
-sub process_change
-{
-	my ($kernel, $limit) = @_[KERNEL, ARG0];
-
-	_process_change($limit);
-}
-
-
-# Function to check the group ID exists
-sub checkGroupID
-{
-	my $gid = shift;
-	if (defined($config->{'groups'}->{$gid})) {
-		return $gid;
-	}
-	return;
-}
-
-
-# Function to check the class ID exists
-sub checkClassID
-{
-	my $cid = shift;
-	if (defined($config->{'classes'}->{$cid})) {
-		return $cid;
-	}
-	return;
-}
-
-
-# Function to check if the status is ok
-sub checkStatus
-{
-	my $status = shift;
-	if ($status eq "new" || $status eq "offline" || $status eq "online" || $status eq "conflict" || $status eq "unknown") {
-		return $status
-	}
-	return;
-}
-
-
-# Function to return a limit username
-sub getLimitUsername
-{
-	my $lid = shift;
-	if (defined($limits->{$lid})) {
-		return $limits->{$lid}->{'Username'};
-	}
-	return;
-}
-
-
-# Function to return a limit
-sub getLimit
-{
-	my $lid = shift;
-
-	if (defined($limits->{$lid})) {
-		my %limit = %{$limits->{$lid}};
-		return \%limit;
-	}
-	return;
-}
-
-
-# Function to return a list of limit ID's
-sub getLimits
-{
-	return (keys %{$limits});
-}
-
-# Function to set a limit attribute
-sub setLimitAttribute
-{
-	my ($lid,$attr,$value) = @_;
-
-
-	# Only set it if it exists
-	if (defined($limits->{$lid})) {
-		$limits->{$lid}->{'attributes'}->{$attr} = $value;
-	}
-	return;
-}
-
-
-# Function to get a limit attribute
-sub getLimitAttribute
-{
-	my ($lid,$attr) = @_;
-
-
-	# Check if attribute exists first
-	if (defined($limits->{$lid}) && defined($limits->{$lid}->{'attributes'}) && defined($limits->{$lid}->{'attributes'}->{$attr})) {
-		return $limits->{$lid}->{'attributes'}->{$attr};
-	}
-	return;
-}
-
-
-# Function to set shaper state on a limit
-sub setShaperState
-{
-	my ($lid,$state) = @_;
-
-	if (defined($limits->{$lid})) {
-		$limits->{$lid}->{'_shaper.state'} = $state;
-	}
-}
-
-
-# Function to get shaper state on a limit
-sub getShaperState
-{
-	my $lid = shift;
-	if (defined($limits->{$lid})) {
-		return $limits->{$lid}->{'_shaper.state'};
-	}
-	return;
-}
-
-
-# Function to get traffic classes
-sub getTrafficClasses
-{
-	my %classes = %{$config->{'classes'}};
-
-	return \%classes;
-}
-
-
-# Function to get priority name
-sub getPriorityName
-{
-	my $prio = shift;
-	return $config->{'classes'}->{$prio};
-}
-
-
-# Handle SIGHUP
-sub handle_SIGHUP
-{
-	my ($kernel, $heap, $signal_name) = @_[KERNEL, HEAP, ARG0];
-
-	$logger->log(LOG_WARN,"[CONFIGMANAGER] Got SIGHUP, ignoring for now");
-}
-
-
-
-#
-# Internal functions
-#
-
-# Function to compute the changes between two users
-sub _getChangeset
-{
-	my ($orig,$new) = @_;
-
-	my $res;
-
-	# Loop through what can change
-	foreach my $item (CHANGESET_ATTRIBUTES) {
-		# Check if its first set, if it is, check if its changed
-		if (defined($new->{$item}) && $orig->{$item} ne $new->{$item}) {
-			# If so record it & make the change
-			$res->{$item} = $orig->{$item} = $new->{$item};
-		}
-	}
-
-	return $res;
-}
-
-
-# This is the real function
-# Supoprted user attributes:
-#
-# Username
-#  - Users username
-# IP
-#  - Users IP
-# GroupID
-#  - Group ID
-# ClassID
-#  - Class ID
-# TrafficLimitTx
-#  - Traffic limit in kbps
-# TrafficLimitRx
-#  - Traffic limit in kbps
-# TrafficLimitTxBurst
-#  - Traffic bursting limit in kbps
-# TrafficLimitRxBurst
-#  - Traffic bursting limit in kbps
-# Expires
-#  - Unix timestamp when this entry expires, 0 if never
-# Status
-#  - new
-#  - offline
-#  - online
-#  - unknown
-# Source
-#  - This is the source of the limit, typically  plugin.ModuleName
-sub _process_change
-{
-	my $limit = shift;
-
-
-	# We start off blank so we only pull in whats supported
-	my $limitChange;
-	if (!($limitChange->{'Username'} = $limit->{'Username'})) {
-		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process limit change as username is invalid.");
-		return;
-	}
-	$limitChange->{'Username'} = $limit->{'Username'};
-	$limitChange->{'IP'} = $limit->{'IP'};
-	# Check group is OK
-	if (!($limitChange->{'GroupID'} = checkGroupID($limit->{'GroupID'}))) {
-		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process limit change for '".$limit->{'Username'}."' as the GroupID is invalid.");
-		return;
-	}
-	# Check class is OK
-	if (!($limitChange->{'ClassID'} = checkClassID($limit->{'ClassID'}))) {
-		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process limit change for '".$limit->{'Username'}."' as the ClassID is invalid.");
-		return;
-	}
-	$limitChange->{'TrafficLimitTx'} = $limit->{'TrafficLimitTx'};
-	$limitChange->{'TrafficLimitRx'} = $limit->{'TrafficLimitRx'};
-	# Take base limits if we don't have any burst values set
-	$limitChange->{'TrafficLimitTxBurst'} = $limit->{'TrafficLimitTxBurst'};
-	$limitChange->{'TrafficLimitRxBurst'} = $limit->{'TrafficLimitRxBurst'};
-
-	# If we don't have burst limits, set them to the traffic limit, and reset the limit to 25%
-	if (!defined($limitChange->{'TrafficLimitTxBurst'})) {
-		$limitChange->{'TrafficLimitTxBurst'} = $limitChange->{'TrafficLimitTx'};
-		$limitChange->{'TrafficLimitTx'} = int($limitChange->{'TrafficLimitTxBurst'}/4);
-	}
-	if (!defined($limitChange->{'TrafficLimitRxBurst'})) {
-		$limitChange->{'TrafficLimitRxBurst'} = $limitChange->{'TrafficLimitRx'};
-		$limitChange->{'TrafficLimitRx'} = int($limitChange->{'TrafficLimitRxBurst'}/4);
-	}
-
-
-	# Optional priority, we default to 5
-	$limitChange->{'TrafficPriority'} = defined($limit->{'TrafficPriority'}) ? $limit->{'TrafficPriority'} : 5;
-
-	# Set when this entry expires
-	$limitChange->{'Expires'} = defined($limit->{'Expires'}) ? $limit->{'Expires'} : 0;
-
-	# Set when this entry was created
-	$limitChange->{'Created'} = defined($limit->{'Created'}) ? $limit->{'Created'} : time();
-
-	# Check status is OK
-	if (!($limitChange->{'Status'} = checkStatus($limit->{'Status'}))) {
-		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process user change for '".$limit->{'Username'}."' as the Status is invalid.");
-		return;
-	}
-
-	$limitChange->{'Source'} = $limit->{'Source'};
-
-	# Create a unique limit identifier
-	my $limitUniq = $limit->{'Username'} . "/" . $limit->{'IP'};
-	# If we've not seen it
-	my $lid;
-	if (!defined($lid = $limitIDMap->{$limitUniq})) {
-		# Give it the next limitID in the list
-		$limitIDMap->{$limitUniq} = $lid = ++$limitIDCounter;
-	}
-
-	# Set the user ID before we post to the change queue
-	$limitChange->{'ID'} = $lid;
-	$limitChange->{'LastUpdate'} = time();
-
-	# Push change to change queue
-	$changeQueue->{$lid} = $limitChange;
-}
-
-
-# Load our statefile
-sub _load_statefile
-{
-	# Check if the state file exists first of all
-	if (! -e $config->{'statefile'}) {
-		$logger->log(LOG_INFO,"[CONFIGMANAGER] Statefile '".$config->{'statefile'}."' doesn't exist");
-		return;
-	}
-
-	# Pull in a hash for our statefile
-	my %stateHash;
-	if (! tie %stateHash, 'Config::IniFiles', ( -file => $config->{'statefile'} )) {
-		my $reason = $1 || "Config file blank?";
-		$logger->log(LOG_ERR,"[CONFIGMANAGER] Failed to open statefile '".$config->{'statefile'}."': $reason");
-		# NK: Breaks load on blank file
-		# Set it to undef so we don't overwrite it...
-		#$config->{'statefile'} = undef;
-		return;
-	}
-	# Grab the object handle
-	my $state = tied( %stateHash );
-
-	# Loop with user overrides
-	foreach my $section ($state->GroupMembers('override')) {
-		my $override = $stateHash{$section};
-
-		# Our user override
-		my $ouser;
-		foreach my $attr (OVERRIDE_ATTRIBUTES) {
-			if (defined($override->{$attr})) {
-				$ouser->{$attr} = $override->{$attr};
-			}
-		}
-
-		# Check username & IP are defined
-		if (!defined($ouser->{'Username'})) {
-			$logger->log(LOG_WARN,"[CONFIGMANAGER] Failed to load user override with no username '$section'");
-			next;
-		}
-
-		$overrides->{$ouser->{'Username'}} = $ouser;
-	}
-
-	# Loop with persistent users
-	foreach my $section ($state->GroupMembers('persist')) {
-		my $user = $stateHash{$section};
-
-		# User to push through to process change
-		my $cuser;
-		foreach my $attr (PERSISTENT_ATTRIBUTES) {
-			if (defined($user->{$attr})) {
-				$cuser->{$attr} = $user->{$attr};
-			}
-		}
-		# This is a new entry
-		$cuser->{'Status'} = 'new';
-
-		# Check username & IP are defined
-		if (!defined($cuser->{'Username'}) || !defined($cuser->{'IP'})) {
-			$logger->log(LOG_WARN,"[CONFIGMANAGER] Failed to load persistent user with no username or no IP '$section'");
-			next;
-		}
-
-		# Process this user
-		_process_change($cuser);
-	}
-}
-
-
-# Write out statefile
-sub _write_statefile
-{
-	# Check if the state file exists first of all
-	if (!defined($config->{'statefile'})) {
-		$logger->log(LOG_WARN,"[CONFIGMANAGER] No statefile defined. Possible initial load error?");
-		return;
-	}
-
-	# Create new state file object
-	my $state = new Config::IniFiles();
-
-	# Loop with persistent users, these are users with expires = 0
-	foreach my $lid (keys %{$limits}) {
-		# Skip over expiring entries, we only want persistent ones
-		# XXX: Should we not just save all of them? load?
-		next if ($limits->{$lid}->{'Expires'});
-		# Pull in the section name
-		my $section = "persist " . $limits->{$lid}->{'Username'};
-
-		# Add a new section for this user
-		$state->AddSection($section);
-		# Items we want for persistent entries
-		foreach my $pItem (PERSISTENT_ATTRIBUTES) {
-			# Set items up
-			if (defined(my $value = $limits->{$lid}->{$pItem})) {
-				$state->newval($section,$pItem,$value);
-			}
-		}
-	}
-
-	# Loop with overrides
-	foreach my $username (keys %{$overrides}) {
-		# Pull in the section name
-		my $section = "override " . $username;
-
-		# Add a new section for this user
-		$state->AddSection($section);
-		# Items we want for override entries
-		foreach my $pItem (OVERRIDE_ATTRIBUTES) {
-			# Set items up
-			if (defined(my $value = $overrides->{$username}->{$pItem})) {
-				$state->newval($section,$pItem,$value);
-			}
-		}
-
-	}
-
-	# Check for an error
-	if (!defined($state->WriteConfig($config->{'statefile'}))) {
-		$logger->log(LOG_ERR,"[CONFIGMANAGER] Failed to write statefile '".$config->{'statefile'}."': $!");
-		return;
-	}
-
-	$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Configuration saved");
 }
 
 
