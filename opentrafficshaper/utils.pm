@@ -67,8 +67,7 @@ sub parseFormContent
 
 	# Split information into name/value pairs
 	my @pairs = split(/&/, $data);
-	foreach my $pair (@pairs)
-	{
+	foreach my $pair (@pairs) {
 		my ($name, $value) = split(/=/, $pair);
 		$value =~ tr/+/ /;
 		$value =~ s/%(..)/pack("C", hex($1))/eg;
