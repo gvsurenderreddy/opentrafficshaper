@@ -29,7 +29,7 @@ use opentrafficshaper::logger;
 use opentrafficshaper::utils;
 
 use opentrafficshaper::plugins::configmanager qw(
-		getLimit getLimitAttribute setLimitAttribute
+		getLimit getLimitAttribute setLimitAttribute removeLimitAttribute
 		getShaperState setShaperState
 );
 
@@ -47,7 +47,7 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 );
 
 use constant {
-	VERSION => '0.0.1',
+	VERSION => '0.0.2',
 
 	# 5% of a link can be used for very high priority traffic
 	PROTO_RATE_LIMIT => 5,
@@ -239,7 +239,7 @@ sub session_stop
 # Add event for tc
 sub do_add
 {
-	my ($kernel,$heap,$lid) = @_[KERNEL, HEAP, ARG0];
+	my ($kernel,$heap,$lid,$changes) = @_[KERNEL, HEAP, ARG0, ARG1];
 
 	my $changeSet = TC::ChangeSet->new();
 
@@ -463,9 +463,9 @@ sub do_add
 	}
 
 	# Only if we have limits setup process them
-	if (defined($limit->{'TrafficLimitTx'}) && defined($limit->{'TrafficLimitRx'})) {
+	if (defined($changes->{'TrafficLimitTx'}) && defined($changes->{'TrafficLimitRx'})) {
 		# Build limit tc class ID
-		my $classID  = getTcClass($lid);
+		my $tcClass  = getTcClass($lid);
 		# Grab some hash table ID's we need
 		my $ip3HtHex = $tcFilterMappings->{$ip1}->{$ip2}->{$ip3}->{'id'};
 		my $ip4Hex = toHex($ip4);
@@ -473,7 +473,7 @@ sub do_add
 		my $filterHandle = "${ip3HtHex}:${ip4Hex}:1";
 
 		# Save limit tc class ID
-		setLimitAttribute($lid,'tc.class',$classID);
+		setLimitAttribute($lid,'tc.class',$tcClass);
 		setLimitAttribute($lid,'tc.filter',"${ip3HtHex}:${ip4Hex}:1");
 
 		#
@@ -485,21 +485,21 @@ sub do_add
 				'/sbin/tc','class','add',
 					'dev',$config->{'txiface'},
 					'parent','1:2',
-					'classid',"1:$classID",
+					'classid',"1:$tcClass",
 					'htb',
-						'rate', $limit->{'TrafficLimitTx'} . "kbit",
-						'ceil', $limit->{'TrafficLimitTxBurst'} . "kbit",
-						'prio', $limit->{'TrafficPriority'},
+						'rate', $changes->{'TrafficLimitTx'} . "kbit",
+						'ceil', $changes->{'TrafficLimitTxBurst'} . "kbit",
+						'prio', $changes->{'TrafficPriority'},
 		]);
 		$changeSet->add([
 				'/sbin/tc','class','add',
 					'dev',$config->{'rxiface'},
 					'parent','1:2',
-					'classid',"1:$classID",
+					'classid',"1:$tcClass",
 					'htb',
-						'rate', $limit->{'TrafficLimitRx'} . "kbit",
-						'ceil', $limit->{'TrafficLimitRxBurst'} . "kbit",
-						'prio', $limit->{'TrafficPriority'},
+						'rate', $changes->{'TrafficLimitRx'} . "kbit",
+						'ceil', $changes->{'TrafficLimitRxBurst'} . "kbit",
+						'prio', $changes->{'TrafficPriority'},
 		]);
 
 		#
@@ -518,7 +518,7 @@ sub do_add
 						'ht',"${ip3HtHex}:${ip4Hex}:",
 							'match','ip','dst',$limit->{'IP'},
 								'at',16+$config->{'iphdr_offset'},
-					'flowid',"1:$classID",
+					'flowid',"1:$tcClass",
 		]);
 		$changeSet->add([
 				'/sbin/tc','filter','add',
@@ -531,11 +531,19 @@ sub do_add
 						'ht',"${ip3HtHex}:${ip4Hex}:",
 							'match','ip','src',$limit->{'IP'},
 								'at',12+$config->{'iphdr_offset'},
-					'flowid',"1:$classID",
+					'flowid',"1:$tcClass",
 		]);
 
-		_tc_class_optimize($changeSet,$config->{'txiface'},$classID,$limit->{'TrafficLimitTx'});
-		_tc_class_optimize($changeSet,$config->{'rxiface'},$classID,$limit->{'TrafficLimitRx'});
+		_tc_class_optimize($changeSet,$config->{'txiface'},$tcClass,$changes->{'TrafficLimitTx'});
+		_tc_class_optimize($changeSet,$config->{'rxiface'},$tcClass,$changes->{'TrafficLimitRx'});
+
+		# Set current live values
+		setLimitAttribute($lid,'tc.live.ClassID',$changes->{'ClassID'});
+		setLimitAttribute($lid,'tc.live.TrafficLimitTx',$changes->{'TrafficLimitTx'});
+		setLimitAttribute($lid,'tc.live.TrafficLimitTxBurst',$changes->{'TrafficLimitTxBurst'});
+		setLimitAttribute($lid,'tc.live.TrafficLimitRx',$changes->{'TrafficLimitRx'});
+		setLimitAttribute($lid,'tc.live.TrafficLimitRxBurst',$changes->{'TrafficLimitRxBurst'});
+		setLimitAttribute($lid,'tc.live.TrafficPriority',$changes->{'TrafficPriority'});
 	}
 
 	# Post changeset
@@ -549,9 +557,8 @@ sub do_add
 # Change event for tc
 sub do_change
 {
-	my ($kernel, $lid, $changes) = @_[KERNEL, ARG0];
+	my ($kernel, $lid, $changes) = @_[KERNEL, ARG0, ARG1];
 
-	my $changeSet = TC::ChangeSet->new();
 
 
 	# Pull in limit
@@ -561,49 +568,84 @@ sub do_change
 		return;
 	}
 
-	$logger->log(LOG_INFO,"Processing changes for '$limit->{'Username'}' [$lid]");
+	# Check if we don't have a changeset
+	if (!defined($changes)) {
+		$logger->log(LOG_WARN,"[TC] Shaper got a undefined changeset to process for '$lid'");
+		return;
+	}
 
-	# We going to pull in the defaults
-	my $trafficLimitTx = $limit->{'TrafficLimitTx'};
-	my $trafficLimitRx = $limit->{'TrafficLimitRx'};
-	my $trafficLimitTxBurst = $limit->{'TrafficLimitTxBurst'};
-	my $trafficLimitRxBurst = $limit->{'TrafficLimitRxBurst'};
-	# Lets see if we can override them...
+	$logger->log(LOG_INFO,"[TC] Processing changes for '$limit->{'Username'}' [$lid]");
+
+	# Pull in values we need
+	my $classID;
+	if (defined($changes->{'ClassID'})) {
+		$classID = $changes->{'ClassID'};
+		setLimitAttribute($lid,'tc.live.ClassID',$classID);
+	} else {
+		$classID = getLimitAttribute($lid,'tc.live.ClassID');
+	}
+
+	my $trafficLimitTx;
+	my $trafficLimitTxBurst;
 	if (defined($changes->{'TrafficLimitTx'})) {
 		$trafficLimitTx = $changes->{'TrafficLimitTx'};
-	}
-	if (defined($changes->{'TrafficLimitRx'})) {
-		$trafficLimitRx = $changes->{'TrafficLimitRx'};
+		setLimitAttribute($lid,'tc.live.TrafficLimitTx',$trafficLimitTx);
+	} else {
+		$trafficLimitTx = getLimitAttribute($lid,'tc.live.TrafficLimitTx');
 	}
 	if (defined($changes->{'TrafficLimitTxBurst'})) {
 		$trafficLimitTxBurst = $changes->{'TrafficLimitTxBurst'};
+		setLimitAttribute($lid,'tc.live.TrafficLimitTxBurst',$trafficLimitTxBurst);
+	} else {
+		$trafficLimitTxBurst = getLimitAttribute($lid,'tc.live.TrafficLimitTxBurst');
+	}
+
+	my $trafficLimitRx;
+	my $trafficLimitRxBurst;
+	if (defined($changes->{'TrafficLimitRx'})) {
+		$trafficLimitRx = $changes->{'TrafficLimitRx'};
+		setLimitAttribute($lid,'tc.live.TrafficLimitRx',$trafficLimitRx);
+	} else {
+		$trafficLimitRx = getLimitAttribute($lid,'tc.live.TrafficLimitRx');
 	}
 	if (defined($changes->{'TrafficLimitRxBurst'})) {
 		$trafficLimitRxBurst = $changes->{'TrafficLimitRxBurst'};
+		setLimitAttribute($lid,'tc.live.TrafficLimitRxBurst',$trafficLimitRxBurst);
+	} else {
+		$trafficLimitRxBurst = getLimitAttribute($lid,'tc.live.TrafficLimitRxBurst');
 	}
 
-	my $classID = getLimitAttribute($lid,'tc.class');
+	my $trafficPriority;
+	if (defined($changes->{'TrafficPriority'})) {
+		$trafficPriority = $changes->{'TrafficPriority'};
+		setLimitAttribute($lid,'tc.live.TrafficPriority',$trafficPriority);
+	} else {
+		$trafficPriority = getLimitAttribute($lid,'tc.live.TrafficPriority');
+	}
+
+	my $tcClass = getLimitAttribute($lid,'tc.class');
 
 
+	my $changeSet = TC::ChangeSet->new();
 	$changeSet->add([
 			'/sbin/tc','class','change',
 				'dev',$config->{'txiface'},
 				'parent','1:2',
-				'classid',"1:$classID",
+				'classid',"1:$tcClass",
 				'htb',
 					'rate', $trafficLimitTx . "kbit",
 					'ceil', $trafficLimitTxBurst . "kbit",
-					'prio', $limit->{'TrafficPriority'},
+					'prio', $trafficPriority,
 	]);
 	$changeSet->add([
 			'/sbin/tc','class','change',
 				'dev',$config->{'rxiface'},
 				'parent','1:2',
-				'classid',"1:$classID",
+				'classid',"1:$tcClass",
 				'htb',
 					'rate', $trafficLimitRx . "kbit",
 					'ceil', $trafficLimitRxBurst . "kbit",
-					'prio', $limit->{'TrafficPriority'},
+					'prio', $trafficPriority,
 	]);
 
 	# Post changeset
@@ -629,7 +671,7 @@ sub do_remove
 	$logger->log(LOG_INFO,"[TC] Remove '$limit->{'Username'}' [$lid]");
 
 	# Grab ClassID
-	my $classID = getLimitAttribute($lid,'tc.class');
+	my $tcClass = getLimitAttribute($lid,'tc.class');
 	my $filterHandle = getLimitAttribute($lid,'tc.filter');
 
 	# Clear up the filter
@@ -656,23 +698,27 @@ sub do_remove
 			'/sbin/tc','class','del',
 				'dev',$config->{'txiface'},
 				'parent','1:2',
-				'classid',"1:$classID",
+				'classid',"1:$tcClass",
 	]);
 	$changeSet->add([
 			'/sbin/tc','class','del',
 				'dev',$config->{'rxiface'},
 				'parent','1:2',
-				'classid',"1:$classID",
+				'classid',"1:$tcClass",
 	]);
 
 	# And recycle the class
-	disposeTcClass($classID);
+	disposeTcClass($tcClass);
 
 	# Post changeset
 	$kernel->post("_tc" => "queue" => $changeSet);
 
 	# Mark as not live
 	setShaperState($lid,SHAPER_NOTLIVE);
+
+	# Cleanup attributes
+	removeLimitAttribute($lid,'tc.class');
+	removeLimitAttribute($lid,'tc.filter');
 }
 
 
@@ -903,7 +949,7 @@ sub _tc_iface_optimize
 # Function to apply traffic optimizations to a classes
 sub _tc_class_optimize
 {
-	my ($changeSet,$iface,$classID,$rate) = @_;
+	my ($changeSet,$iface,$tcClass,$rate) = @_;
 
 
 	# Rate for things like ICMP , ACK, SYN ... etc
@@ -923,8 +969,8 @@ sub _tc_class_optimize
 	$changeSet->add([
 			'/sbin/tc','qdisc','add',
 				'dev',$iface,
-				'parent',"1:$classID",
-				'handle',"$classID:",
+				'parent',"1:$tcClass",
+				'handle',"$tcClass:",
 				'prio',
 					'bands','3',
 					'priomap','2','2','2','2','2','2','2','2','2','2','2','2','2','2','2','2',
@@ -939,7 +985,7 @@ sub _tc_class_optimize
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
-				'parent',"$classID:",
+				'parent',"$tcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -947,13 +993,13 @@ sub _tc_class_optimize
 						'at',9+$config->{'iphdr_offset'},
 				'police',
 					'rate',"${rateBand1}kbit",'burst',"${rateBand1Burst}k",'continue',
-				'flowid',"$classID:1",
+				'flowid',"$tcClass:1",
 	]);
 	# Prioritize ACK up to a certain limit
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
-				'parent',"$classID:",
+				'parent',"$tcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -963,13 +1009,13 @@ sub _tc_class_optimize
 						'at',33+$config->{'iphdr_offset'},
 				'police',
 					'rate',"${rateBand1}kbit",'burst',"${rateBand1Burst}k",'continue',
-				'flowid',"$classID:1",
+				'flowid',"$tcClass:1",
 	]);
 	# Prioritize SYN-ACK up to a certain limit
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
-				'parent',"$classID:",
+				'parent',"$tcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -979,13 +1025,13 @@ sub _tc_class_optimize
 						'at',33+$config->{'iphdr_offset'},
 				'police',
 					'rate',"${rateBand1}kbit",'burst',"${rateBand1Burst}k",'continue',
-				'flowid',"$classID:1",
+				'flowid',"$tcClass:1",
 	]);
 	# Prioritize FIN up to a certain limit
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
-				'parent',"$classID:",
+				'parent',"$tcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -995,13 +1041,13 @@ sub _tc_class_optimize
 						'at',33+$config->{'iphdr_offset'},
 				'police',
 					'rate',"${rateBand1}kbit",'burst',"${rateBand1Burst}k",'continue',
-				'flowid',"$classID:1",
+				'flowid',"$tcClass:1",
 	]);
 	# Prioritize RST up to a certain limit
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
-				'parent',"$classID:",
+				'parent',"$tcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -1011,13 +1057,13 @@ sub _tc_class_optimize
 						'at',33+$config->{'iphdr_offset'},
 				'police',
 					'rate',"${rateBand1}kbit",'burst',"${rateBand1Burst}k",'continue',
-				'flowid',"$classID:1",
+				'flowid',"$tcClass:1",
 	]);
 	# DNS
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
-				'parent',"$classID:",
+				'parent',"$tcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -1025,12 +1071,12 @@ sub _tc_class_optimize
 						'at',20+$config->{'iphdr_offset'},
 				'police',
 					'rate',"${rateBand2}kbit",'burst',"${rateBand2Burst}k",'continue',
-				'flowid',"$classID:1",
+				'flowid',"$tcClass:1",
 	]);
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
-				'parent',"$classID:",
+				'parent',"$tcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -1038,13 +1084,13 @@ sub _tc_class_optimize
 						'at',22+$config->{'iphdr_offset'},
 				'police',
 					'rate',"${rateBand2}kbit",'burst',"${rateBand2Burst}k",'continue',
-				'flowid',"$classID:1",
+				'flowid',"$tcClass:1",
 	]);
 	# VOIP
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
-				'parent',"$classID:",
+				'parent',"$tcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -1052,12 +1098,12 @@ sub _tc_class_optimize
 						'at',20+$config->{'iphdr_offset'},
 				'police',
 					'rate',"${rateBand2}kbit",'burst',"${rateBand2Burst}k",'continue',
-				'flowid',"$classID:1",
+				'flowid',"$tcClass:1",
 	]);
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
-				'parent',"$classID:",
+				'parent',"$tcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -1065,13 +1111,13 @@ sub _tc_class_optimize
 						'at',22+$config->{'iphdr_offset'},
 				'police',
 					'rate',"${rateBand2}kbit",'burst',"${rateBand2Burst}k",'continue',
-				'flowid',"$classID:1",
+				'flowid',"$tcClass:1",
 	]);
 	# SNMP
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
-				'parent',"$classID:",
+				'parent',"$tcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -1079,12 +1125,12 @@ sub _tc_class_optimize
 						'at',9+$config->{'iphdr_offset'},
 					'match','u16','0xa1','0xffff', # SPORT 161
 						'at',20+$config->{'iphdr_offset'},
-				'flowid',"$classID:1",
+				'flowid',"$tcClass:1",
 	]);
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
-				'parent',"$classID:",
+				'parent',"$tcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -1092,14 +1138,14 @@ sub _tc_class_optimize
 						'at',9+$config->{'iphdr_offset'},
 					'match','u16','0xa1','0xffff', # DPORT 161
 						'at',22+$config->{'iphdr_offset'},
-				'flowid',"$classID:1",
+				'flowid',"$tcClass:1",
 	]);
 	# FIXME: Make this customizable not hard coded
 	# Mikrotik Management Port
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
-				'parent',"$classID:",
+				'parent',"$tcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -1107,12 +1153,12 @@ sub _tc_class_optimize
 						'at',20+$config->{'iphdr_offset'},
 				'police',
 					'rate',"${rateBand2}kbit",'burst',"${rateBand2Burst}k",'continue',
-				'flowid',"$classID:1",
+				'flowid',"$tcClass:1",
 	]);
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
-				'parent',"$classID:",
+				'parent',"$tcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -1120,13 +1166,13 @@ sub _tc_class_optimize
 						'at',22+$config->{'iphdr_offset'},
 				'police',
 					'rate',"${rateBand2}kbit",'burst',"${rateBand2Burst}k",'continue',
-				'flowid',"$classID:1",
+				'flowid',"$tcClass:1",
 	]);
 	# SMTP
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
-				'parent',"$classID:",
+				'parent',"$tcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -1134,12 +1180,12 @@ sub _tc_class_optimize
 						'at',9+$config->{'iphdr_offset'},
 					'match','u16','0x19','0xffff', # SPORT 25
 						'at',20+$config->{'iphdr_offset'},
-				'flowid',"$classID:2",
+				'flowid',"$tcClass:2",
 	]);
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
-				'parent',"$classID:",
+				'parent',"$tcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -1147,13 +1193,13 @@ sub _tc_class_optimize
 						'at',9+$config->{'iphdr_offset'},
 					'match','u16','0x19','0xffff', # DPORT 25
 						'at',22+$config->{'iphdr_offset'},
-				'flowid',"$classID:2",
+				'flowid',"$tcClass:2",
 	]);
 	# POP3
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
-				'parent',"$classID:",
+				'parent',"$tcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -1161,12 +1207,12 @@ sub _tc_class_optimize
 						'at',9+$config->{'iphdr_offset'},
 					'match','u16','0x6e','0xffff', # SPORT 110
 						'at',20+$config->{'iphdr_offset'},
-				'flowid',"$classID:2",
+				'flowid',"$tcClass:2",
 	]);
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
-				'parent',"$classID:",
+				'parent',"$tcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -1174,13 +1220,13 @@ sub _tc_class_optimize
 						'at',9+$config->{'iphdr_offset'},
 					'match','u16','0x6e','0xffff', # DPORT 110
 						'at',22+$config->{'iphdr_offset'},
-				'flowid',"$classID:2",
+				'flowid',"$tcClass:2",
 	]);
 	# IMAP
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
-				'parent',"$classID:",
+				'parent',"$tcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -1188,12 +1234,12 @@ sub _tc_class_optimize
 						'at',9+$config->{'iphdr_offset'},
 					'match','u16','0x8f','0xffff', # SPORT 143
 						'at',20+$config->{'iphdr_offset'},
-				'flowid',"$classID:2",
+				'flowid',"$tcClass:2",
 	]);
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
-				'parent',"$classID:",
+				'parent',"$tcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -1201,13 +1247,13 @@ sub _tc_class_optimize
 						'at',9+$config->{'iphdr_offset'},
 					'match','u16','0x8f','0xffff', # DPORT 143
 						'at',22+$config->{'iphdr_offset'},
-				'flowid',"$classID:2",
+				'flowid',"$tcClass:2",
 	]);
 	# HTTP
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
-				'parent',"$classID:",
+				'parent',"$tcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -1215,12 +1261,12 @@ sub _tc_class_optimize
 						'at',9+$config->{'iphdr_offset'},
 					'match','u16','0x50','0xffff', # SPORT 80
 						'at',20+$config->{'iphdr_offset'},
-				'flowid',"$classID:2",
+				'flowid',"$tcClass:2",
 	]);
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
-				'parent',"$classID:",
+				'parent',"$tcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -1228,13 +1274,13 @@ sub _tc_class_optimize
 						'at',9+$config->{'iphdr_offset'},
 					'match','u16','0x50','0xffff', # DPORT 80
 						'at',22+$config->{'iphdr_offset'},
-				'flowid',"$classID:2",
+				'flowid',"$tcClass:2",
 	]);
 	# HTTPS
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
-				'parent',"$classID:",
+				'parent',"$tcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -1242,12 +1288,12 @@ sub _tc_class_optimize
 						'at',9+$config->{'iphdr_offset'},
 					'match','u16','0x1bb','0xffff', # SPORT 443
 						'at',20+$config->{'iphdr_offset'},
-				'flowid',"$classID:2",
+				'flowid',"$tcClass:2",
 	]);
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$iface,
-				'parent',"$classID:",
+				'parent',"$tcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -1255,7 +1301,7 @@ sub _tc_class_optimize
 						'at',9+$config->{'iphdr_offset'},
 					'match','u16','0x1bb','0xffff', # DPORT 443
 						'at',22+$config->{'iphdr_offset'},
-				'flowid',"$classID:2",
+				'flowid',"$tcClass:2",
 	]);
 }
 
@@ -1365,9 +1411,10 @@ sub task_run_next
 
 		# Create task
 		my $task = POE::Wheel::Run->new(
-			Program => [ '/sbin/tc', '-batch' ],
-			StdioFilter => POE::Filter::Line->new(),
-			StderrFilter => POE::Filter::Line->new(),
+			Program => [ '/sbin/tc', '-force', '-batch' ],
+			Conduit => 'pipe',
+			StdioFilter => POE::Filter::Line->new( Literal => "\n" ),
+			StderrFilter => POE::Filter::Line->new( Literal => "\n" ),
 			StdoutEvent => 'task_child_stdout',
 			StderrEvent => 'task_child_stderr',
 			CloseEvent => 'task_child_close',
