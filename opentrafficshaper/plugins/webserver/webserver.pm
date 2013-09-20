@@ -86,7 +86,9 @@ my $resources = {
 		},
 		'limits' => {
 			'default' => \&opentrafficshaper::plugins::webserver::pages::limits::default,
-			'add' => \&opentrafficshaper::plugins::webserver::pages::limits::add,
+			'limit-add' => \&opentrafficshaper::plugins::webserver::pages::limits::limit_addedit,
+			'limit-remove' => \&opentrafficshaper::plugins::webserver::pages::limits::limit_remove,
+			'limit-edit' => \&opentrafficshaper::plugins::webserver::pages::limits::limit_addedit,
 		},
 		'statistics' => {
 			'by-username' => \&opentrafficshaper::plugins::webserver::pages::statistics::byusername,
@@ -94,7 +96,9 @@ my $resources = {
 		},
 		'configmanager' => {
 			'default' => \&opentrafficshaper::plugins::webserver::pages::configmanager::default,
-			'add' => \&opentrafficshaper::plugins::webserver::pages::configmanager::add,
+			'override-add' => \&opentrafficshaper::plugins::webserver::pages::configmanager::override_addedit,
+			'override-remove' => \&opentrafficshaper::plugins::webserver::pages::configmanager::override_remove,
+			'override-edit' => \&opentrafficshaper::plugins::webserver::pages::configmanager::override_addedit,
 		},
 	},
 };

@@ -1,6 +1,6 @@
 # OpenTrafficShaper webserver module: limits page
 # Copyright (C) 2007-2013, AllWorldIT
-# 
+#
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
@@ -51,7 +51,7 @@ my $menu = {
 		'Manual Limits' => './?source=plugin.webserver.limits',
 	},
 	'Admin' => {
-		'Add Limit' => 'add',
+		'Add Limit' => 'limit-add',
 	},
 };
 
@@ -144,10 +144,18 @@ EOF
 			}
 		}
 
+		my $lidEncoded = encode_entities($limit->{'ID'});
+
 		my $usernameEncoded = encode_entities($limit->{'Username'});
 		my $usernameEscaped = uri_escape($limit->{'Username'});
 
 		my $classStr = getTrafficClassName($limit->{'ClassID'});
+
+		# We only support removing certain sources of limits
+		my $removeLink = "";
+		if ($limit->{'Source'} eq "plugin.webserver.limits") {
+			$removeLink = "<a href=\"/limits/limit-remove?lid=$lidEncoded\"><span class=\"glyphicon glyphicon-remove\"></span></a>";
+		}
 
 		$content .= <<EOF;
 		<tr class="$style">
@@ -194,8 +202,8 @@ EOF
 			<td>$limitStr</td>
 			<td>
 				<a href="/statistics/by-username?username=$usernameEscaped"><span class="glyphicon glyphicon-stats"></span></a>
-				<a href="/limits/limit-edit?username=$usernameEscaped"><span class="glyphicon glyphicon-wrench"></span></a>
-				<a href="/limits/limit-remove?username=$usernameEscaped"><span class="glyphicon glyphicon-remove"></span></a>
+				<a href="/limits/limit-edit?lid=$lidEncoded"><span class="glyphicon glyphicon-wrench"></span></a>
+				$removeLink
 			</td>
 		</tr>
 EOF
@@ -246,8 +254,8 @@ EOF
 }
 
 
-# Add action
-sub add
+# Add/edit action
+sub limit_addedit
 {
 	my ($kernel,$globals,$client_session_id,$request) = @_;
 
@@ -255,115 +263,164 @@ sub add
 	# Setup our environment
 	my $logger = $globals->{'logger'};
 
-	# Errors to display
+	# Errors to display above the form
 	my @errors;
-	# Form items
-	my $params = {
-		'inputFriendlyName' => undef,
-		'inputUsername' => undef,
-		'inputIP' => undef,
-		'inputTrafficClass' => undef,
-		'inputLimitTx' => undef,
-		'inputLimitTxBurst' => undef,
-		'inputLimitRx' => undef,
-		'inputLimitRxBurst' => undef,
-		'inputExpires' => undef,
-		'inputExpiresModifier' => undef,
-		'inputNotes' => undef,
-	};
+
+	# Items for our form...
+	my @formElements = qw(
+		FriendlyName
+		Username IP
+		ClassID
+		TrafficLimitTx TrafficLimitTxBurst
+		TrafficLimitRx TrafficLimitRxBurst
+		Expires inputExpires.modifier
+		Notes
+	);
+
+	# Title of the form, by default its an add form
+	my $formType = "Add";
+	my $formNoEdit = "";
+	# Form data
+	my $formData;
 
 	# If this is a form try parse it
 	if ($request->method eq "POST") {
 		# Parse form data
-		$params = parseFormContent($request->content);
+		$formData = parseFormContent($request->content);
 
 		# If user pressed cancel, redirect
-		if (defined($params->{'cancel'})) {
+		if (defined($formData->{'cancel'})) {
 			# Redirects to default page
 			return (HTTP_TEMPORARY_REDIRECT,'limits');
 		}
 
+	# Maybe we were given an override key as a parameter? this would be an edit form
+	} elsif ($request->method eq "GET") {
+		# Parse GET data
+		my $queryParams = parseURIQuery($request);
+		# We need a key first of all...
+		if (defined($queryParams->{'lid'})) {
+			# Check if we get some data back when pulling the limit from the backend
+			if (defined($formData = getLimit($queryParams->{'lid'}))) {
+				# We need to make sure we're only editing our own limits
+				if ($formData->{'Source'} ne "plugin.webserver.limits") {
+					return (HTTP_TEMPORARY_REDIRECT,'limits');
+				}
+
+				# Work out expires modifier
+# XXX - TODO
+			# If we didn't get any data, then something went wrong
+			} else {
+				my $encodedID = encode_entities($queryParams->{'lid'});
+				push(@errors,"Limit data could not be loaded using limit ID '$encodedID'");
+			}
+			# Lastly if we were given a key, this is actually an edit
+			$formType = "Edit";
+			$formNoEdit = "readonly";
+
+		# Woops ... no query string?
+		} elsif (%{$queryParams} > 0) {
+			push(@errors,"No limit ID in query string!");
+			$formType = "Edit";
+			$formNoEdit = "readonly";
+		}
+	}
+
+
+	#
+	# If we already have data, lets check how valid it is...
+	#
+
+	# We only do this if we have hash elements
+	if (ref($formData) eq "HASH") {
 		# Grab friendly name
-		my $friendlyName = $params->{'inputFriendlyName'};
+		my $friendlyName = $formData->{'FriendlyName'};
 
 		# Check POST data
 		my $username;
-		if (!defined($username = isUsername($params->{'inputUsername'}))) {
+		if (!defined($username = isUsername($formData->{'Username'}))) {
 			push(@errors,"Username is not valid");
 		}
 		my $ipAddress;
-		if (!defined($ipAddress = isIP($params->{'inputIP'}))) {
+		if (!defined($ipAddress = isIP($formData->{'IP'}))) {
 			push(@errors,"IP address is not valid");
 		}
-		my $trafficClass;
-		if (!defined($trafficClass = isTrafficClassValid($params->{'inputTrafficClass'}))) {
+		my $classID;
+		if (!defined($classID = isTrafficClassValid($formData->{'ClassID'}))) {
 			push(@errors,"Traffic class is not valid");
 		}
-		my $trafficLimitTx = isNumber($params->{'inputLimitTx'});
-		my $trafficLimitTxBurst = isNumber($params->{'inputLimitTxBurst'});
+		my $trafficLimitTx = isNumber($formData->{'TrafficLimitTx'});
+		my $trafficLimitTxBurst = isNumber($formData->{'TrafficLimitTxBurst'});
 		if (!defined($trafficLimitTx) && !defined($trafficLimitTxBurst)) {
 			push(@errors,"A valid download CIR and/or limit is required");
 		}
-		my $trafficLimitRx = isNumber($params->{'inputLimitRx'});
-		my $trafficLimitRxBurst = isNumber($params->{'inputLimitRxBurst'});
+		my $trafficLimitRx = isNumber($formData->{'TrafficLimitRx'});
+		my $trafficLimitRxBurst = isNumber($formData->{'TrafficLimitRxBurst'});
 		if (!defined($trafficLimitRx) && !defined($trafficLimitRxBurst)) {
 			push(@errors,"A valid upload CIR and/or limit is required");
 		}
 
 		my $expires = 0;
-		if (defined($params->{'inputExpires'}) && $params->{'inputExpires'} ne "") {
-			if (!defined($expires = isNumber($params->{'inputExpires'}))) {
+		if (defined($formData->{'Expires'}) && $formData->{'Expires'} ne "") {
+			if (!defined($expires = isNumber($formData->{'Expires'}))) {
 				push(@errors,"Expires value is not valid");
 			# Check the modifier
 			} else {
 				# Check if its defined
-				if (defined($params->{'inputExpiresModifier'}) && $params->{'inputExpiresModifier'} ne "") {
+				if (defined($formData->{'inputExpiresModifier'}) && $formData->{'inputExpiresModifier'} ne "") {
 					# Minutes
-					if ($params->{'inputExpiresModifier'} eq "m") {
+					if ($formData->{'inputExpiresModifier'} eq "m") {
 						$expires *= 60;
 					# Hours
-					} elsif ($params->{'inputExpiresModifier'} eq "h") {
+					} elsif ($formData->{'inputExpiresModifier'} eq "h") {
 						$expires *= 3600;
 					# Days
-					} elsif ($params->{'inputExpiresModifier'} eq "d") {
+					} elsif ($formData->{'inputExpiresModifier'} eq "d") {
 						$expires *= 86400;
 					} else {
 						push(@errors,"Expires modifier is not valid");
 					}
 				}
-				# Set right time for expiry
-				$expires += time();
+				# Base the expiry off now, plus the expiry time
+				if ($expires > 0) {
+					$expires += time();
+				}
 			}
 		}
 		# Grab notes
-		my $notes = $params->{'inputNotes'};
+		my $notes = $formData->{'Notes'};
 
 		# If there are no errors we need to push this update
-		if (!@errors) {
+		if (!@errors && $request->method eq "POST") {
 			# Build limit
 			my $limit = {
 				'FriendlyName' => $friendlyName,
 				'Username' => $username,
 				'IP' => $ipAddress,
 				'GroupID' => 1,
-				'ClassID' => $trafficClass,
+				'ClassID' => $classID,
 				'TrafficLimitTx' => $trafficLimitTx,
 				'TrafficLimitTxBurst' => $trafficLimitTxBurst,
 				'TrafficLimitRx' => $trafficLimitRx,
 				'TrafficLimitRxBurst' => $trafficLimitRxBurst,
 				'Expires' => $expires,
 				'Notes' => $notes,
-				'Source' => "plugin.webserver.limits",
 			};
 
-			# Throw the change at the config manager
+			# Throw the change at the config manager after we add extra data we need
+			if ($formType eq "Add") {
+				$limit->{'Status'} = 'online';
+				$limit->{'Source'} = 'plugin.webserver.limits';
+			}
+
 			$kernel->post("configmanager" => "process_limit_change" => $limit);
 
-			$logger->log(LOG_INFO,'[WEBSERVER/LIMITS/ADD] User: %s, IP: %s, Group: %s, Class: %s, Limits: %s/%s, Burst: %s/%s',
+			$logger->log(LOG_INFO,'[WEBSERVER/LIMITS] Acount: %s, User: %s, IP: %s, Group: %s, Class: %s, Limits: %s/%s, Burst: %s/%s',
+					$formType,
 					prettyUndef($username),
 					prettyUndef($ipAddress),
 					undef,
-					prettyUndef($trafficClass),
+					prettyUndef($classID),
 					prettyUndef($trafficLimitTx),
 					prettyUndef($trafficLimitRx),
 					prettyUndef($trafficLimitTxBurst),
@@ -375,8 +432,8 @@ sub add
 	}
 
 	# Sanitize params if we need to
-	foreach my $item (keys %{$params}) {
-		$params->{$item} = defined($params->{$item}) ? encode_entities($params->{$item}) : "";	
+	foreach my $item (@formElements) {
+		$formData->{$item} = defined($formData->{$item}) ? encode_entities($formData->{$item}) : "";
 	}
 
 	# Build content
@@ -385,7 +442,7 @@ sub add
 	# Form header
 	$content .=<<EOF;
 <form role="form" method="post">
-	<legend>Add Manual Limit</legend>
+	<legend>$formType Manual Limit</legend>
 EOF
 
 	# Spit out errors if we have any
@@ -399,55 +456,69 @@ EOF
 	my $trafficClasses = getTrafficClasses();
 	my $trafficClassStr = "";
 	foreach my $classID (sort keys %{$trafficClasses}) {
-		$trafficClassStr .= '<option value="'.$classID.'">'.$trafficClasses->{$classID}.'</option>';
+		# Process selections nicely
+		my $selected = "";
+		if ($formData->{'ClassID'} ne "" && $formData->{'ClassID'} eq $classID) {
+			$selected = "selected";
+		}
+		# And build the options
+		$trafficClassStr .= '<option value="'.$classID.'" '.$selected.'>'.$trafficClasses->{$classID}.'</option>';
 	}
 
-	# Header
+	# Make expires look nicer
+	my $expiresStr = "";
+	if (defined($formData->{'Expires'}) && $formData->{'Expires'} > 0) {
+		$expiresStr = $formData->{'Expires'};
+	}
+
+	#
+	# Page content
+	#
 	$content .=<<EOF;
 	<div class="form-group">
-		<label for="inputFriendlyName" class="col-lg-2 control-label">Friendly Name</label>
+		<label for="FriendlyName" class="col-lg-2 control-label">Friendly Name</label>
 		<div class="row">
 			<div class="col-lg-4 input-group">
-				<input name="inputFriendlyName" type="text" placeholder="Opt. Friendly Name" class="form-control" value="$params->{'inputFriendlyName'}" />
+				<input name="FriendlyName" type="text" placeholder="Opt. Friendly Name" class="form-control" value="$formData->{'FriendlyName'}" />
 			</div>
 		</div>
 	</div>
 	<div class="form-group">
-		<label for="inputUsername" class="col-lg-2 control-label">Username</label>
+		<label for="Username" class="col-lg-2 control-label">Username</label>
 		<div class="row">
 			<div class="col-lg-4 input-group">
-				<input name="inputUsername" type="text" placeholder="Username" class="form-control" value="$params->{'inputUsername'}" />
+				<input name="Username" type="text" placeholder="Username" class="form-control" value="$formData->{'Username'}" $formNoEdit/>
 				<span class="input-group-addon">*</span>
 			</div>
 		</div>
 	</div>
 	<div class="form-group">
-		<label for="inputIP" class="col-lg-2 control-label">IP Address</label>
+		<label for="IP" class="col-lg-2 control-label">IP Address</label>
 		<div class="row">
 			<div class="col-lg-4 input-group">
-				<input name="inputIP" type="text" placeholder="IP Address" class="form-control" value="$params->{'inputIP'}" />
+				<input name="IP" type="text" placeholder="IP Address" class="form-control" value="$formData->{'IP'}" $formNoEdit/>
 				<span class="input-group-addon">*</span>
 			</div>
 		</div>
 	</div>
 	<div class="form-group">
-		<label for="inputTafficClass" class="col-lg-2 control-label">Traffic Class</label>
+		<label for="ClassID" class="col-lg-2 control-label">Traffic Class</label>
 		<div class="row">
 			<div class="col-lg-2">
-				<select name="inputTrafficClass" placeholder="Traffic Class" class="form-control" value="$params->{'inputTrafficClass'}">
+				<select name="ClassID" class="form-control">
 					$trafficClassStr
 				</select>
 			</div>
 		</div>
 	</div>
 	<div class="form-group">
-		<label for="inputExpires" class="col-lg-2 control-label">Expires</label>
+		<label for="Expires" class="col-lg-2 control-label">Expires</label>
 		<div class="row">
 			<div class="col-lg-2">
-				<input name="inputExpires" type="text" placeholder="Opt. Expires" class="form-control" value="$params->{'inputExpires'}" />
+				<input name="Expires" type="text" placeholder="Opt. Expires" class="form-control" value="$expiresStr" />
 			</div>
 			<div class="col-lg-2">
-				<select name="inputExpiresModifier" placeholder="Expires Modifier" class="form-control" value="$params->{'inputExpiresModifier'}">
+				<select name="inputExpires.modifier" class="form-control" value="$formData->{'inputExpires.modifier'}">
 					<option value="m">Mins</option>
 					<option value="h">Hours</option>
 					<option value="d">Days</option>
@@ -456,19 +527,19 @@ EOF
 		</div>
 	</div>
 	<div class="form-group">
-		<label for="inputLimitTx" class="col-lg-2 control-label">Download CIR</label>
+		<label for="TrafficLimitTx" class="col-lg-2 control-label">Download CIR</label>
 		<div class="row">
 			<div class="col-lg-3">
 				<div class="input-group">
-					<input name="inputLimitTx" type="text" placeholder="Download CIR" class="form-control" value="$params->{'inputLimitTx'}" />
+					<input name="TrafficLimitTx" type="text" placeholder="Download CIR" class="form-control" value="$formData->{'TrafficLimitTx'}" />
 					<span class="input-group-addon">Kbps *<span>
 				</div>
 			</div>
 
-			<label for="inputLimitTxBurst" class="col-lg-1 control-label">Limit</label>
+			<label for="TrafficLimitTxBurst" class="col-lg-1 control-label">Limit</label>
 			<div class="col-lg-3">
 				<div class="input-group">
-					<input name="inputLimitTxBurst" type="text" placeholder="Download Limit" class="form-control" value="$params->{'inputLimitTxBurst'}" />
+					<input name="TrafficLimitTxBurst" type="text" placeholder="Download Limit" class="form-control" value="$formData->{'TrafficLimitTxBurst'}" />
 					<span class="input-group-addon">Kbps<span>
 				</div>
 			</div>
@@ -476,34 +547,34 @@ EOF
 	</div>
 
 	<div class="form-group">
-		<label for="inputLimitRx" class="col-lg-2 control-label">Upload CIR</label>
+		<label for="TrafficLimitRx" class="col-lg-2 control-label">Upload CIR</label>
 		<div class="row">
 			<div class="col-lg-3">
 				<div class="input-group">
-					<input name="inputLimitRx" type="text" placeholder="Upload CIR" class="form-control" value="$params->{'inputLimitRx'}" />
+					<input name="TrafficLimitRx" type="text" placeholder="Upload CIR" class="form-control" value="$formData->{'TrafficLimitRx'}" />
 					<span class="input-group-addon">Kbps *<span>
 				</div>
 			</div>
 
-			<label for="inputLimitRxBurst" class="col-lg-1 control-label">Limit</label>
+			<label for="TrafficLimitRxBurst" class="col-lg-1 control-label">Limit</label>
 			<div class="col-lg-3">
 				<div class="input-group">
-					<input name="inputLimitRxBurst" type="text" placeholder="Upload Limit" class="form-control" value="$params->{'inputLimitRxBurst'}" />
+					<input name="TrafficLimitRxBurst" type="text" placeholder="Upload Limit" class="form-control" value="$formData->{'TrafficLimitRxBurst'}" />
 					<span class="input-group-addon">Kbps<span>
 				</div>
 			</div>
 		</div>
 	</div>
 	<div class="form-group">
-		<label for="inputNotes" class="col-lg-2 control-label">Notes</label>
+		<label for="Notes" class="col-lg-2 control-label">Notes</label>
 		<div class="row">
 			<div class="col-lg-4">
-				<textarea name="inputNotes" placeholder="Opt. Notes" rows="3" class="form-control"></textarea>
+				<textarea name="Notes" placeholder="Opt. Notes" rows="3" class="form-control"></textarea>
 			</div>
 		</div>
 	</div>
 	<div class="form-group">
-		<button type="submit" class="btn btn-primary">Add</button>
+		<button type="submit" class="btn btn-primary">$formType</button>
 		<button name="cancel" type="submit" class="btn">Cancel</button>
 	</div>
 </form>
@@ -512,6 +583,85 @@ EOF
 	return (HTTP_OK,$content,{ 'menu' => $menu });
 }
 
+
+# Remove action
+sub limit_remove
+{
+	my ($kernel,$globals,$client_session_id,$request) = @_;
+
+
+	# Content to return
+	my $content = "";
+
+
+	# Pull in GET
+	my $queryParams = parseURIQuery($request);
+	# We need a key first of all...
+	if (!defined($queryParams->{'lid'})) {
+		$content = <<EOF;
+			<div class="alert alert-danger text-center">
+				No limit ID in query string!
+			</div>
+EOF
+		goto END;
+	}
+
+	# Grab the limit
+	my $limit = getLimit($queryParams->{'lid'});
+
+	# Make the key safe for HTML
+	my $encodedLID = encode_entities($queryParams->{'lid'});
+
+	# Make sure the limit ID is valid... we would have a limit now if it was
+	if (!defined($limit)) {
+		$content = <<EOF;
+			<div class="alert alert-danger text-center">
+				Invalid limit ID "$encodedLID"!
+			</div>
+EOF
+		goto END;
+	}
+
+	# Make sure its a manual limit we're removing
+	if ($limit->{'Source'} ne "plugin.webserver.limits") {
+		$content = <<EOF;
+			<div class="alert alert-danger text-center">
+				Only manual limits can be removed!
+			</div>
+EOF
+		goto END;
+	}
+
+	# Pull in POST
+	my $postParams = parseFormContent($request->content);
+	# If this is a post, then its probably a confirmation
+	if (defined($postParams->{'confirm'})) {
+		# Check if its a success
+		if ($postParams->{'confirm'} eq "Yes") {
+			# Post the removal
+			$kernel->post("configmanager" => "process_limit_remove" => $limit);
+		}
+		return (HTTP_TEMPORARY_REDIRECT,'limits');
+	}
+
+
+	# Make the friendly name HTML safe
+	my $encodedUsername = encode_entities($limit->{'Username'});
+
+	# Build our confirmation dialog
+	$content .= <<EOF;
+		<div class="alert alert-danger">
+			Are you very sure you wish to remove limit for "$encodedUsername"?
+		</div>
+		<form role="form" method="post">
+			<input type="submit" class="btn btn-primary" name="confirm" value="Yes" />
+			<input type="submit" class="btn btn-default" name="confirm" value="No" />
+		</form>
+EOF
+	# And here is where we return
+END:
+	return (HTTP_OK,$content,{ 'menu' => $menu });
+}
 
 1;
 # vim: ts=4
