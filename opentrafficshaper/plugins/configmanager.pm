@@ -42,6 +42,7 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 		getLimitUsername
 		setLimitAttribute
 		getLimitAttribute
+		removeLimitAttribute
 
 		getOverride
 		getOverrides
@@ -73,7 +74,7 @@ sub LIMIT_REQUIRED_ATTRIBUTES {
 		Username IP
 		GroupID ClassID
 		TrafficLimitTx TrafficLimitRx
-		Expires Status
+		Status
 		Source
 	)
 }
@@ -81,8 +82,8 @@ sub LIMIT_REQUIRED_ATTRIBUTES {
 # Limit Changeset attributes - things that can be changed on the fly in the shaper
 sub LIMIT_CHANGESET_ATTRIBUTES {
 	qw(
-		GroupID ClassID
-		TrafficLimitTx TrafficLimitRx TrafficLimitTxBurst TrafficLimitRxBurst
+		ClassID
+		TrafficLimitTx TrafficLimitRx TrafficLimitTxBurst TrafficLimitRxBurst TrafficPriority
 	)
 }
 
@@ -98,8 +99,8 @@ sub LIMIT_PERSISTENT_ATTRIBUTES {
 	)
 }
 
-# Mandatory override attribute, one is required
-sub OVERRIDE_REQUIRED_ATTRIBUTES {
+# Override match attributes, one is required
+sub OVERRIDE_MATCH_ATTRIBUTES {
 	qw(
 		Username IP
 		GroupID
@@ -115,16 +116,25 @@ sub OVERRIDE_CHANGESET_ATTRIBUTES {
 # Override attributes supported for persistent storage
 sub OVERRIDE_PERSISTENT_ATTRIBUTES {
 	qw(
-		Key
-		Username IP
-		GroupID ClassID
-		TrafficLimitTx TrafficLimitRx TrafficLimitTxBurst TrafficLimitRxBurst
-		FriendlyName Notes
+		FriendlyName
+		Username IP GroupID
+		ClassID TrafficLimitTx TrafficLimitRx TrafficLimitTxBurst TrafficLimitRxBurst
+		Notes
 		Expires Created
 		Source
 		LastUpdate
 	)
 }
+# Override match criteria
+sub OVERRIDE_MATCH_CRITERIA {
+	(
+		['GroupID'], ['Username'], ['IP'],
+		['GroupID','Username'], ['GroupID','IP'],
+		['Username','IP'],
+		['GroupID','Username','IP'],
+	)
+}
+
 
 
 # Plugin info
@@ -161,8 +171,6 @@ my $config = {
 };
 
 
-# Pending changes
-my $changeQueue = { };
 
 #
 # LIMITS
@@ -197,6 +205,7 @@ my $changeQueue = { };
 #    - unknown
 # * Source
 #    - This is the source of the limit, typically  plugin.ModuleName
+my $limitChangeQueue = { };
 my $limits = { };
 my $limitIPMap = { };
 my $limitIDMap = { };
@@ -234,7 +243,11 @@ my $limitIDCounter = 1;
 #    - Notes on this limit
 # * Source
 #    - This is the source of the limit, typically  plugin.ModuleName
+my $overrideChangeQueue = { };
 my $overrides = { };
+my $overrideMap = { };
+my $overrideIDMap = { };
+my $overrideIDCounter = 1;
 
 
 # Initialize plugin
@@ -337,7 +350,10 @@ sub plugin_init
 			tick => \&session_tick,
 
 			process_limit_change => \&process_limit_change,
+			process_limit_remove => \&process_limit_remove,
+
 			process_override_change => \&process_override_change,
+			process_override_remove => \&process_override_remove,
 
 			handle_SIGHUP => \&handle_SIGHUP,
 		}
@@ -348,7 +364,7 @@ sub plugin_init
 # Start the plugin
 sub plugin_start
 {
-	$logger->log(LOG_INFO,"[CONFIGMANAGER] Started with ".( keys %{$changeQueue} )." queued items");
+	$logger->log(LOG_INFO,"[CONFIGMANAGER] Started with ".( keys %{$limitChangeQueue} )." queued items");
 }
 
 
@@ -390,12 +406,17 @@ sub session_stop
 
 	# Blow away all data
 	$globals = undef;
-	$changeQueue = { };
+	$limitChangeQueue = { };
 	$limits = { };
 	$limitIPMap = { };
 	$limitIDMap = { };
 	$limitIDCounter = 1;
+
+	$overrideChangeQueue = { };
 	$overrides = { };
+	$overrideMap = { };
+	$overrideIDMap = { };
+	$overrideIDCounter = 1;
 	# XXX: Blow away rest? config?
 
 	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Shutdown");
@@ -409,6 +430,7 @@ sub session_tick
 {
 	my $kernel = $_[KERNEL];
 
+	_process_override_change_queue($kernel);
 	_process_limit_change_queue($kernel);
 
 	# Reset tick
@@ -423,12 +445,29 @@ sub process_limit_change
 	_process_limit_change($limit);
 }
 
+# Process limit remove
+sub process_limit_remove
+{
+	my ($kernel, $limit) = @_[KERNEL, ARG0];
+
+	_process_limit_remove($kernel,$limit);
+}
+
 # Process override change
 sub process_override_change
 {
 	my ($kernel, $override) = @_[KERNEL, ARG0];
 
 	_process_override_change($override);
+}
+
+# Process override remove
+sub process_override_remove
+{
+	my ($kernel, $override) = @_[KERNEL, ARG0];
+
+	_process_override_remove($override);
+	_resolve_overrides_and_post($kernel);
 }
 
 
@@ -439,7 +478,7 @@ sub checkGroupID
 	if (defined($config->{'groups'}->{$gid})) {
 		return $gid;
 	}
-	return;
+	return undef;
 }
 
 
@@ -450,7 +489,7 @@ sub checkClassID
 	if (defined($config->{'classes'}->{$cid})) {
 		return $cid;
 	}
-	return;
+	return undef;
 }
 
 
@@ -461,7 +500,7 @@ sub checkStatus
 	if ($status eq "new" || $status eq "offline" || $status eq "online" || $status eq "conflict" || $status eq "unknown") {
 		return $status
 	}
-	return;
+	return undef;
 }
 
 
@@ -472,7 +511,7 @@ sub getLimitUsername
 	if (defined($limits->{$lid})) {
 		return $limits->{$lid}->{'Username'};
 	}
-	return;
+	return undef;
 }
 
 
@@ -485,7 +524,7 @@ sub getLimit
 		my %limit = %{$limits->{$lid}};
 		return \%limit;
 	}
-	return;
+	return undef;
 }
 
 
@@ -503,10 +542,9 @@ sub setLimitAttribute
 
 
 	# Only set it if it exists
-	if (defined($limits->{$lid})) {
+	if (defined($lid) && defined($limits->{$lid})) {
 		$limits->{$lid}->{'attributes'}->{$attr} = $value;
 	}
-	return;
 }
 
 
@@ -517,10 +555,23 @@ sub getLimitAttribute
 
 
 	# Check if attribute exists first
-	if (defined($limits->{$lid}) && defined($limits->{$lid}->{'attributes'}) && defined($limits->{$lid}->{'attributes'}->{$attr})) {
+	if (defined($lid) && defined($limits->{$lid}) && defined($limits->{$lid}->{'attributes'}) && defined($limits->{$lid}->{'attributes'}->{$attr})) {
 		return $limits->{$lid}->{'attributes'}->{$attr};
 	}
-	return;
+	return undef;
+}
+
+
+# Function to remove a limit attribute
+sub removeLimitAttribute
+{
+	my ($lid,$attr) = @_;
+
+
+	# Check if attribute exists first
+	if (defined($lid) && defined($limits->{$lid}) && defined($limits->{$lid}->{'attributes'}) && defined($limits->{$lid}->{'attributes'}->{$attr})) {
+		delete($limits->{$lid}->{'attributes'}->{$attr});
+	}
 }
 
 
@@ -529,11 +580,11 @@ sub getOverride
 {
 	my $oid = shift;
 
-	if (defined($overrides->{$oid})) {
+	if (defined($oid) && defined($overrides->{$oid})) {
 		my %override = %{$overrides->{$oid}};
 		return \%override;
 	}
-	return;
+	return undef;
 }
 
 
@@ -549,9 +600,10 @@ sub setShaperState
 {
 	my ($lid,$state) = @_;
 
-	if (defined($limits->{$lid})) {
+	if (defined($lid) && defined($limits->{$lid})) {
 		$limits->{$lid}->{'_shaper.state'} = $state;
 	}
+	return undef;
 }
 
 
@@ -559,10 +611,10 @@ sub setShaperState
 sub getShaperState
 {
 	my $lid = shift;
-	if (defined($limits->{$lid})) {
+	if (defined($lid) && defined($limits->{$lid})) {
 		return $limits->{$lid}->{'_shaper.state'};
 	}
-	return;
+	return undef;
 }
 
 
@@ -579,7 +631,10 @@ sub getTrafficClasses
 sub getTrafficClassName
 {
 	my $class = shift;
-	return $config->{'classes'}->{$class};
+	if (defined($class) && defined($config->{'classes'}->{$class})) {
+		return $config->{'classes'}->{$class};
+	}
+	return undef;
 }
 
 
@@ -587,10 +642,10 @@ sub getTrafficClassName
 sub isTrafficClassValid
 {
 	my $class = shift;
-	if (defined($config->{'classes'}->{$class})) {
+	if (defined($class) && defined($config->{'classes'}->{$class})) {
 		return $class;
 	}
-	return;
+	return undef;
 }
 
 
@@ -608,8 +663,8 @@ sub handle_SIGHUP
 # Internal functions
 #
 
-# Function to compute the changes between two users
-sub _getLimitChangeset
+# Function to compute the changes between two limits
+sub _getAppliedLimitChangeset
 {
 	my ($orig,$new) = @_;
 
@@ -617,12 +672,66 @@ sub _getLimitChangeset
 
 	# Loop through what can change
 	foreach my $item (LIMIT_CHANGESET_ATTRIBUTES) {
-		# Check if its first set, if it is, check if its changed
-		if (defined($new->{$item}) && $orig->{$item} ne $new->{$item}) {
+		# If new item is defined, and we didn't have a value before, or the new value is different
+		if (defined($new->{$item}) && (!defined($orig->{$item}) || $orig->{$item} ne $new->{$item})) {
 			# If so record it & make the change
 			$res->{$item} = $orig->{$item} = $new->{$item};
 		}
 	}
+
+	# If we have an override changeset to calculate, lets do it!
+	if (defined(my $overrideNew = $orig->{'override'})) {
+
+		# If there is currently a live override
+		if (defined(my $overrideLive = $orig->{'_override.live'})) {
+
+			# Loop through everything
+			foreach my $item (LIMIT_CHANGESET_ATTRIBUTES) {
+				# If we have a new override defined
+				if (defined($overrideNew->{$item})) {
+					# Check if it differs
+			   	   if ($overrideLive->{$item} ne $overrideNew->{$item}) {
+					   $res->{$item} = $overrideLive->{$item} = $overrideNew->{$item};
+				   }
+
+				# We don't have a new override, but we had one before
+				} elsif (defined($overrideLive->{$item})) {
+					# If it differs to the main item, then add it to the change list
+					if ($overrideLive->{$item} ne $orig->{$item}) {
+						$res->{$item} = $orig->{$item};
+					}
+
+					# Its no longer live so remove it
+					delete($overrideLive->{$item});
+				}
+			}
+
+		# If there was nothing being overridden and is now...
+		} else {
+			# Loop and add
+			foreach my $item (keys %{$overrideNew}) {
+				# If they differ change it
+				if ($orig->{$item} ne $overrideNew->{$item}) {
+					$res->{$item} = $overrideLive->{$item} = $overrideNew->{$item};
+				}
+			}
+			$orig->{'_override.live'} = $overrideLive;
+		}
+
+
+	# If there is no new override...
+	} else {
+		# Only if there was indeed one before...
+		if (defined(my $overrideLive = $orig->{'_override.live'})) {
+			# Make sure we set all the values back
+			foreach my $item (keys %{$overrideLive}) {
+				$res->{$item} = $orig->{$item};
+			}
+			# Blow the override away
+			delete($orig->{'_override.live'});
+		}
+	}
+
 
 	return $res;
 }
@@ -643,7 +752,7 @@ sub _process_limit_change
 		}
 	}
 	if ($isInvalid) {
-		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process limit change as not attributes is missing: '$isInvalid'");
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process limit change as thre is an attribute missing: '$isInvalid'");
 		return;
 	}
 
@@ -686,7 +795,7 @@ sub _process_limit_change
 	$limitChange->{'TrafficPriority'} = defined($limit->{'TrafficPriority'}) ? $limit->{'TrafficPriority'} : 5;
 
 	# Set when this entry expires
-	$limitChange->{'Expires'} = defined($limit->{'Expires'}) ? $limit->{'Expires'} : 0;
+	$limitChange->{'Expires'} = defined($limit->{'Expires'}) ? int($limit->{'Expires'}) : 0;
 
 	# Set friendly name and notes
 	$limitChange->{'FriendlyName'} = $limit->{'FriendlyName'};
@@ -704,19 +813,61 @@ sub _process_limit_change
 	$limitChange->{'Source'} = $limit->{'Source'};
 
 	# Create a unique limit identifier
-	my $limitUniq = $limit->{'Username'} . "/" . $limit->{'IP'};
+	my $limitID = sprintf('%s/%s',$limit->{'Username'},$limit->{'IP'});
 	# If we've not seen it
 	my $lid;
-	if (!defined($lid = $limitIDMap->{$limitUniq})) {
-		# Give it the next limitID in the list
-		$limitIDMap->{$limitUniq} = $lid = ++$limitIDCounter;
+	if (!defined($lid = $limitIDMap->{$limitID})) {
+		# Give it the next limit ID in the list
+		$limitIDMap->{$limitID} = $lid = ++$limitIDCounter;
 	}
 
 	# Set the user ID before we post to the change queue
 	$limitChange->{'ID'} = $lid;
 	$limitChange->{'LastUpdate'} = time();
 	# Push change to change queue
-	$changeQueue->{$lid} = $limitChange;
+	$limitChangeQueue->{$lid} = $limitChange;
+}
+
+
+# Process actual limit removal
+sub _process_limit_remove
+{
+	my ($kernel,$limit) = @_;
+
+	my $lid = $limit->{'ID'};
+
+
+	# If the entry is not live, remove it
+	if ($limit->{'_shaper.state'} == SHAPER_NOTLIVE || $limit->{'_shaper.state'} == SHAPER_PENDING) {
+		# Remove from system
+		delete($limits->{$lid});
+		# Set this UID as no longer using this IP
+		# NK: If we try remove it before the limit is actually removed we could get a reconnection causing this value
+		#     to be totally gone, which means we not tracking this limit using this IP anymore, not easily solved!!
+		delete($limitIPMap->{$limit->{'IP'}}->{$lid});
+		# Check if we can delete the IP too
+		if (keys %{$limitIPMap->{$limit->{'IP'}}} == 0) {
+			delete($limitIPMap->{$limit->{'IP'}});
+		}
+
+		# Remove from change queue
+		delete($limitChangeQueue->{$lid});
+
+	# If the entry is live, schedule shaper removal
+	} elsif ($limit->{'_shaper.state'} == SHAPER_LIVE) {
+		# Build a removal...
+		my $rlimit = {
+			'Username' => $limit->{'Username'},
+			'IP' => $limit->{'IP'},
+			'Status' => 'offline',
+			'LastUpdate' => time(),
+		};
+		# Queue removal
+		$limitChangeQueue->{$lid} = $rlimit;
+
+		# Post removal to shaper
+		$kernel->post('shaper' => 'remove' => $lid);
+	}
 }
 
 
@@ -729,7 +880,7 @@ sub _process_override_change
 	# Pull in mandatory items and check if the result is valid
 	my $overrideChange;
 	my $isValid = 0;
-	foreach my $item (OVERRIDE_REQUIRED_ATTRIBUTES) {
+	foreach my $item (OVERRIDE_MATCH_ATTRIBUTES) {
 		$overrideChange->{$item} = $override->{$item};
 		$isValid++;
 	}
@@ -761,7 +912,7 @@ sub _process_override_change
 	}
 
 	# Set when this entry expires
-	$overrideChange->{'Expires'} = defined($override->{'Expires'}) ? $override->{'Expires'} : 0;
+	$overrideChange->{'Expires'} = defined($override->{'Expires'}) ? int($override->{'Expires'}) : 0;
 
 	# Set friendly name and notes
 	$overrideChange->{'FriendlyName'} = $override->{'FriendlyName'};
@@ -772,16 +923,39 @@ sub _process_override_change
 
 	$overrideChange->{'LastUpdate'} = time();
 
-	# This is our key for this entry
-	my $oid = sprintf('%s%%%s%%%s',
-			defined($overrideChange->{'Username'}) ? $overrideChange->{'Username'} : "",
-			defined($overrideChange->{'IP'}) ? $overrideChange->{'IP'} : "",
-			defined($overrideChange->{'GroupID'}) ? $overrideChange->{'GroupID'} : ""
-	);
-	# Set the user ID before we post to the change queue
-	$overrideChange->{'Key'} = $oid;
+	# Create a unique override identifier, FriendlyName is unique
+	my $overrideID = $override->{'FriendlyName'};
+	# If we've not seen it
+	my $oid;
+	if (!defined($oid = $overrideIDMap->{$overrideID})) {
+		# Give it the next override ID in the list
+		$overrideIDMap->{$overrideID} = $oid = ++$overrideIDCounter;
+	}
+	$overrideChange->{'ID'} = $oid;
 
-	$overrides->{$oid} = $overrideChange;
+	$overrideChangeQueue->{$oid} = $overrideChange;
+}
+
+
+# Process actual override removal
+sub _process_override_remove
+{
+	my $override = shift;
+	my $oid = $override->{'ID'};
+
+
+	# Remove from system
+	delete($overrides->{$oid});
+	# Remove from change queue
+	delete($overrideChangeQueue->{$oid});
+	# Remove from map
+	delete($overrideMap->{$override->{'GroupID'}}->{$override->{'Username'}}->{$override->{'IP'}});
+	if (keys %{$overrideMap->{$override->{'GroupID'}}->{$override->{'Username'}}} < 1) {
+		delete($overrideMap->{$override->{'GroupID'}}->{$override->{'Username'}});
+	}
+	if (keys %{$overrideMap->{$override->{'GroupID'}}} < 1) {
+		delete($overrideMap->{$override->{'GroupID'}});
+	}
 }
 
 
@@ -815,23 +989,18 @@ sub _load_statefile
 		my $override = $stateHash{$section};
 
 		# Our user override
-		my $ouser;
+		my $coverride;
 		foreach my $attr (OVERRIDE_PERSISTENT_ATTRIBUTES) {
 			if (defined($override->{$attr})) {
-				$ouser->{$attr} = $override->{$attr};
+				$coverride->{$attr} = $override->{$attr};
 			}
 		}
 
-		# Check username, IP or gorup ID is defined
-		if (!defined($ouser->{'Key'})) {
-			$logger->log(LOG_WARN,"[CONFIGMANAGER] Failed to load override with no Key '$section'");
-			next;
-		}
-
-		$overrides->{$ouser->{'Key'}} = $ouser;
+		# Proces this override
+		_process_override_change($coverride);
 	}
 
-	# Loop with persistent users
+	# Loop with persistent limits
 	foreach my $section ($state->GroupMembers('persist')) {
 		my $user = $stateHash{$section};
 
@@ -866,45 +1035,45 @@ sub _write_statefile
 		return;
 	}
 
-	# Only write out if we actually have users, else we may of crashed?
-	if (keys %{$limits} < 1) {
-		$logger->log(LOG_WARN,"[CONFIGMANAGER] Not writing state file as there are no active users");
+	# Only write out if we actually have limits & overrides, else we may of crashed?
+	if (keys %{$limits} < 1 && keys %{$overrides} < 1) {
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Not writing state file as there are no active limits or overrides");
 		return;
 	}
 
 	# Create new state file object
 	my $state = new Config::IniFiles();
 
-	# Loop with persistent users, these are users with expires = 0
-	foreach my $lid (keys %{$limits}) {
+	# Loop with persistent limits, these are limits with expires = 0
+	while ((undef, my $limit) = each(%{$limits})) {
 		# Skip over expiring entries, we only want persistent ones
 		# XXX: Should we not just save all of them? load?
-		next if ($limits->{$lid}->{'Expires'});
+		next if ($limit->{'Expires'});
 		# Pull in the section name
-		my $section = "persist " . $limits->{$lid}->{'Username'};
+		my $section = "persist " . $limit->{'Username'};
 
 		# Add a new section for this user
 		$state->AddSection($section);
 		# Items we want for persistent entries
 		foreach my $pItem (LIMIT_PERSISTENT_ATTRIBUTES) {
 			# Set items up
-			if (defined(my $value = $limits->{$lid}->{$pItem})) {
+			if (defined(my $value = $limit->{$pItem})) {
 				$state->newval($section,$pItem,$value);
 			}
 		}
 	}
 
 	# Loop with overrides
-	foreach my $username (keys %{$overrides}) {
+	foreach my $oid (keys %{$overrides}) {
 		# Pull in the section name
-		my $section = "override " . $username;
+		my $section = "override " . $oid;
 
 		# Add a new section for this user
 		$state->AddSection($section);
 		# Items we want for override entries
 		foreach my $pItem (OVERRIDE_PERSISTENT_ATTRIBUTES) {
 			# Set items up
-			if (defined(my $value = $overrides->{$username}->{$pItem})) {
+			if (defined(my $value = $overrides->{$oid}->{$pItem})) {
 				$state->newval($section,$pItem,$value);
 			}
 		}
@@ -921,7 +1090,7 @@ sub _write_statefile
 }
 
 
-# Do the actual queue processing
+# Do the actual limit queue processing
 sub _process_limit_change_queue
 {
 	my $kernel = shift;
@@ -930,49 +1099,37 @@ sub _process_limit_change_queue
 	# Now
 	my $now = time();
 
-	#
-	# LOOP WITH CHANGES
-	#
-
-	foreach my $lid (keys %{$changeQueue}) {
+	# Loop with changes in queue
+	foreach my $lid (keys %{$limitChangeQueue}) {
 		# Changes for limit
 		# Minimum required info is:
 		# - Username
 		# - IP
 		# - Status
 		# - LastUpdate
-		my $climit = $changeQueue->{$lid};
+		my $climit = $limitChangeQueue->{$lid};
 
 		#
 		# LIMIT IN LIST
 		#
 		if (defined(my $glimit = $limits->{$lid})) {
+			my $updateShaper = 0;
 
 			# This is a new limit notification
 			if ($climit->{'Status'} eq "new") {
 				$logger->log(LOG_INFO,"[CONFIGMANAGER] Limit '$climit->{'Username'}' [$lid], limit already live but new state provided?");
-
-				# Get the changes we made and push them to the shaper
-				if (my $changes = _getLimitChangeset($glimit,$climit)) {
-					# Post to shaper
-					$kernel->post("shaper" => "change" => $lid => $changes);
-				}
+				$updateShaper = 1;
 
 				# Remove from change queue
-				delete($changeQueue->{$lid});
+				delete($limitChangeQueue->{$lid});
 
 			# Online or "ping" status notification
 			} elsif ($climit->{'Status'} eq "online") {
 				$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Limit '$climit->{'Username'}' [$lid], limit still online");
-
-				# Get the changes we made and push them to the shaper
-				if (my $changes = _getLimitChangeset($glimit,$climit)) {
-					# Post to shaper
-					$kernel->post("shaper" => "change" => $lid => $changes);
-				}
+				$updateShaper = 1;
 
 				# Remove from change queue
-				delete($changeQueue->{$lid});
+				delete($limitChangeQueue->{$lid});
 
 			# Offline notification, this we going to treat specially
 			} elsif ($climit->{'Status'} eq "offline") {
@@ -986,18 +1143,7 @@ sub _process_limit_change_queue
 					if ($glimit->{'_shaper.state'} == SHAPER_NOTLIVE) {
 						$logger->log(LOG_INFO,"[CONFIGMANAGER] Limit '$climit->{'Username'}' [$lid] offline and removed from shaper");
 
-						# Remove from system
-						delete($limits->{$lid});
-						# Remove from change queue
-						delete($changeQueue->{$lid});
-						# Set this UID as no longer using this IP
-						# NK: If we try remove it before the limit is actually removed we could get a reconnection causing this value
-						#     to be totally gone, which means we not tracking this limit using this IP anymore, not easily solved!!
-						delete($limitIPMap->{$glimit->{'IP'}}->{$lid});
-						# Check if we can delete the IP too
-						if (keys %{$limitIPMap->{$glimit->{'IP'}}} == 0) {
-							delete($limitIPMap->{$glimit->{'IP'}});
-						}
+						_process_limit_remove($kernel,$glimit);
 
 						# Next record, we don't want to do any updates below
 						next;
@@ -1006,8 +1152,7 @@ sub _process_limit_change_queue
 					} elsif ($glimit->{'_shaper.state'} == SHAPER_LIVE) {
 						$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Limit '$climit->{'Username'}' [$lid] offline, queue remove from shaper");
 
-						# Post removal to shaper
-						$kernel->post("shaper" => "remove" => $lid);
+						_process_limit_remove($kernel,$glimit);
 
 					} else {
 						$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Limit '$climit->{'Username'}' [$lid], limit in list, but offline now and".
@@ -1019,9 +1164,11 @@ sub _process_limit_change_queue
 			# Update the limit data
 			$glimit->{'Status'} = $climit->{'Status'};
 			$glimit->{'LastUpdate'} = $climit->{'LastUpdate'};
-			$glimit->{'Expires'} = $climit->{'Expires'};
 
 			# Set these if they exist
+			if (defined($climit->{'Expires'})) {
+				$glimit->{'Expires'} = $climit->{'Expires'};
+			}
 			if (defined($climit->{'FriendlyName'})) {
 				$glimit->{'FriendlyName'} = $climit->{'FriendlyName'};
 			}
@@ -1029,13 +1176,29 @@ sub _process_limit_change_queue
 				$glimit->{'Notes'} = $climit->{'Notes'};
 			}
 
-		#
-		# LIMIT NOT IN LIST
-		#
+			# If the group changed, re-apply the overrides
+			# Note: This MUST be done here BEFORE the changeset, so we post the shaper changes after the overrides take effect
+			if (defined($climit->{'GroupID'}) && $climit->{'GroupID'} != $glimit->{'GroupID'}) {
+				_resolve_overrides($lid);
+				$updateShaper = 1;
+			}
+			# If we need to post a shaper update, its time to calculate the changeset
+			if ($updateShaper) {
+				# Generate a changeset
+				if (my $changeset = _getAppliedLimitChangeset($glimit,$climit)) {
+					# Post it
+					$kernel->post('shaper' => 'change' => $lid => $changeset);
+				}
+			}
+
+
+		# Limit is not in the global list, must be an addition?
 		} else {
 			# We take new and online notifications the same way here if the limit is not in our global limit list already
 		   if (($climit->{'Status'} eq "new" || $climit->{'Status'} eq "online")) {
 				$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Processing new limit '$climit->{'Username'}' [$lid]");
+
+				my $updateShaper = 0;
 
 				# We first going to look for IP conflicts...
 				my @ipLimits = keys %{$limitIPMap->{$climit->{'IP'}}};
@@ -1054,7 +1217,7 @@ sub _process_limit_change_queue
 						push(@conflictUsernames,$limits->{$lid}->{'Username'});
 					}
 					# Output log line
-					$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process limit '".$climit->{'Username'}."' IP '$climit->{'IP'}' conflicts with users '".
+					$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process limit '".$climit->{'Username'}."' IP '$climit->{'IP'}' conflicts with limits '".
 							join(',',@conflictUsernames)."'.");
 
 					# We cannot trust shaping when there is more than 1 limit on the IP, so we going to remove all limits with this
@@ -1067,8 +1230,8 @@ sub _process_limit_change_queue
 							# If the limit is active or pending on the shaper, remove it
 							if ($glimit2->{'_shaper.state'} == SHAPER_LIVE || $glimit2->{'_shaper.state'} == SHAPER_PENDING) {
 								$logger->log(LOG_WARN,"[CONFIGMANAGER] Removing conflicted limit '".$glimit2->{'Username'}."' [$lid2] from shaper'");
-								# Post removal to shaper
-								$kernel->post("shaper" => "remove" => $lid2);
+								# Post removal to shaper, these are already in the shaper, so this is why we do it here and not after the overrides below
+								$kernel->post('shaper' => 'remove' => $lid2);
 								# Update that we're offline directly to global limit table
 								$glimit2->{'Status'} = 'conflict';
 							}
@@ -1079,8 +1242,7 @@ sub _process_limit_change_queue
 				} else {
 					# Post to the limit to the shaper
 					$climit->{'_shaper.state'} = SHAPER_PENDING;
-					$kernel->post("shaper" => "add" => $lid);
-
+					$updateShaper = 1;
 				}
 
 				# Set this UID as using this IP
@@ -1089,6 +1251,21 @@ sub _process_limit_change_queue
 				# This is now live
 				$limits->{$lid} = $climit;
 
+				# Resolve this limit's overrides, this works on the GLOBAL $limits!!
+				_resolve_overrides($lid);
+
+				# Just to keep things in the right order
+				if ($updateShaper) {
+					# We need a hack to blank the current shaping items so we can generate an initial changeset below
+					# dlimit - all attrs,  climit - our own limit, with attrs removed
+					my $dlimit; %{$dlimit} = %{$climit};
+					foreach my $item (LIMIT_CHANGESET_ATTRIBUTES) {
+						delete($climit->{$item});
+					}
+					my $changeset = _getAppliedLimitChangeset($climit,$dlimit);
+					$kernel->post('shaper' => 'add' => $lid => $changeset);
+				}
+
 			# Limit is not in our list and this is an unknown state we're trasitioning to
 			} else {
 				$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Ignoring limit '$climit->{'Username'}' [$lid] state '$climit->{'Status'}', not in our".
@@ -1096,7 +1273,7 @@ sub _process_limit_change_queue
 			}
 
 			# Remove from change queue
-			delete($changeQueue->{$lid});
+			delete($limitChangeQueue->{$lid});
 		}
 
 	}
@@ -1105,10 +1282,8 @@ sub _process_limit_change_queue
 	#
 	# CHECK OUT CONNECTED LIMITS
 	#
-	foreach my $lid (keys %{$limits}) {
-		# Global limit
-		my $glimit = $limits->{$lid};
-
+#FIXME: CLEANUP FUNCTION FOR THIS, RUN EVERY 5 MINS?
+	while ((my $lid, my $glimit) = each(%{$limits})) {
 		# Check for expired limits
 		if ($glimit->{'Expires'} && $glimit->{'Expires'} < $now) {
 			$logger->log(LOG_INFO,"[CONFIGMANAGER] Limit '$glimit->{'Username'}' has expired, marking offline");
@@ -1120,9 +1295,151 @@ sub _process_limit_change_queue
 				'LastUpdate' => $glimit->{'LastUpdate'},
 			};
 			# Add to change queue
-			$changeQueue->{$lid} = $climit;
+			$limitChangeQueue->{$lid} = $climit;
 		}
 	}
+}
+
+
+# Do the actual override queue processing
+sub _process_override_change_queue
+{
+	my $kernel = shift;
+
+
+	# Now
+	my $now = time();
+
+	# Overrides changed
+	my $overridesChanged = 0;
+
+	# Loop with override change queue
+	foreach my $oid (keys %{$overrideChangeQueue}) {
+		my $coverride = $overrideChangeQueue->{$oid};
+
+		# Blank attributes not specified
+		foreach my $attr (OVERRIDE_MATCH_ATTRIBUTES) {
+			if (!defined($coverride->{$attr})) {
+				$coverride->{$attr} = '';
+			}
+		}
+
+		# This is now live
+		$overrides->{$oid} = $coverride;
+		$overrideMap->{$coverride->{'GroupID'}}->{$coverride->{'Username'}}->{$coverride->{'IP'}} = $coverride;
+
+		# Remove from change queue
+		delete($overrideChangeQueue->{$oid});
+
+		$overridesChanged = 1;
+	}
+
+#FIXME: CLEANUP FUNCTION FOR THIS, RUN EVERY 5 MINS?
+	# Check for expired overides
+	while ((undef, my $goverride) = each(%{$overrides})) {
+		# Check for expired overrides
+		if ($goverride->{'Expires'} && $goverride->{'Expires'} < $now) {
+			$logger->log(LOG_INFO,"[CONFIGMANAGER] Override 'Username: %s, IP: %s' has expired, removing",
+				$goverride->{'Username'},
+				$goverride->{'IP'},
+			);
+
+			# Remove the override
+			_process_override_remove($goverride);
+
+			$overridesChanged = 1;
+		}
+
+	}
+
+	# If something changed, resolve overrides again
+	# XXX: maybe we can be more efficient here?
+	if ($overridesChanged) {
+		_resolve_overrides_and_post($kernel);
+	}
+}
+
+
+# This function calls _resolve_overrides() plus posts events to the shaper
+sub _resolve_overrides_and_post
+{
+	my ($kernel,$lid) = @_;
+
+
+	# Check if any items actually were changed
+	my @changed;
+	if (!(@changed = _resolve_overrides())) {
+		return;
+	}
+
+	# If so generate a changeset, with no limit change (resolves overrides internally) and post it
+	foreach my $lid (@changed) {
+		# Get our changeset, with no limit applied to it
+		if (my $changeset = _getAppliedLimitChangeset($limits->{$lid},{})) {
+			# Post to shaper
+			$kernel->post('shaper' => 'change' => $lid => $changeset);
+		}
+	}
+}
+
+
+# Resolve all overrides and post limit changes if any match
+# We take 1 optional argument, which is a single limit to process
+sub _resolve_overrides
+{
+	my $lid = shift;
+
+
+	# Hack to intercept and create a single element hash
+	my $limitHash;
+	if (defined($lid)) {
+		$limitHash->{$lid} = $limits->{$lid};
+	} else {
+		$limitHash = $limits;
+	}
+
+	# Loop with all limits, keep a list of lid's updated
+	my @overridden;
+	while ((my $lid, my $limit) = each(%{$limitHash})) {
+		my $overrideResult;
+
+		# Loop with the attributes in matching order
+		foreach my $attrSet (OVERRIDE_MATCH_CRITERIA) {
+			# Start with a blank match
+			my $criteria = { 'GroupID' => '', 'Username' => '', 'IP' => '' };
+
+			# Build match from user
+			foreach my $attr (@{$attrSet}) {
+				if ($attr ne '') {
+					$criteria->{$attr} = $limit->{$attr};
+				}
+			}
+
+			# Check for match
+			if (
+					defined($overrideMap->{$criteria->{'GroupID'}}) && defined($overrideMap->{$criteria->{'GroupID'}}->{$criteria->{'Username'}}) &&
+					defined(my $moverride = $overrideMap->{$criteria->{'GroupID'}}->{$criteria->{'Username'}}->{$criteria->{'IP'}})
+			) {
+				# Apply attributes to override result
+				foreach my $attr (OVERRIDE_CHANGESET_ATTRIBUTES) {
+					# Merge in attribute if the matched override has it set
+					if (defined($moverride->{$attr})) {
+						$overrideResult->{$attr} = $moverride->{$attr};
+					}
+				}
+			}
+		}
+
+		# if we have an override result, it means we matched something
+		# If we don't have an overrideResult, and we had one, it means something changed too
+		if (defined($overrideResult) || defined($limit->{'override'})) {
+			push(@overridden,$lid);
+		}
+
+		$limit->{'override'} = $overrideResult;
+	}
+
+	return @overridden;
 }
 
 
