@@ -406,12 +406,10 @@ EOF
 		$trafficClassStr .= '<option value="'.$classID.'" '.$selected.'>'.$trafficClasses->{$classID}.'</option>';
 	}
 
-	# Make expires look nicer
-	my $expiresStr = "";
-	if (defined($formData->{'Expires'}) && $formData->{'Expires'} > 0) {
-		$expiresStr = $formData->{'Expires'};
+	# Blank expires if its 0
+	if (defined($formData->{'Expires'}) && $formData->{'Expires'} eq "0") {
+		$formData->{'Expires'} = "";
 	}
-
 
 	#
 	# Page content
@@ -523,7 +521,7 @@ EOF
 		<label for="Expires" class="col-lg-2 control-label">Expires</label>
 		<div class="row">
 			<div class="col-lg-2">
-				<input name="Expires" type="text" placeholder="Expires" class="form-control" value="$expiresStr" />
+				<input name="Expires" type="text" placeholder="Expires" class="form-control" value="$formData->{'Expires'}" />
 			</div>
 			<div class="col-lg-2">
 				<select name="inputExpires.modifier" class="form-control" value="$formData->{'inputExpires.modifier'}">
