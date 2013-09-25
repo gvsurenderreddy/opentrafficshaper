@@ -146,8 +146,8 @@ EOF
 
 		my $lidEncoded = encode_entities($limit->{'ID'});
 
-		my $usernameEncoded = encode_entities($limit->{'Username'});
-		my $usernameEscaped = uri_escape($limit->{'Username'});
+		my $name = (defined($limit->{'FriendlyName'}) && $limit->{'FriendlyName'} ne "") ? $limit->{'FriendlyName'} : $limit->{'Username'};
+		my $usernameEncoded = encode_entities($name);
 
 		my $classStr = getTrafficClassName($limit->{'ClassID'});
 
@@ -201,7 +201,7 @@ EOF
 			<td>$cirStr</td>
 			<td>$limitStr</td>
 			<td>
-				<a href="/statistics/by-username?username=$usernameEscaped"><span class="glyphicon glyphicon-stats"></span></a>
+				<a href="/statistics/by-limit?lid=$lidEncoded"><span class="glyphicon glyphicon-stats"></span></a>
 				<a href="/limits/limit-edit?lid=$lidEncoded"><span class="glyphicon glyphicon-wrench"></span></a>
 				$removeLink
 			</td>
@@ -326,7 +326,6 @@ sub limit_addedit
 		}
 	}
 
-
 	#
 	# If we already have data, lets check how valid it is...
 	#
@@ -367,15 +366,15 @@ sub limit_addedit
 			# Check the modifier
 			} else {
 				# Check if its defined
-				if (defined($formData->{'inputExpiresModifier'}) && $formData->{'inputExpiresModifier'} ne "") {
+				if (defined($formData->{'inputExpires.modifier'}) && $formData->{'inputExpires.modifier'} ne "") {
 					# Minutes
-					if ($formData->{'inputExpiresModifier'} eq "m") {
+					if ($formData->{'inputExpires.modifier'} eq "m") {
 						$expires *= 60;
 					# Hours
-					} elsif ($formData->{'inputExpiresModifier'} eq "h") {
+					} elsif ($formData->{'inputExpires.modifier'} eq "h") {
 						$expires *= 3600;
 					# Days
-					} elsif ($formData->{'inputExpiresModifier'} eq "d") {
+					} elsif ($formData->{'inputExpires,modifier'} eq "d") {
 						$expires *= 86400;
 					} else {
 						push(@errors,"Expires modifier is not valid");
@@ -419,7 +418,7 @@ sub limit_addedit
 					$formType,
 					prettyUndef($username),
 					prettyUndef($ipAddress),
-					undef,
+					prettyUndef(undef),
 					prettyUndef($classID),
 					prettyUndef($trafficLimitTx),
 					prettyUndef($trafficLimitRx),
@@ -465,10 +464,9 @@ EOF
 		$trafficClassStr .= '<option value="'.$classID.'" '.$selected.'>'.$trafficClasses->{$classID}.'</option>';
 	}
 
-	# Make expires look nicer
-	my $expiresStr = "";
-	if (defined($formData->{'Expires'}) && $formData->{'Expires'} > 0) {
-		$expiresStr = $formData->{'Expires'};
+	# Blank expires if its 0
+	if (defined($formData->{'Expires'}) && $formData->{'Expires'} eq "0") {
+		$formData->{'Expires'} = "";
 	}
 
 	#
@@ -515,7 +513,7 @@ EOF
 		<label for="Expires" class="col-lg-2 control-label">Expires</label>
 		<div class="row">
 			<div class="col-lg-2">
-				<input name="Expires" type="text" placeholder="Opt. Expires" class="form-control" value="$expiresStr" />
+				<input name="Expires" type="text" placeholder="Opt. Expires" class="form-control" value="$formData->{'Expires'}" />
 			</div>
 			<div class="col-lg-2">
 				<select name="inputExpires.modifier" class="form-control" value="$formData->{'inputExpires.modifier'}">
