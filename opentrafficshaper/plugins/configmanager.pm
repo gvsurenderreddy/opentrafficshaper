@@ -55,6 +55,8 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 		getTrafficClassName
 
 		isTrafficClassValid
+
+		getDefaultPoolConfig
 );
 
 use constant {
@@ -152,12 +154,13 @@ my $globals;
 my $logger;
 
 # Configuration for this plugin
-my $config = {
+our $config = {
 	# Use default pool for unclassified traffic
-	'use_default_pool' => 0,
-	'default_pool_txrate' => undef,
-	'default_pool_rxrate' => undef,
-	'default_pool_priority' => 10,
+	#	'classid'
+	#	'txrate'
+	#	'rxrate'
+	'default_pool' => undef,
+
 	# Traffic groups
 	'groups' => {
 		1 => 'Default'
@@ -310,30 +313,57 @@ sub plugin_init
 	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Loading traffic classes completed.");
 
 	# Check if we using a default pool or not
-	if (defined(my $dp = booleanize($globals->{'file.config'}->{'shaping'}->{'use_default_pool'}))) {
-		# If we are using the default pool, load the limits
-		if ($config->{'use_default_pool'} = $dp) {
-			# Pull in both config items
-			if (defined(my $txir = $globals->{'file.config'}->{'shaping'}->{'default_pool_txrate'})) {
-				$logger->log(LOG_INFO,"[CONFIGMANAGER] Set default_pool_txrate to '$txir'");
-				$config->{'default_pool_txrate'} = isNumber($txir);
-			} else {
-				$logger->log(LOG_WARN,"[CONFIGMANAGER] There is a problem with default_pool_txrate, config item use_default_pool disabled");
-			}
-			if (defined(my $rxir = $globals->{'file.config'}->{'shaping'}->{'default_pool_rxrate'})) {
-				$logger->log(LOG_INFO,"[CONFIGMANAGER] Set default_pool_rxrate to '$rxir'");
-				$config->{'default_pool_rxrate'} = isNumber($rxir);
-			} else {
-				$logger->log(LOG_WARN,"[CONFIGMANAGER] There is a problem with default_pool_rxrate, config item use_default_pool disabled");
-			}
-			# Check we have both items configured, if not deconfigure
-			if (!defined($config->{'default_pool_txrate'}) || !defined($config->{'default_pool_rxrate'})) {
-				$config->{'use_default_pool'} = 0;
-			}
+	my $use_default_pool;
+	# Check if its a number
+	if (defined(my $var = isNumber($globals->{'file.config'}->{'shaping'}->{'use_default_pool'}))) {
+		if (defined($config->{'classes'}->{$var})) {
+			$logger->log(LOG_INFO,"[CONFIGMANAGER] Default pool set to use class $var '%s'",$config->{'classes'}->{$var});
+			$use_default_pool = $var;
+		} else {
+			$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot enable default pool, class $var does not exist");
+			$use_default_pool = 0;
 		}
 	}
-	$logger->log(LOG_INFO,"[CONFIGMANAGER] Using of default pool ". ( $config->{'use_default_pool'} ?
-			"ENABLED with rates $config->{'default_pool_txrate'}/$config->{'default_pool_rxrate'}" : "DISABLED" )  );
+	# If use_default_pool is still not defined...
+	if (!defined($use_default_pool) && defined(my $var = booleanize($globals->{'file.config'}->{'shaping'}->{'use_default_pool'}))) {
+		# Check if we have a "yes" first of all
+		if ($var) {
+			$logger->log(LOG_INFO,"[CONFIGMANAGER] Default pool requested, but no class provided, defaulting to 10");
+			$use_default_pool = 10;
+			# Inject the class
+			$config->{'classes'}->{$use_default_pool} = "-UNCLASSIFIED-";
+			$logger->log(LOG_INFO,"[CONFIGMANAGER] Injected traffic class '-UNCLASSIFIED-' with ID $use_default_pool.");
+		}
+	}
+	# If its defined by something above, its time to use it
+	if (defined($use_default_pool) && $use_default_pool > 0) {
+		# If we are using the default pool, load the limits
+
+		# Pull in both config items
+		my $txrate;
+		my $rxrate;
+		if (defined($txrate = $globals->{'file.config'}->{'shaping'}->{'default_pool_txrate'})) {
+			$logger->log(LOG_INFO,"[CONFIGMANAGER] Set default_pool_txrate to '$txrate'");
+			$txrate = isNumber($txrate);
+		} else {
+			$logger->log(LOG_WARN,"[CONFIGMANAGER] There is a problem with default_pool_txrate, config item use_default_pool disabled");
+		}
+		if (defined($rxrate = $globals->{'file.config'}->{'shaping'}->{'default_pool_rxrate'})) {
+			$logger->log(LOG_INFO,"[CONFIGMANAGER] Set default_pool_rxrate to '$rxrate'");
+			$rxrate = isNumber($rxrate);
+		} else {
+			$logger->log(LOG_WARN,"[CONFIGMANAGER] There is a problem with default_pool_rxrate, config item use_default_pool disabled");
+		}
+		# Check we have both items configured, if not deconfigure
+		if (defined($txrate) && defined($rxrate)) {
+			$config->{'default_pool'}->{'classid'} = $use_default_pool;
+			$config->{'default_pool'}->{'txrate'} = $txrate;
+			$config->{'default_pool'}->{'rxrate'} = $rxrate;
+			$logger->log(LOG_INFO,"[CONFIGMANAGER] Using of default pool ENABLED with rates $txrate/$rxrate and class ID $use_default_pool");
+		} else {
+			$logger->log(LOG_INFO,"[CONFIGMANAGER] Using of default pool DISABLED");
+		}
+	}
 
 	# Check if we have a state file
 	if (defined(my $statefile = $globals->{'file.config'}->{'system'}->{'statefile'})) {
@@ -649,6 +679,17 @@ sub isTrafficClassValid
 }
 
 
+# Function to return our default pool configuration
+sub getDefaultPoolConfig
+{
+	if (defined($config->{'default_pool'})) {
+		my %config = %{$config->{'default_pool'}};
+		return \%config;
+	}
+	return undef;
+}
+
+
 # Handle SIGHUP
 sub handle_SIGHUP
 {
@@ -741,7 +782,6 @@ sub _getAppliedLimitChangeset
 sub _process_limit_change
 {
 	my $limit = shift;
-
 
 	# Check if we have all the attributes we need
 	my $isInvalid;

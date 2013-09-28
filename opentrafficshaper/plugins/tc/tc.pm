@@ -31,6 +31,8 @@ use opentrafficshaper::utils;
 use opentrafficshaper::plugins::configmanager qw(
 		getLimit getLimitAttribute setLimitAttribute removeLimitAttribute
 		getShaperState setShaperState
+		getTrafficClasses
+		getDefaultPoolConfig
 );
 
 
@@ -58,6 +60,13 @@ use constant {
 	PRIO_RATE_LIMIT => 20,
 	PRIO_RATE_BURST_MIN => 32,  # With a minimum burst of 40KiB
 	PRIO_RATE_BURST_MAXM => 1.5,  # Multiplier for burst min to get to burst max
+
+	TC_CLASS_BASE => 10,
+	TC_CLASS_LIMIT_BASE => 100,
+
+	TC_PRIO_BASE => 10,
+
+	TC_FILTER_LIMIT_BASE => 100,
 };
 
 
@@ -146,14 +155,10 @@ sub plugin_init
 	# Initialize TX interface
 	$logger->log(LOG_INFO,"[TC] Queuing tasks to initialize '$config->{'txiface'}'");
 	_tc_iface_init($changeSet,$config->{'txiface'},$config->{'txiface_rate'});
-	_tc_class_optimize($changeSet,$config->{'txiface'},3,$config->{'txiface_rate'}*1024); # Rate is in mbit
-	_tc_iface_optimize($changeSet,$config->{'txiface'},3,3,$config->{'txiface_rate'});
 
 	# Initialize RX interface
 	$logger->log(LOG_INFO,"[TC] Queuing tasks to initialize '$config->{'rxiface'}'");
 	_tc_iface_init($changeSet,$config->{'rxiface'},$config->{'rxiface_rate'});
-	_tc_class_optimize($changeSet,$config->{'rxiface'},3,$config->{'rxiface_rate'}*1024); # Rate is in mbit
-	_tc_iface_optimize($changeSet,$config->{'rxiface'},3,3,$config->{'rxiface_rate'});
 
 	_task_add_to_queue($changeSet);
 
@@ -466,6 +471,9 @@ sub do_add
 	if (defined($changes->{'TrafficLimitTx'}) && defined($changes->{'TrafficLimitRx'})) {
 		# Build limit tc class ID
 		my $tcClass  = getTcClass($lid);
+		# Get parent tc class
+		my $classID = $changes->{'ClassID'};
+		my $parentTcClass = getParentTcClassFromClassID($classID);
 		# Grab some hash table ID's we need
 		my $ip3HtHex = $tcFilterMappings->{$ip1}->{$ip2}->{$ip3}->{'id'};
 		my $ip4Hex = toHex($ip4);
@@ -484,7 +492,7 @@ sub do_add
 		$changeSet->add([
 				'/sbin/tc','class','add',
 					'dev',$config->{'txiface'},
-					'parent','1:2',
+					'parent',"1:$parentTcClass",
 					'classid',"1:$tcClass",
 					'htb',
 						'rate', $changes->{'TrafficLimitTx'} . "kbit",
@@ -494,7 +502,7 @@ sub do_add
 		$changeSet->add([
 				'/sbin/tc','class','add',
 					'dev',$config->{'rxiface'},
-					'parent','1:2',
+					'parent',"1:$parentTcClass",
 					'classid',"1:$tcClass",
 					'htb',
 						'rate', $changes->{'TrafficLimitRx'} . "kbit",
@@ -577,12 +585,10 @@ sub do_change
 	$logger->log(LOG_INFO,"[TC] Processing changes for '$limit->{'Username'}' [$lid]");
 
 	# Pull in values we need
-	my $classID;
-	if (defined($changes->{'ClassID'})) {
+	my $classID = getLimitAttribute($lid,'tc.live.ClassID');
+	if (defined($changes->{'ClassID'}) && $changes->{'ClassID'} ne $classID) {
 		$classID = $changes->{'ClassID'};
 		setLimitAttribute($lid,'tc.live.ClassID',$classID);
-	} else {
-		$classID = getLimitAttribute($lid,'tc.live.ClassID');
 	}
 
 	my $trafficLimitTx;
@@ -626,11 +632,14 @@ sub do_change
 	my $tcClass = getLimitAttribute($lid,'tc.class');
 
 
+	my $parentTcClass = getParentTcClassFromClassID($classID);
+
+
 	my $changeSet = TC::ChangeSet->new();
 	$changeSet->add([
 			'/sbin/tc','class','change',
 				'dev',$config->{'txiface'},
-				'parent','1:2',
+				'parent',"1:$parentTcClass",
 				'classid',"1:$tcClass",
 				'htb',
 					'rate', $trafficLimitTx . "kbit",
@@ -640,14 +649,13 @@ sub do_change
 	$changeSet->add([
 			'/sbin/tc','class','change',
 				'dev',$config->{'rxiface'},
-				'parent','1:2',
+				'parent',"1:$parentTcClass",
 				'classid',"1:$tcClass",
 				'htb',
 					'rate', $trafficLimitRx . "kbit",
 					'ceil', $trafficLimitRxBurst . "kbit",
 					'prio', $trafficPriority,
 	]);
-
 	# Post changeset
 	$kernel->post("_tc" => "queue" => $changeSet);
 }
@@ -670,9 +678,13 @@ sub do_remove
 
 	$logger->log(LOG_INFO,"[TC] Remove '$limit->{'Username'}' [$lid]");
 
-	# Grab ClassID
+	# Grab varaibles we need to make this happen
 	my $tcClass = getLimitAttribute($lid,'tc.class');
 	my $filterHandle = getLimitAttribute($lid,'tc.filter');
+
+	my $classID = getLimitAttribute($lid,'tc.live.ClassID');
+	my $parentTcClass = getParentTcClassFromClassID($classID);
+
 
 	# Clear up the filter
 	$changeSet->add([
@@ -697,13 +709,13 @@ sub do_remove
 	$changeSet->add([
 			'/sbin/tc','class','del',
 				'dev',$config->{'txiface'},
-				'parent','1:2',
+				'parent',"1:$parentTcClass",
 				'classid',"1:$tcClass",
 	]);
 	$changeSet->add([
 			'/sbin/tc','class','del',
 				'dev',$config->{'rxiface'},
-				'parent','1:2',
+				'parent',"1:$parentTcClass",
 				'classid',"1:$tcClass",
 	]);
 
@@ -733,8 +745,8 @@ sub getTcFilter
 	# Generate new number
 	if (!$id) {
 		$id = keys %{$tcFilters->{'track'}};
-		# Bump ID up by 10
-		$id += 100;
+		# Bump ID up
+		$id += TC_FILTER_LIMIT_BASE;
 		# We cannot use ID 800, its internal
 		$id = 801 if ($id == 800);
 		# Hex it
@@ -759,6 +771,14 @@ sub disposeTcFilter
 }
 
 
+# Function to get TC parent class from ClassID
+sub getParentTcClassFromClassID
+{
+	my $cid = shift;
+
+	return toHex($cid + TC_CLASS_BASE);;
+}
+
 # Function to get next available TC class
 sub getTcClass
 {
@@ -770,7 +790,7 @@ sub getTcClass
 	# Generate new number
 	if (!$id) {
 		$id = keys %{$tcClasses->{'track'}};
-		$id += 100;
+		$id += TC_CLASS_LIMIT_BASE;
 		# Hex it
 		$id = toHex($id);
 	}
@@ -832,19 +852,32 @@ sub _tc_iface_init
 	# Work out rates
 	my $BERate = int($rate/10); # We use 10% of the rate for Best effort
 	my $CIRate = $rate - $BERate; # Rest is for our clients
+	# Config that may change...
+	my @rootConfig = ();
+
 
 	$changeSet->add([
 			'/sbin/tc','qdisc','del',
 				'dev',$iface,
 				'root',
 	]);
+
+	# Do we have a default pool? if so we must direct traffic there
+	my $defaultPool = getDefaultPoolConfig();
+	my $defaultPoolClass;
+	if ($defaultPool) {
+		# Push unclassified traffic to this class
+		$defaultPoolClass = getParentTcClassFromClassID($defaultPool->{'classid'});
+		push(@rootConfig,'default',$defaultPoolClass);
+	}
+
 	$changeSet->add([
 			'/sbin/tc','qdisc','add',
 				'dev',$iface,
 				'root',
 				'handle','1:',
 				'htb',
-					'default','3' # Push any unclassified traffic to 1:3
+					@rootConfig
 	]);
 	$changeSet->add([
 			'/sbin/tc','class','add',
@@ -854,39 +887,56 @@ sub _tc_iface_init
 				'htb',
 					'rate',"${rate}mbit",
 	]);
-	$changeSet->add([
-			'/sbin/tc','class','add',
-				'dev',$iface,
-				'parent','1:1',
-				'classid','1:2',
-				'htb',
-					'rate',"${CIRate}mbit",
-					'ceil',"${rate}mbit",
-					# Highest priority
-					'prio','5',
-	]);
-	$changeSet->add([
-			'/sbin/tc','class','add',
-				'dev',$iface,
-				'parent','1:1',
-				'classid','1:3',
-				'htb',
-					'rate',"${BERate}mbit",
-					'ceil',"${rate}mbit",
-					# Lowest priority
-					'prio','7',
-	]);
+
+	my $classes = getTrafficClasses();
+	my $lastClassUsed = 0;
+	foreach my $classID (keys %{$classes}) {
+		my $parentTcClass = getParentTcClassFromClassID($classID);
+
+		# Add class
+		$changeSet->add([
+				'/sbin/tc','class','add',
+					'dev',$iface,
+					'parent','1:1',
+					'classid',"1:$parentTcClass",
+					'htb',
+						'rate',"${BERate}mbit",
+						'ceil',"${rate}mbit",
+		]);
+		# Bump if we ascending in class ID's...
+		if ($classID > $lastClassUsed) {
+			$lastClassUsed = $classID;
+		}
+	}
+
+	# Process our default pool traffic optimizations
+	if (defined($defaultPool)) {
+		# XXX: Bit dirty - Work out which rate to use
+		my $rateItem;
+		if ($iface eq $config->{'txiface'}) {
+			$rateItem = "txrate";
+		} elsif ($iface eq $config->{'rxiface'}) {
+			$rateItem = "rxrate";
+		}
+		# If we have a rate for this iface, then use it
+		if (defined($rateItem)) {
+			_tc_class_optimize($changeSet,$iface,$defaultPoolClass,$defaultPool->{$rateItem});
+			# This is going to add queue diciplines for our 3 bands
+			_tc_iface_optimize($changeSet,$lastClassUsed,$iface,$defaultPoolClass,$defaultPool->{$rateItem});
+		}
+	}
 }
 
 
 # Function to apply SFQ to the interface priority classes
+# XXX: This probably needs working on
 sub _tc_iface_optimize
 {
-	my ($changeSet,$iface,$prioClass,$prioCount,$rate) = @_;
+	my ($changeSet,$lastClassUsed,$iface,$parentClass,$rate) = @_;
 
 
 	# Make the queue size big enough
-	my $queueSize = ($rate * 1024 * 1024) / 8;
+	my $queueSize = ($rate * 1024) / 8;
 
 	# RED metrics (sort of as per manpage)
 	my $redAvPkt = 1000;
@@ -895,13 +945,14 @@ sub _tc_iface_optimize
 	my $redBurst = int( ($redMin+$redMin+$redMax) / (4*$redAvPkt));
 	my $redLimit = $queueSize;
 
-	# Use $i as an increasing number to be added to the base class
+	# Priority band
 	my $i = 1;
+
 	$changeSet->add([
 			'/sbin/tc','qdisc','add',
 				'dev',$iface,
-				'parent',"$prioClass:$i",
-				'handle',$prioClass+$i.":",
+				'parent',"$parentClass:".toHex($i),
+				'handle',getParentTcClassFromClassID($lastClassUsed+$i).":",
 				'bfifo',
 					'limit',$queueSize,
 	]);
@@ -910,8 +961,8 @@ sub _tc_iface_optimize
 	$changeSet->add([
 			'/sbin/tc','qdisc','add',
 				'dev',$iface,
-				'parent',"$prioClass:$i",
-				'handle',$prioClass+$i.":",
+				'parent',"$parentClass:".toHex($i),
+				'handle',getParentTcClassFromClassID($lastClassUsed+$i).":",
 # FIXME: NK - try enable the below
 #				'estimator','1sec','4sec', # Quick monitoring, every 1s with 4s constraint
 				'red',
@@ -933,8 +984,8 @@ sub _tc_iface_optimize
 	$changeSet->add([
 			'/sbin/tc','qdisc','add',
 				'dev',$iface,
-				'parent',"$prioClass:$i",
-				'handle',$prioClass+$i.":",
+				'parent',"$parentClass:".toHex($i),
+				'handle',getParentTcClassFromClassID($lastClassUsed+$i).":",
 				'red',
 					'min',$redMin,
 					'max',$redMax,
@@ -947,6 +998,7 @@ sub _tc_iface_optimize
 
 
 # Function to apply traffic optimizations to a classes
+# XXX: This probably needs working on
 sub _tc_class_optimize
 {
 	my ($changeSet,$iface,$tcClass,$rate) = @_;
@@ -975,7 +1027,6 @@ sub _tc_class_optimize
 					'bands','3',
 					'priomap','2','2','2','2','2','2','2','2','2','2','2','2','2','2','2','2',
 	]);
-
 
 	#
 	# CLASSIFICATIONS
@@ -1413,6 +1464,7 @@ sub task_run_next
 		my $task = POE::Wheel::Run->new(
 			Program => [ '/sbin/tc', '-force', '-batch' ],
 			Conduit => 'pipe',
+#			Program => [ '/root/tc.sh' ],
 			StdioFilter => POE::Filter::Line->new( Literal => "\n" ),
 			StderrFilter => POE::Filter::Line->new( Literal => "\n" ),
 			StdoutEvent => 'task_child_stdout',
