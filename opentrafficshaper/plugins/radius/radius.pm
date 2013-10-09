@@ -299,7 +299,7 @@ sub session_read
 	$kernel->post("configmanager" => "process_limit_change" => $user);
 
 	$logger->log(LOG_INFO,"[RADIUS] Code: $user->{'Status'}, User: $user->{'Username'}, IP: $user->{'IP'}, Group: $user->{'GroupID'}, Class: $user->{'ClassID'}, ".
-			"Limits: ".prettyUndef($trafficLimitTx)."/".prettyUndef($trafficLimitRx).", Burst: ".prettyUndef($trafficLimitTxBurst)."/".prettyUndef($trafficLimitRxBurst));
+			"CIR: ".prettyUndef($trafficLimitTx)."/".prettyUndef($trafficLimitRx).", Limit: ".prettyUndef($trafficLimitTxBurst)."/".prettyUndef($trafficLimitRxBurst));
 }
 
 
