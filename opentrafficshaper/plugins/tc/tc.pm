@@ -33,6 +33,7 @@ use opentrafficshaper::plugins::configmanager qw(
 		getShaperState setShaperState
 		getTrafficClasses
 		getDefaultPoolConfig
+		isTrafficClassValid
 );
 
 
@@ -842,6 +843,15 @@ sub getConfigRxIface
 	return $config->{'rxiface'};
 }
 
+sub isTcTrafficClassValid
+{
+	my $class = shift;
+
+	my $classID = hex($class) - TC_CLASS_BASE;
+
+	return isTrafficClassValid($classID);
+}
+
 
 # Function to initialize an interface
 sub _tc_iface_init
@@ -902,6 +912,7 @@ sub _tc_iface_init
 					'htb',
 						'rate',"${BERate}mbit",
 						'ceil',"${rate}mbit",
+						'prio',$classID,
 		]);
 		# Bump if we ascending in class ID's...
 		if ($classID > $lastClassUsed) {
@@ -1395,7 +1406,6 @@ sub _task_add_to_queue
 		$numChanges++;
 	}
 
-	# Shove task on list
 	$logger->log(LOG_DEBUG,"[TC] TASK: Queued $numChanges changes");
 }
 
@@ -1431,8 +1441,7 @@ sub task_add
 	# Internal function to add command to queue
 	_task_add_to_queue($changeSet);
 
-	# Trigger a run if list is empty
-	#if (@taskQueue < 2) {
+	# Trigger a run if list is not empty
 	if (@taskQueue) {
 		$kernel->yield("task_run_next");
 	}
