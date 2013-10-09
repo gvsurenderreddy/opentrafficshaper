@@ -68,6 +68,8 @@ use constant {
 	# How often our config check ticks
 	TICK_PERIOD => 5,
 
+	# Cleanup interval
+	CLEANUP_INTERVAL => 300,
 };
 
 # Mandatory config attributes
@@ -173,7 +175,8 @@ our $config = {
 	'statefile' => '/var/lib/opentrafficshaper/configmanager.state',
 };
 
-
+# Last time the cleanup ran
+my $lastCleanup = time();
 
 #
 # LIMITS
@@ -251,6 +254,8 @@ my $overrides = { };
 my $overrideMap = { };
 my $overrideIDMap = { };
 my $overrideIDCounter = 1;
+
+
 
 
 # Initialize plugin
@@ -460,8 +465,29 @@ sub session_tick
 {
 	my $kernel = $_[KERNEL];
 
-	_process_override_change_queue($kernel);
+	my $now = time();
+	my $overridesChanged = 0;
+
+	# Process queues
+	if (_process_override_change_queue($kernel)) {
+		$overridesChanged++;
+	}
 	_process_limit_change_queue($kernel);
+
+	# Check if we must run cleanups
+	if ($lastCleanup + CLEANUP_INTERVAL < $now) {
+		_process_limit_cleanup($kernel);
+		# Bump up overridesChanged if something changed
+		if (_process_override_cleanup($kernel)) {
+			$overridesChanged++;
+		}
+		$lastCleanup = $now;
+	}
+
+	# If overrides changed, we need to reprocess all limits
+	if ($overridesChanged) {
+		_resolve_overrides_and_post($kernel);
+	}
 
 	# Reset tick
 	$kernel->delay(tick => TICK_PERIOD);
@@ -473,6 +499,7 @@ sub process_limit_change
 	my ($kernel, $limit) = @_[KERNEL, ARG0];
 
 	_process_limit_change($limit);
+	_process_limit_change_queue($kernel);
 }
 
 # Process limit remove
@@ -481,6 +508,7 @@ sub process_limit_remove
 	my ($kernel, $limit) = @_[KERNEL, ARG0];
 
 	_process_limit_remove($kernel,$limit);
+	_process_limit_change_queue($kernel);
 }
 
 # Process override change
@@ -489,6 +517,10 @@ sub process_override_change
 	my ($kernel, $override) = @_[KERNEL, ARG0];
 
 	_process_override_change($override);
+	# If something changed, reprocess the limits
+	if (_process_override_change_queue($kernel)) {
+		_resolve_overrides_and_post($kernel);
+	}
 }
 
 # Process override remove
@@ -497,6 +529,7 @@ sub process_override_remove
 	my ($kernel, $override) = @_[KERNEL, ARG0];
 
 	_process_override_remove($override);
+	_process_override_change_queue($kernel);
 	_resolve_overrides_and_post($kernel);
 }
 
@@ -782,6 +815,7 @@ sub _getAppliedLimitChangeset
 sub _process_limit_change
 {
 	my $limit = shift;
+
 
 	# Check if we have all the attributes we need
 	my $isInvalid;
@@ -1319,10 +1353,18 @@ sub _process_limit_change_queue
 	}
 
 
-	#
-	# CHECK OUT CONNECTED LIMITS
-	#
-#FIXME: CLEANUP FUNCTION FOR THIS, RUN EVERY 5 MINS?
+}
+
+
+# Process cleanup of limits
+sub _process_limit_cleanup
+{
+	my $kernel = shift;
+
+
+	my $now = time();
+
+	# Loop with limits and check for expired entries
 	while ((my $lid, my $glimit) = each(%{$limits})) {
 		# Check for expired limits
 		if ($glimit->{'Expires'} && $glimit->{'Expires'} < $now) {
@@ -1342,6 +1384,7 @@ sub _process_limit_change_queue
 
 
 # Do the actual override queue processing
+# This function returns 1 if it made a change, 0 if not
 sub _process_override_change_queue
 {
 	my $kernel = shift;
@@ -1374,7 +1417,19 @@ sub _process_override_change_queue
 		$overridesChanged = 1;
 	}
 
-#FIXME: CLEANUP FUNCTION FOR THIS, RUN EVERY 5 MINS?
+	return $overridesChanged;
+}
+
+
+# Process cleanup of overrides
+# This function returns 1 if it made a change, 0 if not
+sub _process_override_cleanup
+{
+	my $overridesChanged = 0;
+
+
+	my $now = time();
+
 	# Check for expired overides
 	while ((undef, my $goverride) = each(%{$overrides})) {
 		# Check for expired overrides
@@ -1389,15 +1444,11 @@ sub _process_override_change_queue
 
 			$overridesChanged = 1;
 		}
-
 	}
 
-	# If something changed, resolve overrides again
-	# XXX: maybe we can be more efficient here?
-	if ($overridesChanged) {
-		_resolve_overrides_and_post($kernel);
-	}
+	return $overridesChanged;
 }
+
 
 
 # This function calls _resolve_overrides() plus posts events to the shaper
