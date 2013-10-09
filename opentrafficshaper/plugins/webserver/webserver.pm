@@ -91,8 +91,8 @@ my $resources = {
 			'limit-edit' => \&opentrafficshaper::plugins::webserver::pages::limits::limit_addedit,
 		},
 		'statistics' => {
-			'by-username' => \&opentrafficshaper::plugins::webserver::pages::statistics::byusername,
-			'data-by-username' => \&opentrafficshaper::plugins::webserver::pages::statistics::databyusername,
+			'by-limit' => \&opentrafficshaper::plugins::webserver::pages::statistics::bylimit,
+			'data-by-limit' => \&opentrafficshaper::plugins::webserver::pages::statistics::databylimit,
 		},
 		'configmanager' => {
 			'default' => \&opentrafficshaper::plugins::webserver::pages::configmanager::default,
