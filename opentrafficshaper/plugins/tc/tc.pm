@@ -951,9 +951,9 @@ sub _tc_iface_optimize
 
 	# RED metrics (sort of as per manpage)
 	my $redAvPkt = 1000;
-	my $redMax = int($queueSize / 4);
-	my $redMin = int($redMax / 3);
-	my $redBurst = int( ($redMin+$redMin+$redMax) / (4*$redAvPkt));
+	my $redMax = int($queueSize / 4); # 25% mark at 100% probabilty
+	my $redMin = int($redMax / 3); # Max/3 is when the probability starts
+	my $redBurst = int( ($redMin+$redMax) / (2*$redAvPkt));
 	my $redLimit = $queueSize;
 
 	# Priority band
