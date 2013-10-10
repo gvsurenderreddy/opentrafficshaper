@@ -45,7 +45,7 @@ use constant {
 	VERSION => '0.0.1',
 
 	# How often our config check ticks
-	TICK_PERIOD => 10,
+	TICK_PERIOD => 5,
 };
 
 
@@ -64,6 +64,10 @@ our $pluginInfo = {
 # Copy of system globals
 my $globals;
 my $logger;
+
+
+# Last stats pulls
+my $lastStats = { };
 
 
 # Initialize plugin
@@ -89,6 +93,9 @@ sub plugin_init
 			task_child_stdout => \&task_child_stdout,
 			task_child_stderr => \&task_child_stderr,
 			task_child_close => \&task_child_close,
+			# Signals
+			handle_SIGCHLD => \&task_handle_SIGCHLD,
+			handle_SIGINT => \&task_handle_SIGINT,
 		}
 	);
 
@@ -145,7 +152,14 @@ sub session_tick
 	my $now = time();
 
 	# Loop with interfaces that need stats
+	my $ifaces = 0;
 	foreach my $iface (opentrafficshaper::plugins::tc::getInterfaces()) {
+
+		# Skip to next if we've already run for this iface
+		if (defined($lastStats->{$iface}) && $lastStats->{$iface} + opentrafficshaper::plugins::statistics::STATISTICS_PERIOD > $now) {
+			next;
+		}
+
 		# Work out traffic direction
 		my $direction;
 		if ($iface eq opentrafficshaper::plugins::tc::getConfigTxIface()) {
@@ -156,8 +170,10 @@ sub session_tick
 			# Reset tick
 			$kernel->delay(tick => TICK_PERIOD);
 			$logger->log(LOG_ERR,"[TCSTATS] Unknown interface '$iface'");
-			return;
+			next;
 		}
+
+		$logger->log(LOG_INFO,"[TCSTATS] Generating stats for '$iface'");
 
 		# TC commands to run
 		my $cmd = [ '/sbin/tc', '-s', 'class', 'show', 'dev', $iface, 'parent', '1:' ];
@@ -191,6 +207,18 @@ sub session_tick
 		# Build commandline string
 		my $cmdStr = join(' ',@{$cmd});
 		$logger->log(LOG_DEBUG,"[TCSTATS] TASK/".$task->ID.": Starting '$cmdStr' as ".$task->ID." with PID ".$task->PID);
+
+		# Set last time we were run to now
+		$lastStats->{$iface} = $now;
+
+		# NK: Space the stats out, this will cause TICK_PERIOD to elapse before we do another interface
+		$ifaces++;
+		last;
+	}
+
+	# If we didn't fire up any stats, re-tick
+	if (!$ifaces) {
+		$kernel->delay(tick => TICK_PERIOD);
 	}
 };
 
@@ -279,12 +307,12 @@ sub task_child_close
 	$kernel->delay(tick => TICK_PERIOD);
 }
 
-
 # Reap the dead child
 sub task_sigchld
 {
 	my ($kernel,$heap,$pid,$status) = @_[KERNEL,HEAP,ARG1,ARG2];
 	my $task = $heap->{task_by_pid}->{$pid};
+
 
 	$logger->log(LOG_DEBUG,"[TCSTATS] TASK: Task with PID $pid exited with status $status");
 
