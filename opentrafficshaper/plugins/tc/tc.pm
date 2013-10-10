@@ -188,8 +188,8 @@ sub plugin_init
 			task_child_stdout => \&task_child_stdout,
 			task_child_stderr => \&task_child_stderr,
 			task_child_stdin => \&task_child_stdin,
-			task_child_error => \&task_child_error,
 			task_child_close => \&task_child_close,
+			task_child_error => \&task_child_error,
 			task_run_next => \&task_run_next,
 			# Signals
 			handle_SIGCHLD => \&task_handle_SIGCHLD,
@@ -1572,9 +1572,7 @@ sub task_child_error
 	$logger->log(LOG_ERR,"[TC] Task $task_id generated $operation error $errnum: '$errstr'");
 
 	# If there is no task, return
-	if (!defined($task)) {
-		return;
-	}
+	return if (!defined($task));
 
 	# Remove other references
 	delete($heap->{'task_by_wid'}->{$task_id});
