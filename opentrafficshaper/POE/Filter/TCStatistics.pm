@@ -70,6 +70,7 @@ sub get_one_start
 {
 	my ($self, $stream) = @_;
 
+
 	# Join all the blocks of data and add to our buffer
 	$self->{'buffer'} .= join('',@{$stream});
 
