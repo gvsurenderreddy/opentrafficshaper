@@ -123,6 +123,7 @@ sub parseCfgCmdLine
 			-file => $cfg->{'config_file'},
 			-nocase => 1
 	) or die "Failed to open config file '".$cfg->{'config_file'}."': $!";
+	my $inifileHandle = tied( %inifile );
 	# Copy config
 	my %config = %inifile;
 
@@ -165,6 +166,17 @@ sub parseCfgCmdLine
 			# Skip comments
 			next if ($plugin =~ /^#/);
 			push(@{$cfg->{'plugin_list'}},$plugin);
+		}
+	}
+
+	# We may have config file groups we want to remember for other plugins
+	foreach my $group ($inifileHandle->Groups()) {
+		# Loop with group members
+		foreach my $member ($inifileHandle->GroupMembers($group)) {
+			# Chop off group name and just get the member
+			my $cleanMember = substr($member,length($group)+1);
+			# Link the config...
+			$config{$group}->{$cleanMember} = $config{$member};
 		}
 	}
 
