@@ -93,6 +93,8 @@ my $resources = {
 		'statistics' => {
 			'by-limit' => \&opentrafficshaper::plugins::webserver::pages::statistics::bylimit,
 			'data-by-limit' => \&opentrafficshaper::plugins::webserver::pages::statistics::databylimit,
+			'by-class' => \&opentrafficshaper::plugins::webserver::pages::statistics::byclass,
+			'data-by-class' => \&opentrafficshaper::plugins::webserver::pages::statistics::databyclass,
 		},
 		'configmanager' => {
 			'default' => \&opentrafficshaper::plugins::webserver::pages::configmanager::default,

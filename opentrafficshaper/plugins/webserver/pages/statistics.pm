@@ -36,11 +36,14 @@ use HTTP::Status qw( :constants );
 use JSON;
 
 use opentrafficshaper::logger;
+use opentrafficshaper::plugins;
 use opentrafficshaper::utils qw( parseURIQuery );
 
-use opentrafficshaper::plugins::configmanager qw( getLimit );
+use opentrafficshaper::plugins::configmanager qw( getLimit getInterface isTrafficClassValid getTrafficClassName );
 
 use opentrafficshaper::plugins::statistics::statistics;
+
+
 
 # Graphs by limit
 sub bylimit
@@ -48,6 +51,12 @@ sub bylimit
 	my ($kernel,$globals,$client_session_id,$request) = @_;
 
 
+	# If the plugin is not loaded, we cannot pull stats
+	if (!plugin_is_loaded('statistics')) {
+		return undef;
+	}
+
+	# Header
 	my $content = <<EOF;
 		<div id="header">
 			<h2>Limit Stats View</h2>
@@ -56,17 +65,18 @@ EOF
 
 	my $limit;
 
-	# Maybe we were given an override key as a parameter? this would be an edit form
+	# Check request
 	if ($request->method eq "GET") {
 		# Parse GET data
 		my $queryParams = parseURIQuery($request);
-		# We need a key first of all...
+		# We need our LID
 		if (!defined($queryParams->{'lid'})) {
 			$content .=<<EOF;
 				<tr class="info">
 					<td colspan="8"><p class="text-center">No LID in Query String</p></td>
 				</tr>
 EOF
+			goto END;
 		}
 		# Check if we get some data back when pulling the limit from the backend
 		if (!defined($limit = getLimit($queryParams->{'lid'}))) {
@@ -97,8 +107,6 @@ EOF
 	</div>
 EOF
 
-	# FIXME - Dynamic script inclusion required
-
 	#$content .= statistics::do_test();
 #	$content .= opentrafficshaper::plugins::statistics::do_test();
 
@@ -117,6 +125,254 @@ EOF
 
 
 	# String put in <script> </script> tags after the above files are loaded
+	my $javascript = _getJavascript($dataPathStr);
+
+END:
+
+	return (HTTP_OK,$content,{ 'javascripts' => \@javascripts, 'javascript' => $javascript });
+}
+
+
+
+# Return data by limit
+sub databylimit
+{
+	my ($kernel,$globals,$client_session_id,$request) = @_;
+
+
+	# If the plugin is not loaded, we cannot pull stats
+	if (!plugin_is_loaded('statistics')) {
+		return undef;
+	}
+
+	# Parse GET data
+	my $queryParams = parseURIQuery($request);
+
+	# Check if the limit ID was passed to us
+	if (!defined($queryParams->{'lid'})) {
+		return (HTTP_OK,{ 'error' => 'Invalid lid' },{ 'type' => 'json' });
+	}
+
+	my $limit;
+	if (!defined($limit = getLimit($queryParams->{'lid'}))) {
+		return (HTTP_OK,{ 'error' => 'Invalid limit' },{ 'type' => 'json' });
+	}
+
+	# Pull in stats data
+	my $statsData = opentrafficshaper::plugins::statistics::getStatsByLID($queryParams->{'lid'});
+
+	# First stage refinement
+	my $rawData;
+	foreach my $timestamp (sort keys %{$statsData}) {
+		foreach my $direction (keys %{$statsData->{$timestamp}}) {
+
+			foreach my $stat ('rate','pps','cir','limit') {
+				push(  @{$rawData->{"$direction.$stat"}->{'data'}} , [ $timestamp , $statsData->{$timestamp}->{$direction}->{$stat} ] );
+			}
+
+		}
+	}
+	# Second stage - add labels
+	foreach my $direction ('tx','rx') {
+		foreach my $stat ('rate','pps','cir','limit') {
+				# Make it looks nice:  Tx Rate
+				my $label = uc($direction) . " " . ucfirst($stat);
+				# And set it as the label
+				$rawData->{"$direction.$stat"}->{'label'} = $label;
+		}
+	}
+
+	# Final stage, chop it out how we need it
+	my $jsonData = [ $rawData->{'tx.limit'}, $rawData->{'rx.limit'}, $rawData->{'tx.rate'} , $rawData->{'rx.rate'} ];
+
+	return (HTTP_OK,$jsonData,{ 'type' => 'json' });
+}
+
+
+# Graphs by class
+sub byclass
+{
+	my ($kernel,$globals,$client_session_id,$request) = @_;
+
+
+	# If the plugin is not loaded, we cannot pull stats
+	if (!plugin_is_loaded('statistics')) {
+		return undef;
+	}
+
+	# Header
+	my $content = <<EOF;
+		<div id="header">
+			<h2>Class Stats View</h2>
+		</div>
+EOF
+
+	my $iface;
+	my $cid;
+
+	# Check if its a GET request...
+	if ($request->method eq "GET") {
+		# Parse GET data
+		my $queryParams = parseURIQuery($request);
+		# Grab the interface name
+		if (!defined($queryParams->{'interface'})) {
+			$content .=<<EOF;
+				<tr class="info">
+					<td colspan="8"><p class="text-center">No interface in Query String</p></td>
+				</tr>
+EOF
+			goto END;
+		}
+		# Grab the class
+		if (!defined($queryParams->{'class'})) {
+			$content .=<<EOF;
+				<tr class="info">
+					<td colspan="8"><p class="text-center">No class in Query String</p></td>
+				</tr>
+EOF
+			goto END;
+		}
+		# Check if we get some data back when pulling the iface from the backend
+		if (!defined($iface = getInterface($queryParams->{'interface'}))) {
+			$content .=<<EOF;
+				<tr class="info">
+					<td colspan="8"><p class="text-center">No Interface Results</p></td>
+				</tr>
+EOF
+			goto END;
+		}
+		# Check if our traffic class is valid
+		if (!defined($cid = isTrafficClassValid($queryParams->{'class'})) && $queryParams->{'class'} ne "0") {
+			$content .=<<EOF;
+				<tr class="info">
+					<td colspan="8"><p class="text-center">No Class Results</p></td>
+				</tr>
+EOF
+			goto END;
+		}
+	}
+
+	my $interfaceEncoded = encode_entities($iface->{'Interface'});
+	my $interfaceNameEncoded = encode_entities($iface->{'Name'});
+
+	my $classNameEncoded;
+	if ($cid) {
+		$classNameEncoded = encode_entities(getTrafficClassName($cid));
+	} else {
+		$classNameEncoded = $interfaceNameEncoded;
+	}
+
+
+	# Build content
+	$content = <<EOF;
+	<div id="content" style="float:left">
+
+		<div style="position: relative; top: 50px;">
+			<h4 style="color:#8f8f8f;">Latest Data For: $classNameEncoded on $interfaceEncoded</h4>
+		<br/>
+
+		<div id="ajaxData" class="ajaxData" style="float:left; width:1024px; height: 560px"></div>
+		</div>
+
+	</div>
+EOF
+
+	# Files loaded at end of HTML document
+	my @javascripts = (
+		'/static/awit-flot/jquery.flot.min.js',
+		'/static/awit-flot/jquery.flot.time.min.js',
+	);
+
+	# Build our data path using the URI module to make sure its nice and clean
+	my $dataPath = URI->new('/statistics/data-by-class');
+	# Pass it the original query, just incase we had extra params we can use
+	$dataPath->query_form( $request->uri->query_form() );
+	my $dataPathStr = $dataPath->as_string();
+
+
+	# String put in <script> </script> tags after the above files are loaded
+	my $javascript = _getJavascript($dataPathStr);
+
+END:
+
+	return (HTTP_OK,$content,{ 'javascripts' => \@javascripts, 'javascript' => $javascript });
+}
+
+
+
+# Return data by class
+sub databyclass
+{
+	my ($kernel,$globals,$client_session_id,$request) = @_;
+
+
+	# If the plugin is not loaded, we cannot pull stats
+	if (!plugin_is_loaded('statistics')) {
+		return undef;
+	}
+
+	# Parse GET data
+	my $queryParams = parseURIQuery($request);
+
+	# Check if the username was passed to us
+	if (!defined($queryParams->{'interface'})) {
+		return (HTTP_OK,{ 'error' => 'Missing interface' },{ 'type' => 'json' });
+	}
+	if (!defined($queryParams->{'class'})) {
+		return (HTTP_OK,{ 'error' => 'Missing class' },{ 'type' => 'json' });
+	}
+	if (!defined(my $iface = getInterface($queryParams->{'interface'}))) {
+		return (HTTP_OK,{ 'error' => 'Invalid interface' },{ 'type' => 'json' });
+	}
+	if (!defined(my $cid = isTrafficClassValid($queryParams->{'class'})) && $queryParams->{'class'} ne "0") {
+		return (HTTP_OK,{ 'error' => 'Invalid class' },{ 'type' => 'json' });
+	}
+
+	# Pull in stats data
+	my $statsData = opentrafficshaper::plugins::statistics::getStatsByClass($queryParams->{'interface'},$queryParams->{'class'});
+
+	# First stage refinement
+	my $rawData;
+	foreach my $timestamp (sort keys %{$statsData}) {
+		foreach my $direction (keys %{$statsData->{$timestamp}}) {
+
+			foreach my $stat ('rate','pps','cir','limit') {
+				push(  @{$rawData->{"$direction.$stat"}->{'data'}} , [ $timestamp , $statsData->{$timestamp}->{$direction}->{$stat} ] );
+			}
+
+		}
+	}
+
+	my $jsonData = [ ];
+
+	# Second stage - add labels
+	foreach my $direction ('tx','rx') {
+		foreach my $stat ('rate','pps','cir','limit') {
+				# Make it looks nice:  Tx Rate
+				my $label = uc($direction) . " " . ucfirst($stat);
+				# And set it as the label
+				$rawData->{"$direction.$stat"}->{'label'} = $label;
+		}
+
+		# JSON stuff we looking for
+		foreach my $stat ('limit','rate') {
+			if (defined($rawData->{"$direction.$stat"}->{'data'})) {
+					push(@{$jsonData},$rawData->{"$direction.$stat"});
+			}
+		}
+	}
+
+
+	return (HTTP_OK,$jsonData,{ 'type' => 'json' });
+}
+
+
+# Return javascript for the graph
+sub _getJavascript
+{
+	my $dataPath = shift;
+
+
 	my $javascript =<<EOF;
 // Tooltip - Displays detailed information regarding the data point
 function showTooltip(x, y, contents) {
@@ -222,7 +478,7 @@ options = {
 
 // Load data from ajax
 jQuery.ajax({
-	url: '$dataPathStr',
+	url: '$dataPath',
 	dataType: 'json',
 
 	success: function(statsData) {
@@ -244,56 +500,8 @@ jQuery.ajax({
 });
 EOF
 
-END:
-
-	return (HTTP_OK,$content,{ 'javascripts' => \@javascripts, 'javascript' => $javascript });
+	return $javascript;
 }
-
-
-
-sub databylimit
-{
-	my ($kernel,$globals,$client_session_id,$request) = @_;
-
-
-	# Pull in query string
-	my %query = $request->uri->query_form();
-
-	# Check if the username was passed to us
-	if (!defined($query{'lid'})) {
-		return (HTTP_OK,undef,{ 'type' => 'json' });
-	}
-
-	# Pull in stats data
-	my $statsData = opentrafficshaper::plugins::statistics::getStats($query{'lid'});
-
-	# First stage refinement
-	my $rawData;
-	foreach my $timestamp (sort keys %{$statsData}) {
-		foreach my $direction (keys %{$statsData->{$timestamp}}) {
-
-			foreach my $stat ('rate','pps','cir','limit') {
-				push(  @{$rawData->{"$direction.$stat"}->{'data'}} , [ $timestamp , $statsData->{$timestamp}->{$direction}->{$stat} ] );
-			}
-
-		}
-	}
-	# Second stage - add labels
-	foreach my $direction ('tx','rx') {
-		foreach my $stat ('rate','pps','cir','limit') {
-				# Make it looks nice:  Tx Rate
-				my $label = uc($direction) . " " . ucfirst($stat);
-				# And set it as the label
-				$rawData->{"$direction.$stat"}->{'label'} = $label;
-		}
-	}
-
-	# Final stage, chop it out how we need it
-	my $jsonData = [ $rawData->{'tx.limit'}, $rawData->{'rx.limit'}, $rawData->{'tx.rate'} , $rawData->{'rx.rate'} ];
-
-	return (HTTP_OK,$jsonData,{ 'type' => 'json' });
-}
-
 
 
 1;

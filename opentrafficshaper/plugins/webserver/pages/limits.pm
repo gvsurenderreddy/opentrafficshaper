@@ -40,7 +40,18 @@ use opentrafficshaper::logger;
 use opentrafficshaper::plugins;
 use opentrafficshaper::utils qw( parseURIQuery parseFormContent isUsername isIP isNumber prettyUndef );
 
-use opentrafficshaper::plugins::configmanager qw( getLimits getLimit getTrafficClasses getTrafficClassName isTrafficClassValid );
+use opentrafficshaper::plugins::configmanager qw(
+		getLimits getLimit
+
+		getInterfaceGroups
+		isInterfaceGroupValid
+
+		getMatchPriorities
+		isMatchPriorityValid
+
+		getTrafficClasses getTrafficClassName
+		isTrafficClassValid
+);
 
 
 
@@ -270,6 +281,8 @@ sub limit_addedit
 	my @formElements = qw(
 		FriendlyName
 		Username IP
+		InterfaceGroupID
+		MatchPriorityID
 		ClassID
 		TrafficLimitTx TrafficLimitTxBurst
 		TrafficLimitRx TrafficLimitRxBurst
@@ -344,6 +357,14 @@ sub limit_addedit
 		if (!defined($ipAddress = isIP($formData->{'IP'}))) {
 			push(@errors,"IP address is not valid");
 		}
+		my $interfaceGroupID;
+		if (!defined($interfaceGroupID = isInterfaceGroupValid($formData->{'InterfaceGroupID'}))) {
+			push(@errors,"Interface group is not valid");
+		}
+		my $matchPriorityID;
+		if (!defined($matchPriorityID = isMatchPriorityValid($formData->{'MatchPriorityID'}))) {
+			push(@errors,"Match priority is not valid");
+		}
 		my $classID;
 		if (!defined($classID = isTrafficClassValid($formData->{'ClassID'}))) {
 			push(@errors,"Traffic class is not valid");
@@ -397,6 +418,8 @@ sub limit_addedit
 				'Username' => $username,
 				'IP' => $ipAddress,
 				'GroupID' => 1,
+				'InterfaceGroupID' => $interfaceGroupID,
+				'MatchPriorityID' => $matchPriorityID,
 				'ClassID' => $classID,
 				'TrafficLimitTx' => $trafficLimitTx,
 				'TrafficLimitTxBurst' => $trafficLimitTxBurst,
@@ -414,11 +437,13 @@ sub limit_addedit
 
 			$kernel->post("configmanager" => "process_limit_change" => $limit);
 
-			$logger->log(LOG_INFO,'[WEBSERVER/LIMITS] Acount: %s, User: %s, IP: %s, Group: %s, Class: %s, Limits: %s/%s, Burst: %s/%s',
+			$logger->log(LOG_INFO,'[WEBSERVER/LIMITS] Acount: %s, User: %s, IP: %s, Group: %s, InterfaceGroup: %s, MatchPriority: %s, Class: %s, Limits: %s/%s, Burst: %s/%s',
 					$formType,
 					prettyUndef($username),
 					prettyUndef($ipAddress),
 					prettyUndef(undef),
+					prettyUndef($interfaceGroupID),
+					prettyUndef($matchPriorityID),
 					prettyUndef($classID),
 					prettyUndef($trafficLimitTx),
 					prettyUndef($trafficLimitRx),
@@ -449,6 +474,36 @@ EOF
 		foreach my $error (@errors) {
 			$content .= '<div class="alert alert-danger">'.$error.'</div>';
 		}
+	}
+
+	# Generate interface group list
+	my $interfaceGroups = getInterfaceGroups();
+	my $interfaceGroupStr = "";
+	foreach my $interfaceGroupID (sort keys %{$interfaceGroups}) {
+		# Process selections nicely
+		my $selected = "";
+		if ($formData->{'InterfaceGroupID'} ne "" && $formData->{'InterfaceGroupID'} eq $interfaceGroupID) {
+			$selected = "selected";
+		}
+		# And build the options
+		$interfaceGroupStr .= '<option value="'.$interfaceGroupID.'" '.$selected.'>'.$interfaceGroups->{$interfaceGroupID}->{'name'}.'</option>';
+	}
+
+	# Generate match priority list
+	my $matchPriorities = getMatchPriorities();
+	my $matchPriorityStr = "";
+	foreach my $matchPriorityID (sort keys %{$matchPriorities}) {
+		# Process selections nicely
+		my $selected = "";
+		if ($formData->{'MatchPriorityID'} ne "" && $formData->{'MatchPriorityID'} eq $matchPriorityID) {
+			$selected = "selected";
+		}
+		# Default to 2 if nothing specified
+		if ($formData->{'MatchPriorityID'} eq "" && $matchPriorityID eq "2") {
+			$selected = "selected";
+		}
+		# And build the options
+		$matchPriorityStr .= '<option value="'.$matchPriorityID.'" '.$selected.'>'.$matchPriorities->{$matchPriorityID}.'</option>';
 	}
 
 	# Generate traffic class list
@@ -496,6 +551,23 @@ EOF
 			<div class="col-lg-4 input-group">
 				<input name="IP" type="text" placeholder="IP Address" class="form-control" value="$formData->{'IP'}" $formNoEdit/>
 				<span class="input-group-addon">*</span>
+			</div>
+		</div>
+	</div>
+	<div class="form-group">
+		<label for="InterfaceGroupID" class="col-lg-2 control-label">Interface Group</label>
+		<div class="row">
+			<div class="col-lg-2">
+				<select name="InterfaceGroupID" class="form-control" $formNoEdit>
+					$interfaceGroupStr
+				</select>
+			</div>
+
+			<label for="MatchPriorityID" class="col-lg-2 control-label">Match Priority</label>
+			<div class="col-lg-2">
+				<select name="MatchPriorityID" class="form-control" $formNoEdit>
+					$matchPriorityStr
+				</select>
 			</div>
 		</div>
 	</div>

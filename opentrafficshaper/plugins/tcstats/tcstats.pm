@@ -30,6 +30,9 @@ use opentrafficshaper::constants;
 use opentrafficshaper::logger;
 use opentrafficshaper::utils;
 
+use opentrafficshaper::plugins::configmanager qw(
+		getInterfaces
+);
 
 
 # Exporter stuff
@@ -152,31 +155,18 @@ sub session_tick
 	my $now = time();
 
 	# Loop with interfaces that need stats
-	my $ifaces = 0;
-	foreach my $iface (opentrafficshaper::plugins::tc::getInterfaces()) {
+	my $interfaceCount = 0;
+	foreach my $interface (@{getInterfaces()})	{
 
-		# Skip to next if we've already run for this iface
-		if (defined($lastStats->{$iface}) && $lastStats->{$iface} + opentrafficshaper::plugins::statistics::STATISTICS_PERIOD > $now) {
+		# Skip to next if we've already run for this interface
+		if (defined($lastStats->{$interface}) && $lastStats->{$interface} + opentrafficshaper::plugins::statistics::STATISTICS_PERIOD > $now) {
 			next;
 		}
 
-		# Work out traffic direction
-		my $direction;
-		if ($iface eq opentrafficshaper::plugins::tc::getConfigTxIface()) {
-			$direction = opentrafficshaper::plugins::statistics::STATISTICS_DIR_TX;
-		} elsif ($iface eq opentrafficshaper::plugins::tc::getConfigRxIface()) {
-			$direction = opentrafficshaper::plugins::statistics::STATISTICS_DIR_RX;
-		} else {
-			# Reset tick
-			$kernel->delay(tick => TICK_PERIOD);
-			$logger->log(LOG_ERR,"[TCSTATS] Unknown interface '$iface'");
-			next;
-		}
-
-		$logger->log(LOG_INFO,"[TCSTATS] Generating stats for '$iface'");
+		$logger->log(LOG_INFO,"[TCSTATS] Generating stats for '$interface'");
 
 		# TC commands to run
-		my $cmd = [ '/sbin/tc', '-s', 'class', 'show', 'dev', $iface, 'parent', '1:' ];
+		my $cmd = [ '/sbin/tc', '-s', 'class', 'show', 'dev', $interface, 'parent', '1:' ];
 
 		# Create task
 		my $task = POE::Wheel::Run->new(
@@ -199,8 +189,7 @@ sub session_tick
 		# Signal events include the process ID.
 		$heap->{task_data}->{$task->ID} = {
 			'timestamp' => $now,
-			'iface' => $iface,
-			'direction' => $direction,
+			'interface' => $interface,
 			'current_stat' => { }
 		};
 
@@ -209,15 +198,15 @@ sub session_tick
 		$logger->log(LOG_DEBUG,"[TCSTATS] TASK/".$task->ID.": Starting '$cmdStr' as ".$task->ID." with PID ".$task->PID);
 
 		# Set last time we were run to now
-		$lastStats->{$iface} = $now;
+		$lastStats->{$interface} = $now;
 
 		# NK: Space the stats out, this will cause TICK_PERIOD to elapse before we do another interface
-		$ifaces++;
+		$interfaceCount++;
 		last;
 	}
 
 	# If we didn't fire up any stats, re-tick
-	if (!$ifaces) {
+	if (!$interfaceCount) {
 		$kernel->delay(tick => TICK_PERIOD);
 	}
 };
@@ -232,39 +221,45 @@ sub task_child_stdout
 	# Grab task data
 	my $taskData = $heap->{'task_data'}->{$task_id};
 
-	my $iface = $taskData->{'iface'};
-	my $direction = $taskData->{'direction'};
+	my $interface = $taskData->{'interface'};
 	my $timestamp = $taskData->{'timestamp'};
 
-	# Limit ID to update
-	my $lid;
+	# Stats ID to update
+	my $sid;
+	# Default to transmit statistics
+	my $direction = opentrafficshaper::plugins::statistics::STATISTICS_DIR_TX;
 
 	# Is this a system class?
+	# XXX: _class_parent is hard coded to 1
 	if ($stat->{'_class_parent'} == 1 && (my $classChildDec = hex($stat->{'_class_child'})) < 100) {
 
 		# Split off the different types of updates
 		if ($classChildDec == 1) {
-			$lid = "main:${iface}";
+			$sid = opentrafficshaper::plugins::statistics::getSIDFromCID($interface,0);
 		} else {
 			# Save the class with the decimal number
-			if (my $classID =  opentrafficshaper::plugins::tc::isTcTrafficClassValid($stat->{'_class_child'})) {
-				$lid = "main:${iface}:$classID";
+			if (my $tcClass =  opentrafficshaper::plugins::tc::isTcTrafficClassValid($interface,1,$stat->{'_class_child'})) {
+				my $classID = hex($tcClass);
+				$sid = opentrafficshaper::plugins::statistics::getSIDFromCID($interface,$classID);
 			} else {
 				$logger->log(LOG_WARN,"[TCSTATS] System traffic class '%s:%s' NOT FOUND",$stat->{'_class_parent'},$stat->{'_class_child'});
 			}
 		}
 
 	} else {
-		$lid = opentrafficshaper::plugins::tc::getLIDFromTcClass($stat->{'_class_child'});
+		if (defined(my $lid = opentrafficshaper::plugins::tc::getLIDFromTcLimitClass($interface,$stat->{'_class_child'}))) {
+			$sid = opentrafficshaper::plugins::statistics::getSIDFromLID($lid);
+			$direction = opentrafficshaper::plugins::statistics::getTrafficDirection($lid,$interface);
+		}
 	}
 
 	# Make sure we have the lid now
-	if (defined($lid)) {
+	if (defined($sid)) {
 		# Build our submission
 		$stat->{'timestamp'} = $timestamp;
 		$stat->{'direction'} = $direction;
 
-		$taskData->{'stats'}->{$lid} = $stat;
+		$taskData->{'stats'}->{$sid} = $stat;
 	}
 }
 
@@ -306,6 +301,7 @@ sub task_child_close
 	# Fire up next tick
 	$kernel->delay(tick => TICK_PERIOD);
 }
+
 
 # Reap the dead child
 sub task_sigchld

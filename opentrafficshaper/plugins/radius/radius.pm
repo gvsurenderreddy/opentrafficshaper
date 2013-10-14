@@ -1,6 +1,6 @@
 # OpenTrafficShaper radius module
 # Copyright (C) 2007-2013, AllWorldIT
-# 
+#
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
@@ -55,7 +55,7 @@ use constant {
 our $pluginInfo = {
 	Name => "Radius",
 	Version => VERSION,
-	
+
 	Init => \&plugin_init,
 	Start => \&plugin_start,
 };
@@ -66,7 +66,9 @@ my $globals;
 my $logger;
 # Our own data storage
 my $config = {
-	'expiry_period' => DEFAULT_EXPIRY_PERIOD
+	'expiry_period' => DEFAULT_EXPIRY_PERIOD,
+	'interface_group' => 'eth1,eth0',
+	'match_priority' => 2,
 };
 
 my $dictionary;
@@ -84,7 +86,7 @@ sub plugin_init
 	$logger->log(LOG_NOTICE,"[RADIUS] OpenTrafficShaper Radius Module v".VERSION." - Copyright (c) 2013, AllWorldIT");
 
 	# Split off dictionaries to load
-	my @dicts = ref($globals->{'file.config'}->{'plugin.radius'}->{'dictionary'}) eq "ARRAY" ? 
+	my @dicts = ref($globals->{'file.config'}->{'plugin.radius'}->{'dictionary'}) eq "ARRAY" ?
 			@{$globals->{'file.config'}->{'plugin.radius'}->{'dictionary'}} : ( $globals->{'file.config'}->{'plugin.radius'}->{'dictionary'} );
 	foreach my $dict (@dicts) {
 		$dict =~ s/\s+//g;
@@ -111,6 +113,32 @@ sub plugin_init
 	$logger->log(LOG_DEBUG,"[RADIUS] Loading dictionaries completed.");
 	# Store the dictionary
 	$dictionary = $dict;
+
+	# Check if we must override the expiry time
+	if (defined(my $expiry = $globals->{'file.config'}->{'plugin.radius'}->{'expiry_period'})) {
+		$logger->log(LOG_INFO,"[RADIUS] Set expiry_period to '$expiry'");
+		$config->{'expiry_period'} = $expiry;
+	}
+
+	# Default interface group to use
+	if (defined(my $interfaceGroup = $globals->{'file.config'}->{'plugin.radius'}->{'interface_group'})) {
+		if (isInterfaceGroupIsValid($interfaceGroup)) {
+			$logger->log(LOG_INFO,"[RADIUS] Set interface_group to '$interfaceGroup'");
+			$config->{'interface_group'} = $interfaceGroup;
+		} else {
+			$logger->log(LOG_WARN,"[RADIUS] Cannot set 'interface_group' as value '$interfaceGroup' is invalid");
+		}
+	}
+
+	# Default match priority to use
+	if (defined(my $matchPriority = $globals->{'file.config'}->{'plugin.radius'}->{'match_priority'})) {
+		if (isInterfaceGroupIsValid($matchPriority)) {
+			$logger->log(LOG_INFO,"[RADIUS] Set match_priority to '$matchPriority'");
+			$config->{'match_priority'} = $matchPriority;
+		} else {
+			$logger->log(LOG_WARN,"[RADIUS] Cannot set 'match_priority' as value '$matchPriority' is invalid");
+		}
+	}
 
 	# Check if we must override the expiry time
 	if (defined(my $expiry = $globals->{'file.config'}->{'plugin.radius'}->{'expiry_period'})) {
@@ -283,13 +311,15 @@ sub session_read
 	my $user = {
 		'Username' => $username,
 		'IP' => $pkt->attr('Framed-IP-Address'),
+		'InterfaceGroupID' => $config->{'interface_group'},
+		'MatchPriorityID' => $config->{'match_priority'},
 		'GroupID' => $trafficGroup,
 		'ClassID' => $trafficClass,
 		'TrafficLimitTx' => $trafficLimitTx,
 		'TrafficLimitRx' => $trafficLimitRx,
 		'TrafficLimitTxBurst' => $trafficLimitTxBurst,
 		'TrafficLimitRxBurst' => $trafficLimitRxBurst,
-		'Expires' => $now + (defined($globals->{'file.config'}->{'plugin.radius'}->{'expire_entries'}) ? 
+		'Expires' => $now + (defined($globals->{'file.config'}->{'plugin.radius'}->{'expire_entries'}) ?
 				$globals->{'file.config'}->{'plugin.radius'}->{'expire_entries'} : $config->{'expiry_period'}),
 		'Status' => getStatus($pkt->rawattr('Acct-Status-Type')),
 		'Source' => "plugin.radius",
@@ -298,8 +328,10 @@ sub session_read
 	# Throw the change at the config manager
 	$kernel->post("configmanager" => "process_limit_change" => $user);
 
-	$logger->log(LOG_INFO,"[RADIUS] Code: $user->{'Status'}, User: $user->{'Username'}, IP: $user->{'IP'}, Group: $user->{'GroupID'}, Class: $user->{'ClassID'}, ".
-			"CIR: ".prettyUndef($trafficLimitTx)."/".prettyUndef($trafficLimitRx).", Limit: ".prettyUndef($trafficLimitTxBurst)."/".prettyUndef($trafficLimitRxBurst));
+	$logger->log(LOG_INFO,"[RADIUS] Code: %s, User: %s, IP: %s, InterfaceGroup: %s, MatchPriorityID: %s, Group: %s, Class: %s, CIR: %s/%s, Limit: %s/%s",
+			$user->{'Status'}, $user->{'Username'}, $user->{'IP'}, $user->{'InterfaceGroupID'}, $user->{'MatchPriorityID'}, $user->{'GroupID'},
+			$user->{'ClassID'}, prettyUndef($trafficLimitTx), prettyUndef($trafficLimitRx), prettyUndef($trafficLimitTxBurst), prettyUndef($trafficLimitRxBurst)
+	);
 }
 
 

@@ -23,6 +23,7 @@ use warnings;
 
 
 use POE;
+use Storable qw( dclone );
 
 use opentrafficshaper::constants;
 use opentrafficshaper::logger;
@@ -40,6 +41,9 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 		getLimit
 		getLimits
 		getLimitUsername
+		getLimitTxInterface
+		getLimitRxInterface
+		getLimitMatchPriority
 		setLimitAttribute
 		getLimitAttribute
 		removeLimitAttribute
@@ -51,12 +55,23 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 		setShaperState
 
 		getTrafficClasses
-
 		getTrafficClassName
-
 		isTrafficClassValid
 
-		getDefaultPoolConfig
+		getTrafficPriority
+
+		getTrafficDirection
+
+		getInterface
+		getInterfaces
+		getInterfaceClasses
+		getInterfaceDefaultPool
+		getInterfaceRate
+		getInterfaceGroups
+		isInterfaceGroupValid
+
+		getMatchPriorities
+		isMatchPriorityValid
 );
 
 use constant {
@@ -76,6 +91,7 @@ use constant {
 sub LIMIT_REQUIRED_ATTRIBUTES {
 	qw(
 		Username IP
+		InterfaceGroupID MatchPriorityID
 		GroupID ClassID
 		TrafficLimitTx TrafficLimitRx
 		Status
@@ -87,7 +103,7 @@ sub LIMIT_REQUIRED_ATTRIBUTES {
 sub LIMIT_CHANGESET_ATTRIBUTES {
 	qw(
 		ClassID
-		TrafficLimitTx TrafficLimitRx TrafficLimitTxBurst TrafficLimitRxBurst TrafficPriority
+		TrafficLimitTx TrafficLimitRx TrafficLimitTxBurst TrafficLimitRxBurst
 	)
 }
 
@@ -95,8 +111,9 @@ sub LIMIT_CHANGESET_ATTRIBUTES {
 sub LIMIT_PERSISTENT_ATTRIBUTES {
 	qw(
 		Username IP
+		InterfaceGroupID MatchPriorityID
 		GroupID ClassID
-		TrafficLimitTx TrafficLimitRx TrafficLimitTxBurst TrafficLimitRxBurst TrafficPriority
+		TrafficLimitTx TrafficLimitRx TrafficLimitTxBurst TrafficLimitRxBurst
 		FriendlyName Notes
 		Expires Created
 		Source
@@ -157,10 +174,7 @@ my $logger;
 
 # Configuration for this plugin
 our $config = {
-	# Use default pool for unclassified traffic
-	#	'classid'
-	#	'txrate'
-	#	'rxrate'
+	# Class to use for unclassified traffic
 	'default_pool' => undef,
 
 	# Traffic groups
@@ -170,6 +184,18 @@ our $config = {
 	# Traffic classes
 	'classes' => {
 		1 => 'Default'
+	},
+	# Interfaces
+	'interfaces' => {
+	},
+	# Interface groups
+	'interface_groups' => {
+	},
+	# Match priorities
+	'match_priorities' => {
+		1 => 'First',
+		2 => 'Default',
+		3 => 'Fallthrough'
 	},
 	# State file
 	'statefile' => '/var/lib/opentrafficshaper/configmanager.state',
@@ -188,6 +214,10 @@ my $lastCleanup = time();
 #    - Users IP
 # * GroupID
 #    - Group ID
+# * InterfaceGroupID
+#    - Interface group this limit is attached to
+# * MatchPriorityID
+#    - Match priority on the backend of this limit
 # * ClassID
 #    - Class ID
 # * TrafficLimitTx
@@ -269,11 +299,26 @@ sub plugin_init
 
 	$logger->log(LOG_NOTICE,"[CONFIGMANAGER] OpenTrafficShaper Config Manager v".VERSION." - Copyright (c) 2013, AllWorldIT");
 
+	# If we have global config, use it
+	my $gconfig = { };
+	if (defined($globals->{'file.config'}->{'shaping'})) {
+		$gconfig = $globals->{'file.config'}->{'shaping'};
+	}
+
 	# Split off groups to load
 	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Loading traffic groups...");
 	# Check if we loaded an array or just text
-	my @groups = ref($globals->{'file.config'}->{'shaping'}->{'group'}) eq "ARRAY" ? @{$globals->{'file.config'}->{'shaping'}->{'group'}} :
-			( $globals->{'file.config'}->{'shaping'}->{'group'} );
+	my @groups;
+	if (defined($gconfig->{'group'})) {
+		if (ref($gconfig->{'group'}) eq "ARRAY") {
+			@groups = @{$gconfig->{'group'}};
+		} else {
+			@groups = ( $gconfig->{'group'} );
+		}
+	} else {
+		@groups = ( "1:Default (auto)" );
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] No groups, setting up defaults");
+	}
 	# Loop with groups
 	foreach my $group (@groups) {
 		# Skip comments
@@ -281,92 +326,263 @@ sub plugin_init
 		# Split off group ID and group name
 		my ($groupID,$groupName) = split(/:/,$group);
 		if (!defined($groupID) || int($groupID) < 1) {
-			$logger->log(LOG_WARN,"[CONFIGMANAGER] Failed to load traffic group definition '$group': ID is invalid");
+			$logger->log(LOG_WARN,"[CONFIGMANAGER] Traffic group definition '$group' has invalid ID, ignoring");
 			next;
 		}
 		if (!defined($groupName) || $groupName eq "") {
-			$logger->log(LOG_WARN,"[CONFIGMANAGER] Failed to load traffic group definition '$group': Name is invalid");
+			$logger->log(LOG_WARN,"[CONFIGMANAGER] Traffic group definition '$group' has invalid name, ignoring");
 			next;
 		}
 		$config->{'groups'}->{$groupID} = $groupName;
 		$logger->log(LOG_INFO,"[CONFIGMANAGER] Loaded traffic group '$groupName' with ID $groupID.");
 	}
-	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Loading traffic groups completed.");
+	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Traffic groups loaded.");
+
 
 	# Split off traffic classes
 	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Loading traffic classes...");
 	# Check if we loaded an array or just text
-	my @classes = ref($globals->{'file.config'}->{'shaping'}->{'class'}) eq "ARRAY" ? @{$globals->{'file.config'}->{'shaping'}->{'class'}} :
-			( $globals->{'file.config'}->{'shaping'}->{'class'} );
+	my @classes;
+	if (defined($gconfig->{'class'})) {
+		if (ref($gconfig->{'class'}) eq "ARRAY") {
+			@classes = @{$gconfig->{'class'}};
+		} else {
+			@classes = ( $gconfig->{'class'} );
+		}
+	} else {
+		@classes = ( "1:Default (auto)" );
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] No classes, setting up defaults");
+	}
 	# Loop with classes
 	foreach my $class (@classes) {
 		# Skip comments
 		next if ($class =~ /^\s*#/);
 		# Split off class ID and class name
 		my ($classID,$className) = split(/:/,$class);
-		if (!defined($classID) || int($classID) < 1) {
-			$logger->log(LOG_WARN,"[CONFIGMANAGER] Failed to load traffic class definition '$class': ID is invalid");
+		if (!defined(isNumber($classID))) {
+			$logger->log(LOG_WARN,"[CONFIGMANAGER] Traffic class definition '$class' has invalid ID, ignoring");
 			next;
 		}
 		if (!defined($className) || $className eq "") {
-			$logger->log(LOG_WARN,"[CONFIGMANAGER] Failed to load traffic class definition '$class': Name is invalid");
+			$logger->log(LOG_WARN,"[CONFIGMANAGER] Traffic class definition '$class' has invalid name, ignoring");
 			next;
 		}
 		$config->{'classes'}->{$classID} = $className;
 		$logger->log(LOG_INFO,"[CONFIGMANAGER] Loaded traffic class '$className' with ID $classID.");
 	}
-	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Loading traffic classes completed.");
+	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Traffic classes loaded.");
+
+
+	# Load interfaces
+	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Loading interfaces...");
+	my @interfaces;
+	if (defined($globals->{'file.config'}->{'shaping.interface'})) {
+		@interfaces = keys %{$globals->{'file.config'}->{'shaping.interface'}};
+	} else {
+		@interfaces = ( "eth0", "eth1" );
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] No interfaces defined, using 'eth0' and 'eth1'");
+	}
+	# Loop with interface
+	foreach my $interface (@interfaces) {
+		# This is the interface config to make things easier for us
+		my $iconfig = { };
+		# Check if its defined
+		if (defined($globals->{'file.config'}->{'shaping.interface'}) &&
+				defined($globals->{'file.config'}->{'shaping.interface'}->{$interface})
+		) {
+			$iconfig = $globals->{'file.config'}->{'shaping.interface'}->{$interface}
+		}
+
+		# Check our friendly name for this interface
+		if (defined($iconfig->{'name'}) && $iconfig->{'name'} ne "") {
+			$config->{'interfaces'}->{$interface}->{'name'} = $iconfig->{'name'};
+		} else {
+			$config->{'interfaces'}->{$interface}->{'name'} = "$interface (auto)";
+			$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Interface '$interface' has no 'name' attribute, using '$interface (auto)'");
+		}
+
+		# Check our interface rate
+		if (defined($iconfig->{'rate'}) && $iconfig->{'rate'} ne "") {
+			# Check rate is valid
+			if (defined(my $rate = isNumber($iconfig->{'rate'}))) {
+				$config->{'interfaces'}->{$interface}->{'rate'} = $rate;
+			} else {
+				$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface '$interface' has invalid 'rate' attribute, using 100000 instead");
+			}
+		} else {
+			$config->{'interfaces'}->{$interface}->{'rate'} = 100000;
+			$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Interface '$interface' has no 'rate' attribute specified, using 100000");
+		}
+
+
+		# Check if we have a section in our
+		if (defined($iconfig->{'class_rate'})) {
+
+			# Lets pull off the class_rate items
+			my @iclasses;
+			if (ref($iconfig->{'class_rate'}) eq "ARRAY") {
+				@iclasses = @{$iconfig->{'class_rate'}};
+			} else {
+				@iclasses = ( $iconfig->{'class_rate'} );
+			}
+
+			# Loop with class_rates and parse
+			foreach my $iclass (@iclasses) {
+				# Skip comments
+				next if ($iclass =~ /^\s*#/);
+				# Split off class ID and class name
+				my ($iclassID,$iclassCIR,$iclassLimit) = split(/[:\/]/,$iclass);
+
+
+				if (!defined(isNumber($iclassID))) {
+					$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface '$interface' class definition '$iclass' has invalid Class ID, ignoring definition");
+					next;
+				}
+				if (!defined($config->{'classes'}->{$iclassID})) {
+					$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface '$interface' class definition '$iclass' uses Class ID '$iclassID' which doesn't exist");
+					next;
+				}
+
+				# If the CIR is defined, try use it
+				if (defined($iclassCIR)) {
+					# If its not a number, something is wrong
+					if ($iclassCIR =~ /^([1-9][0-9]*)(%)?$/) {
+						my ($cir,$percent) = ($1,$2);
+						# Check if this is a percentage or an actual kbps value
+						if (defined($percent)) {
+							$iclassCIR = int($config->{'interfaces'}->{$interface}->{'rate'} * ($cir / 100));
+						} else {
+							$iclassCIR = $cir;
+						}
+					} else {
+						$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface '$interface' class '$iclassID' has invalid CIR, ignoring definition");
+						next;
+					}
+				} else {
+					$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface '$interface' class '$iclassID' has missing CIR, ignoring definition");
+					next;
+				}
+
+				# If the limit is defined, try use it
+				if (defined($iclassLimit)) {
+					# If its not a number, something is wrong
+					if ($iclassLimit =~ /^([1-9][0-9]*)(%)?$/) {
+						my ($Limit,$percent) = ($1,$2);
+						# Check if this is a percentage or an actual kbps value
+						if (defined($percent)) {
+							$iclassLimit = int($config->{'interfaces'}->{$interface}->{'rate'} * ($Limit / 100));
+						} else {
+							$iclassLimit = $Limit;
+						}
+					} else {
+						$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface '$interface' class '$iclassID' has invalid Limit, ignoring");
+						next;
+					}
+				} else {
+					$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Interface '$interface' class '$iclassID' has missing Limit, using CIR '$iclassCIR' instead",
+							$config->{'interfaces'}->{$interface}->{'rate'});
+					$iclassLimit = $iclassCIR;
+				}
+
+				# Check if rates are below are sane
+				if ($iclassCIR > $config->{'interfaces'}->{$interface}->{'rate'}) {
+					$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface '$interface' class '$iclassID' has CIR '$iclassCIR' > interface speed '%s', adjusting to '%s'",
+							$iclassCIR > $config->{'interfaces'}->{$interface}->{'rate'},
+							$iclassCIR > $config->{'interfaces'}->{$interface}->{'rate'});
+					$iclassCIR = $iclassCIR > $config->{'interfaces'}->{$interface}->{'rate'};
+				}
+				if ($iclassLimit > $config->{'interfaces'}->{$interface}->{'rate'}) {
+					$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface '$interface' class '$iclassID' has Limit '$iclassLimit' > interface speed '%s', adjusting to '%s'",
+							$iclassCIR > $config->{'interfaces'}->{$interface}->{'rate'},
+							$iclassCIR > $config->{'interfaces'}->{$interface}->{'rate'});
+					$iclassLimit = $iclassCIR > $config->{'interfaces'}->{$interface}->{'rate'};
+				}
+				if ($iclassCIR > $iclassLimit) {
+					$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface '$interface' class '$iclassID' has CIR '$iclassLimit' > Limit '$iclassLimit', adjusting CIR to '$iclassLimit");
+					$iclassCIR = $iclassLimit;
+				}
+
+				# Build class config
+				$config->{'interfaces'}->{$interface}->{'classes'}->{$iclassID} = {
+					'cir' => $iclassCIR,
+					'limit' => $iclassLimit
+				};
+
+				$logger->log(LOG_INFO,"[CONFIGMANAGER] Loaded interface '$interface' class rate for class ID '$iclassID': $iclassCIR/$iclassLimit.");
+			}
+
+			# Time to check the interface classes
+			foreach my $classID (keys %{$config->{'classes'}}) {
+				# Check if we have a rate defined for this class in the interface definition
+				if (!defined($config->{'interfaces'}->{$interface}->{'classes'}->{$classID})) {
+					$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface '$interface' has no class '$classID' defined, using interface limit");
+					$config->{'interfaces'}->{$interface}->{'classes'}->{$classID} = {
+						'cir' => $config->{'interfaces'}->{$interface}->{'rate'},
+						'limit' => $config->{'interfaces'}->{$interface}->{'rate'}
+					};
+				}
+			}
+		}
+
+	}
+	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Loading interfaces completed.");
+
+	# Pull in interface groupings
+	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Loading interface groups...");
+	# Check if we loaded an array or just text
+	my @interfaceGroups;
+	if (defined($gconfig->{'interface_group'})) {
+		if (ref($gconfig->{'interface_group'}) eq "ARRAY") {
+			@interfaceGroups = @{$gconfig->{'interface_group'}};
+		} else {
+			@interfaceGroups = ( $gconfig->{'interface_group'} );
+		}
+	} else {
+		@interfaceGroups = ( "eth1,eth0:Default" );
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] No interface groups, trying default eth1,eth0");
+	}
+	# Loop with interface groups
+	foreach my $interfaceGroup (@interfaceGroups) {
+		# Skip comments
+		next if ($interfaceGroup =~ /^\s*#/);
+		# Split off class ID and class name
+		my ($txiface,$rxiface,$friendlyName) = split(/[:,]/,$interfaceGroup);
+		if (!defined($config->{'interfaces'}->{$txiface})) {
+			$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface group definition '$interfaceGroup' has invalid interface '$txiface', ignoring");
+			next;
+		}
+		if (!defined($config->{'interfaces'}->{$rxiface})) {
+			$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface group definition '$interfaceGroup' has invalid interface '$rxiface', ignoring");
+			next;
+		}
+		if (!defined($friendlyName) || $friendlyName eq "") {
+			$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface group definition '$interfaceGroup' has invalid friendly name, ignoring");
+			next;
+		}
+
+		$config->{'interface_groups'}->{"$txiface,$rxiface"} = {
+			'name' => $friendlyName,
+			'txiface' => $txiface,
+			'rxiface' => $rxiface
+		};
+
+		$logger->log(LOG_INFO,"[CONFIGMANAGER] Loaded interface group '$friendlyName' with interfaces '$txiface/$rxiface'.");
+	}
+	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Interface groups loaded.");
+
 
 	# Check if we using a default pool or not
-	my $use_default_pool;
-	# Check if its a number
-	if (defined(my $var = isNumber($globals->{'file.config'}->{'shaping'}->{'use_default_pool'}))) {
-		if (defined($config->{'classes'}->{$var})) {
-			$logger->log(LOG_INFO,"[CONFIGMANAGER] Default pool set to use class $var '%s'",$config->{'classes'}->{$var});
-			$use_default_pool = $var;
+	if (defined($gconfig->{'default_pool'})) {
+		# Check if its a number
+		if (defined(my $default_pool = isNumber($gconfig->{'default_pool'}))) {
+			if (defined($config->{'classes'}->{$default_pool})) {
+				$logger->log(LOG_INFO,"[CONFIGMANAGER] Default pool set to use class '$default_pool' (%s)",$config->{'classes'}->{$default_pool});
+				$config->{'default_pool'} = $default_pool;
+			} else {
+				$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot enable default pool, class '$default_pool' does not exist");
+			}
 		} else {
-			$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot enable default pool, class $var does not exist");
-			$use_default_pool = 0;
-		}
-	}
-	# If use_default_pool is still not defined...
-	if (!defined($use_default_pool) && defined(my $var = booleanize($globals->{'file.config'}->{'shaping'}->{'use_default_pool'}))) {
-		# Check if we have a "yes" first of all
-		if ($var) {
-			$logger->log(LOG_INFO,"[CONFIGMANAGER] Default pool requested, but no class provided, defaulting to 10");
-			$use_default_pool = 10;
-			# Inject the class
-			$config->{'classes'}->{$use_default_pool} = "-UNCLASSIFIED-";
-			$logger->log(LOG_INFO,"[CONFIGMANAGER] Injected traffic class '-UNCLASSIFIED-' with ID $use_default_pool.");
-		}
-	}
-	# If its defined by something above, its time to use it
-	if (defined($use_default_pool) && $use_default_pool > 0) {
-		# If we are using the default pool, load the limits
-
-		# Pull in both config items
-		my $txrate;
-		my $rxrate;
-		if (defined($txrate = $globals->{'file.config'}->{'shaping'}->{'default_pool_txrate'})) {
-			$logger->log(LOG_INFO,"[CONFIGMANAGER] Set default_pool_txrate to '$txrate'");
-			$txrate = isNumber($txrate);
-		} else {
-			$logger->log(LOG_WARN,"[CONFIGMANAGER] There is a problem with default_pool_txrate, config item use_default_pool disabled");
-		}
-		if (defined($rxrate = $globals->{'file.config'}->{'shaping'}->{'default_pool_rxrate'})) {
-			$logger->log(LOG_INFO,"[CONFIGMANAGER] Set default_pool_rxrate to '$rxrate'");
-			$rxrate = isNumber($rxrate);
-		} else {
-			$logger->log(LOG_WARN,"[CONFIGMANAGER] There is a problem with default_pool_rxrate, config item use_default_pool disabled");
-		}
-		# Check we have both items configured, if not deconfigure
-		if (defined($txrate) && defined($rxrate)) {
-			$config->{'default_pool'}->{'classid'} = $use_default_pool;
-			$config->{'default_pool'}->{'txrate'} = $txrate;
-			$config->{'default_pool'}->{'rxrate'} = $rxrate;
-			$logger->log(LOG_INFO,"[CONFIGMANAGER] Using of default pool ENABLED with rates $txrate/$rxrate and class ID $use_default_pool");
-		} else {
-			$logger->log(LOG_INFO,"[CONFIGMANAGER] Using of default pool DISABLED");
+			$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot enable default pool, value for 'default_pool' is invalid");
 		}
 	}
 
@@ -545,12 +761,133 @@ sub checkGroupID
 }
 
 
+# Function to check interface group ID
+sub checkInterfaceGroupID
+{
+	my $igid = shift;
+	if (defined($config->{'interface_groups'}->{$igid})) {
+		return $igid;
+	}
+	return undef;
+}
+
+
+# Function to check the match priority ID exists
+sub checkMatchPriorityID
+{
+	my $mpid = shift;
+	if (defined($config->{'match_priorities'}->{$mpid})) {
+		return $mpid;
+	}
+	return undef;
+}
+
+
 # Function to check the class ID exists
 sub checkClassID
 {
 	my $cid = shift;
 	if (defined($config->{'classes'}->{$cid})) {
 		return $cid;
+	}
+	return undef;
+}
+
+
+# Return interface classes
+sub getInterface
+{
+	my $interface = shift;
+
+	# If we have this interface return its classes
+	if (defined($config->{'interfaces'}->{$interface})) {
+		my $res = dclone($config->{'interfaces'}->{$interface});
+		# We don't really want to return classes
+		delete($config->{'interfaces'}->{$interface}->{'classes'});
+		# And return it...
+		return $res;
+	}
+	return undef;
+}
+
+
+# Function to return the configured Interfaces
+sub getInterfaces
+{
+	return [ keys %{$config->{'interfaces'}} ];
+}
+
+
+# Return interface classes
+sub getInterfaceClasses
+{
+	my $interface = shift;
+
+	# If we have this interface return its classes
+	if (defined($config->{'interfaces'}->{$interface})) {
+		return dclone($config->{'interfaces'}->{$interface}->{'classes'});
+	}
+	return undef;
+}
+
+
+# Function to return our default pool configuration
+sub getInterfaceDefaultPool
+{
+	my $interface = shift;
+	# We don't really need the interface to return the default pool
+	return $config->{'default_pool'};
+}
+
+
+# Function to return interface rate
+sub getInterfaceRate
+{
+	my $interface = shift;
+
+	# If we have this interface return its rate
+	if (defined($config->{'interfaces'}->{$interface})) {
+		return $config->{'interfaces'}->{$interface}->{'rate'};
+	}
+	return undef;
+}
+
+
+# Function to get interface groups
+sub getInterfaceGroups
+{
+	my $interface_groups = dclone($config->{'interface_groups'});
+
+	return $interface_groups;
+}
+
+
+# Function to check if interface group is valid
+sub isInterfaceGroupValid
+{
+	my $interfaceGroup = shift;
+	if (defined($interfaceGroup) && defined($config->{'interface_groups'}->{$interfaceGroup})) {
+		return $interfaceGroup;
+	}
+	return undef;
+}
+
+
+# Function to get match priorities
+sub getMatchPriorities
+{
+	my $match_priorities = dclone($config->{'match_priorities'});
+
+	return $match_priorities;
+}
+
+
+# Function to check if interface group is valid
+sub isMatchPriorityValid
+{
+	my $matchPriority = shift;
+	if (defined($matchPriority) && defined($config->{'match_priorities'}->{$matchPriority})) {
+		return $matchPriority;
 	}
 	return undef;
 }
@@ -573,6 +910,40 @@ sub getLimitUsername
 	my $lid = shift;
 	if (defined($limits->{$lid})) {
 		return $limits->{$lid}->{'Username'};
+	}
+	return undef;
+}
+
+
+# Function to return a limit TX interface
+sub getLimitTxInterface
+{
+	my $lid = shift;
+	if (defined($limits->{$lid})) {
+		return $config->{'interface_groups'}->{$limits->{$lid}->{'InterfaceGroupID'}}->{'txiface'};
+	}
+	return undef;
+}
+
+
+# Function to return a limit RX interface
+sub getLimitRxInterface
+{
+	my $lid = shift;
+	if (defined($limits->{$lid})) {
+		return $config->{'interface_groups'}->{$limits->{$lid}->{'InterfaceGroupID'}}->{'rxiface'};
+	}
+	return undef;
+}
+
+
+# Function to return a limit match priority
+sub getLimitMatchPriority
+{
+	my $lid = shift;
+	if (defined($limits->{$lid})) {
+		# NK: No actual mappping yet
+		return $limits->{$lid}->{'MatchPriorityID'};
 	}
 	return undef;
 }
@@ -684,9 +1055,9 @@ sub getShaperState
 # Function to get traffic classes
 sub getTrafficClasses
 {
-	my %classes = %{$config->{'classes'}};
+	my $classes = dclone($config->{'classes'});
 
-	return \%classes;
+	return $classes;
 }
 
 
@@ -712,12 +1083,13 @@ sub isTrafficClassValid
 }
 
 
-# Function to return our default pool configuration
-sub getDefaultPoolConfig
+# Function to return the traffic priority based on a traffic class
+sub getTrafficPriority
 {
-	if (defined($config->{'default_pool'})) {
-		my %config = %{$config->{'default_pool'}};
-		return \%config;
+	my $class = shift;
+	# NK: Short circuit, our ClassID = Priority
+	if (defined($class) && defined($config->{'classes'}->{$class})) {
+		return $class;
 	}
 	return undef;
 }
@@ -843,6 +1215,16 @@ sub _process_limit_change
 		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process limit change for '".$limit->{'Username'}."' as the GroupID is invalid.");
 		return;
 	}
+	# Check interface group ID is OK
+	if (!defined($limitChange->{'InterfaceGroupID'} = checkInterfaceGroupID($limit->{'InterfaceGroupID'}))) {
+		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process limit change for '".$limit->{'Username'}."' as the InterfaceGroupID is invalid.");
+		return;
+	}
+	# Check match priority is OK
+	if (!defined($limitChange->{'MatchPriorityID'} = checkMatchPriorityID($limit->{'MatchPriorityID'}))) {
+		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process limit change for '".$limit->{'Username'}."' as the MatchPriorityID is invalid.");
+		return;
+	}
 	# Check class is OK
 	if (!defined($limitChange->{'ClassID'} = checkClassID($limit->{'ClassID'}))) {
 		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process limit change for '".$limit->{'Username'}."' as the ClassID is invalid.");
@@ -863,10 +1245,6 @@ sub _process_limit_change
 		$limitChange->{'TrafficLimitRxBurst'} = $limitChange->{'TrafficLimitRx'};
 		$limitChange->{'TrafficLimitRx'} = int($limitChange->{'TrafficLimitRxBurst'}/4);
 	}
-
-
-	# Optional priority, we default to 5
-	$limitChange->{'TrafficPriority'} = defined($limit->{'TrafficPriority'}) ? $limit->{'TrafficPriority'} : 5;
 
 	# Set when this entry expires
 	$limitChange->{'Expires'} = defined($limit->{'Expires'}) ? int($limit->{'Expires'}) : 0;

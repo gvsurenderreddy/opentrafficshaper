@@ -29,7 +29,12 @@ use opentrafficshaper::constants;
 use opentrafficshaper::logger;
 use opentrafficshaper::utils;
 
-use opentrafficshaper::plugins::configmanager qw( getLimitUsername );
+use opentrafficshaper::plugins::configmanager qw(
+		getLimitUsername
+
+		getLimitTxInterface
+		getLimitRxInterface
+);
 
 # FIXME
 use Time::HiRes qw( gettimeofday tv_interval );
@@ -46,7 +51,9 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 );
 @EXPORT_OK = qw(
 	getLastStats
-	getCachedStats
+	getStatsByClass
+	getSIDFromCID
+	getSIDFromLID
 );
 
 use constant {
@@ -70,8 +77,6 @@ our $pluginInfo = {
 	Start => \&plugin_start,
 };
 
-# There is no way to do this automatically
-use constant { STATISTICS_NUM_ITEMS => 11 };
 
 
 # Copy of system globals
@@ -109,7 +114,7 @@ my $statsConfig = {
 # Handle of DBI
 my $dbh;
 # DB user mappings
-my $statsDBLIDMap = { };
+my $statsDBIdentifierMap = { };
 # Stats queue
 my $statsQueue = [ ];
 # Stats ubscribers
@@ -184,20 +189,20 @@ sub plugin_init
 			$logger->log(LOG_ERR,"[STATISTICS] Failed to connect to database: %s",$DBI::errstr);
 		}
 
-		# Prepare user add statement
-		if ($dbh && (my $res = $dbh->prepare('INSERT INTO users (`Username`) VALUES (?)'))) {
-			$statsPreparedStatements->{'user_add'} = $res;
+		# Prepare identifier add statement
+		if ($dbh && (my $res = $dbh->prepare('INSERT INTO identifiers (`Identifier`) VALUES (?)'))) {
+			$statsPreparedStatements->{'identifier_add'} = $res;
 		} else {
-			$logger->log(LOG_ERR,"[STATISTICS] Failed to prepare statement 'user_add': %s",$DBI::errstr);
+			$logger->log(LOG_ERR,"[STATISTICS] Failed to prepare statement 'identifier_add': %s",$DBI::errstr);
 			$dbh->disconnect();
 			$dbh = undef;
 		}
 
-		# Prepare user get statement
-		if ($dbh && (my $res = $dbh->prepare('SELECT ID FROM users WHERE `Username` = ?'))) {
-			$statsPreparedStatements->{'user_get'} = $res;
+		# Prepare identifier get statement
+		if ($dbh && (my $res = $dbh->prepare('SELECT ID FROM identifiers WHERE `Identifier` = ?'))) {
+			$statsPreparedStatements->{'identifier_get'} = $res;
 		} else {
-			$logger->log(LOG_ERR,"[STATISTICS] Failed to prepare statement 'user_get': %s",$DBI::errstr);
+			$logger->log(LOG_ERR,"[STATISTICS] Failed to prepare statement 'identifier_get': %s",$DBI::errstr);
 			$dbh->disconnect();
 			$dbh = undef;
 		}
@@ -205,7 +210,7 @@ sub plugin_init
 		# Prepare stats consolidation statement
 		if ($dbh && (my $res = $dbh->prepare('
 			SELECT
-				`UserID`, `Timestamp` - (`Timestamp` % ?) AS TimestampM,
+				`IdentifierID`, `Timestamp` - (`Timestamp` % ?) AS TimestampM,
 				`Direction`,
 				MAX(`CIR`) AS `CIR`, MAX(`Limit`) AS `Limit`, MAX(`Rate`) AS `Rate`, MAX(`PPS`) AS `PPS`, MAX(`Queue_Len`) AS `Queue_Len`,
 				AVG(`Total_Bytes`) AS `Total_Bytes`, AVG(`Total_Packets`) AS `Total_Packets`, AVG(`Total_Overlimits`) AS `Total_Overlimits`, AVG(`Total_Dropped`) AS `Total_Dropped`
@@ -215,7 +220,7 @@ sub plugin_init
 				`Key` = ?
 				AND `Timestamp` < ?
 			GROUP BY
-				`UserID`, `TimestampM`, `Direction`
+				`IdentifierID`, `TimestampM`, `Direction`
 		'))) {
 			$statsPreparedStatements->{'stats_consolidate'} = $res;
 		} else {
@@ -281,7 +286,7 @@ sub session_stop
 	# Tear down data
 	$globals = undef;
 	$dbh = undef;
-	$statsDBLIDMap = { };
+	$statsDBIdentifierMap = { };
 	$subscribers = undef;
 	$statsPreparedStatements = { };
 	$lastCleanup = undef;
@@ -319,7 +324,7 @@ sub session_tick
 	my @insertData;
 	while (defined(my $stat = shift(@{$statsQueue})) && $numFlush < $maxFlush) {
 		push(@insertData,
-			$stat->{'userid'}, $stat->{'key'}, $stat->{'timestamp'},
+			$stat->{'identifierid'}, $stat->{'key'}, $stat->{'timestamp'},
 			$stat->{'direction'},
 			$stat->{'cir'}, $stat->{'limit'}, $stat->{'rate'}, $stat->{'pps'}, $stat->{'queue_len'},
 			$stat->{'total_bytes'}, $stat->{'total_packets'}, $stat->{'total_overlimits'}, $stat->{'total_dropped'}
@@ -333,7 +338,7 @@ sub session_tick
 		my $res = $dbh->do('
 			INSERT DELAYED INTO stats
 				(
-					`UserID`, `Key`, `Timestamp`,
+					`IdentifierID`, `Key`, `Timestamp`,
 					`Direction`,
 					`CIR`, `Limit`, `Rate`, `PPS`, `Queue_Len`,
 					`Total_Bytes`, `Total_Packets`, `Total_Overlimits`, `Total_Dropped`
@@ -348,15 +353,13 @@ sub session_tick
 	}
 
 	my $timer2 = [gettimeofday];
-# FIXME
-if ($numFlush) {
-	my $timediff2 = tv_interval($timer1,$timer2);
-	$logger->log(LOG_INFO,"[STATISTICS] Stats flush time %s/%s records: %s",$numFlush,$maxFlush,sprintf('%.3fs',$timediff2));
-}
+	# We only need stats if we did something, right?
+	if ($numFlush) {
+		my $timediff2 = tv_interval($timer1,$timer2);
+		$logger->log(LOG_INFO,"[STATISTICS] Stats flush time %s/%s records: %s",$numFlush,$maxFlush,sprintf('%.3fs',$timediff2));
+	}
 
 	my $res;
-
-
 
 	# Loop with our stats consolidation configuration
 	foreach my $key (keys %{$statsConfig}) {
@@ -398,38 +401,39 @@ if ($numFlush) {
 	# Setup another timer
 	my $timer3 = [gettimeofday];
 
-# FIXME
-if (!defined($lastCleanup->{'0'}) || $lastCleanup->{'0'} + 300 < $now) {
-warn "CLEANUP";
-	# Streamed stats is hard coded to 900s
-	$res = $sthStatsCleanup->execute(0, $now - 900);
-	if ($res) {
-		# We get 0E0 for 0 when none were removed
-		$res = 0 if ($res eq "0E0");
-		$logger->log(LOG_INFO,"[STATISTICS] Cleanup streamed stats %s",$res);
-	} else {
-		$logger->log(LOG_ERR,"[STATISTICS] Failed to execute stats cleanup statement: %s",$sthStatsCleanup->errstr());
-	}
-	# Loop and remove retained stats
-	foreach my $key (keys %{$statsConfig}) {
-		$res = $sthStatsCleanup->execute($key, $now - ($statsConfig->{$key}->{'retention'} * 86400));
-		if ($res) {
+	# We only need to run as often as the first precision
+	if (!defined($lastCleanup->{'0'}) || $lastCleanup->{'0'} + $statsConfig->{1}->{'precision'} < $now) {
+
+		# Streamed stats is removed 3 time periods past the first precision
+		if ($res = $sthStatsCleanup->execute(0, $now - ($statsConfig->{1}->{'precision'} * 3))) {
 			# We get 0E0 for 0 when none were removed
-			$res = 0 if ($res eq "0E0");
-			$logger->log(LOG_INFO,"[STATISTICS] Cleanup key %s stats %s",$key,$res);
+			if ($res ne "0E0") {
+				$logger->log(LOG_INFO,"[STATISTICS] Cleanup streamed stats %s",$res);
+			}
 		} else {
-			$logger->log(LOG_ERR,"[STATISTICS] Failed to execute stats cleanup statement for key %s: %s",$key,$sthStatsCleanup->errstr());
+			$logger->log(LOG_ERR,"[STATISTICS] Failed to execute stats cleanup statement: %s",$sthStatsCleanup->errstr());
 		}
+
+		# Loop and remove retained stats
+		foreach my $key (keys %{$statsConfig}) {
+			# Retention period is in # days
+			if ($res = $sthStatsCleanup->execute($key, $now - ($statsConfig->{$key}->{'retention'} * 86400))) {
+				# We get 0E0 for 0 when none were removed
+				if ($res ne "0E0") {
+					$logger->log(LOG_INFO,"[STATISTICS] Cleanup key %s stats %s",$key,$res);
+				}
+			} else {
+				$logger->log(LOG_ERR,"[STATISTICS] Failed to execute stats cleanup statement for key %s: %s",$key,$sthStatsCleanup->errstr());
+			}
+		}
+
+		# Set last main cleanup to now
+		$lastCleanup->{'0'} = $now;
+
+		my $timer4 = [gettimeofday];
+		my $timediff4 = tv_interval($timer3,$timer4);
+		$logger->log(LOG_INFO,"[STATISTICS] Stats cleanup time: %s",sprintf('%.3fs',$timediff4));
 	}
-
-	$lastCleanup->{'0'} = $now;
-
-	my $timer4 = [gettimeofday];
-	my $timediff4 = tv_interval($timer3,$timer4);
-	$logger->log(LOG_INFO,"[STATISTICS] Stats cleanup time: %s",sprintf('%.3fs',$timediff4));
-
-}
-
 
 	# Set delay on config updates
 	$kernel->delay(tick => TICK_PERIOD);
@@ -452,25 +456,9 @@ sub do_update
 	}
 
 	# Loop through stats data we got
-	foreach my $rawItem (keys %{$statsData}) {
-		my $stat = $statsData->{$rawItem};
-		# ID of the stat item in the stats table
-		my $statsID;
+	while ((my $sid, my $stat) = each(%{$statsData})) {
 
-		if ($rawItem =~ /^main/) {
-#			$statsItem = $rawItem;
-#FIXME
-next;
-
-		} else {
-			if (!defined($statsID = _getStatsIDFromLID($rawItem))) {
-# FIXME
-warn "IT BLEW UP!!!";
-				next;
-			}
-		}
-
-		$stat->{'userid'} = $statsID;
+		$stat->{'identifierid'} = $sid;
 		$stat->{'key'} = 0;
 
 		push(@{$statsQueue},$stat);
@@ -550,27 +538,161 @@ sub getLastStats
 	return $statistics;
 }
 
-# Return userstats
-sub getStats
+
+# Return stats based on a LID
+sub getStatsByLID
 {
 	my $lid = shift;
 
-
-	my $now = time();
 
 	# Max entries
 	my $entriesLeft = 100;
 
 	# Grab stats ID from LID
-	my $userid = _getCachedStatsIDFromLID($lid);
+	my $sid = getSIDFromLID($lid);
+	if (!defined($sid)) {
+		return { };
+	}
 
+	return _getStatsBySID($sid);
+}
+
+
+# Return stats based on an interface
+sub getStatsByClass
+{
+	my ($iface,$cid) = @_;
+
+
+	# Grab stats ID from LID
+	my $sid = getSIDFromCID($iface,$cid);
+	if (!defined($sid)) {
+		return { };
+	}
+
+	return _getStatsBySID($sid);
+}
+
+
+# Get the stats ID from Class ID
+sub getSIDFromCID
+{
+	my ($iface,$cid) = @_;
+
+	my $identifier = "Class:$iface:$cid";
+	return _getSIDFromIdentifier($identifier);
+}
+
+
+# Get the stats ID from a LID
+sub getSIDFromLID
+{
+	my ($lid) = @_;
+
+	if (defined(my $username = getLimitUsername($lid))) {
+		my $identifier = "Username:$username";
+		return _getSIDFromIdentifier($identifier);
+	}
+
+	return undef;
+}
+
+
+# Return traffic direction
+sub getTrafficDirection
+{
+	my ($lid,$interface) = @_;
+
+
+	# Grab the interfaces for this limit
+	my $txInterface = getLimitTxInterface($lid);
+	my $rxInterface = getLimitRxInterface($lid);
+
+	# Check what it matches...
+	if ($interface eq $txInterface) {
+		return STATISTICS_DIR_TX;
+	} elsif ($interface eq $rxInterface) {
+		return STATISTICS_DIR_RX;
+	}
+
+	return undef;
+}
+
+
+#
+# Internal Functions
+#
+
+sub _getCachedSIDFromIdentifier
+{
+	my $identifier = shift;
+
+
+	# If we don't have a user mapped
+	if (defined(my $sid = $statsDBIdentifierMap->{$identifier})) {
+		return $sid;
+	}
+
+	return undef;
+}
+
+
+sub _getSIDFromIdentifier
+{
+	my $identifier = shift;
+
+
+	# Check if we have it cached
+	if (my $sid = _getCachedSIDFromIdentifier($identifier)) {
+		return $sid;
+	}
+
+	# Try grab it from DB
+	my $identifierGetSTH = $statsPreparedStatements->{'identifier_get'};
+	if (my $res = $identifierGetSTH->execute($identifier)) {
+		# Grab first row and return
+		if (my $row = $identifierGetSTH->fetchrow_hashref()) {
+			return $statsDBIdentifierMap->{$identifier} = $row->{'id'};
+		}
+	} else {
+# FIXME
+warn "FAILED TO EXECUTE GETUSER: ".$identifierGetSTH->errstr;
+	}
+
+	# Try add it to the DB
+	my $identifierAddSTH = $statsPreparedStatements->{'identifier_add'};
+	if (my $res = $identifierAddSTH->execute($identifier)) {
+		return $statsDBIdentifierMap->{$identifier} = $dbh->last_insert_id("","","","");
+	} else {
+warn "DB ADD IDENTIFIER ERROR: ".$identifierAddSTH->errstr;
+	}
+}
+
+
+# Get aligned time on a Precision
+sub _getAlignedTime
+{
+	my ($time,$precision) = @_;
+	return $time - ($time % $precision);
+}
+
+
+# Internal function to get stats by SID
+sub _getStatsBySID
+{
+	my $sid = shift;
+
+
+	my $now = time();
+
+	# Prepare query
 	my $sth = $dbh->prepare('
 		SELECT
 			`Timestamp`, `Direction`, `Rate`, `PPS`, `CIR`, `Limit`
 		FROM
 			stats
 		WHERE
-			`UserID` = ?
+			`IdentifierID` = ?
 			AND `Key` = ?
 			AND `Timestamp` > ?
 			AND `Timestamp` < ?
@@ -578,8 +700,8 @@ sub getStats
 			`Timestamp` DESC
 		LIMIT 100
 	');
-
-	$sth->execute($userid,0,$now - 900, $now);
+	# Grab last 60 mins of data
+	$sth->execute($sid,0,$now - 3600, $now);
 
 	my $statistics;
 	while (my $item = $sth->fetchrow_hashref()) {
@@ -603,96 +725,9 @@ sub getStats
 		}
 	}
 
-#	# Do we have stats for this user in the cache?
-#	if (defined($statsCache->{$lid})) {
-#		# Loop with cache entries
-#		foreach my $timestamp (reverse sort keys %{$statsCache->{$lid}}) {
-#			# Loop with both directions
-#			foreach my $direction ('tx','rx') {
-#				# Get a easier to use handle on the stats
-#				if (my $stats = $statsCache->{$lid}->{$timestamp}->{$direction}) {
-#					# Setup the statistics hash
-#					$statistics->{$timestamp}->{$direction} = {
-#						'current_rate' => $stats->{'current_rate'},
-#						'current_pps' => $stats->{'current_pps'},
-#					};
-#				}
-#			}
-#
-#			$entriesLeft--;
-#
-#			# If we hit 0, break out the loop
-#			last if (!$entriesLeft);
-#		}
-#	}
-
 	return $statistics;
 }
 
-
-#
-# Internal Functions
-#
-
-sub _getCachedStatsIDFromLID
-{
-	my $lid = shift;
-
-
-	# If we don't have a user mapped
-	if (defined(my $statsID = $statsDBLIDMap->{$lid})) {
-		return $statsID;
-	}
-
-	return undef;
-}
-
-
-sub _getStatsIDFromLID
-{
-	my $lid = shift;
-
-
-	# Check if we have it cached
-	if (my $userid = _getCachedStatsIDFromLID($lid)) {
-		return $userid;
-	}
-
-	# Check if we got a limit username
-	my $username;
-	if (!defined($username = getLimitUsername($lid))) {
-		# If not ... just exit?
-		return undef;
-	}
-
-	# Try grab it from DB
-	my $userGetSTH = $statsPreparedStatements->{'user_get'};
-	if (my $res = $userGetSTH->execute($username)) {
-		# Grab first row and return
-		if (my $row = $userGetSTH->fetchrow_hashref()) {
-			return $statsDBLIDMap->{$lid} = $row->{'id'};
-		}
-	} else {
-# FIXME
-warn "FAILED TO EXECUTE GETUSER: ".$userGetSTH->errstr;
-	}
-
-	# Try add it to the DB
-	my $userAddSTH = $statsPreparedStatements->{'user_add'};
-	if (my $res = $userAddSTH->execute($username)) {
-		return $statsDBLIDMap->{$lid} = $dbh->last_insert_id("","","","");
-	} else {
-warn "DB ADD USER ERROR: ".$userAddSTH->errstr;
-	}
-}
-
-
-# Get aligned time on a Precision
-sub _getAlignedTime
-{
-	my ($time,$precision) = @_;
-	return $time - ($time % $precision);
-}
 
 
 
