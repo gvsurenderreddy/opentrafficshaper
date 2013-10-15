@@ -231,25 +231,30 @@ sub task_child_stdout
 
 	# Is this a system class?
 	# XXX: _class_parent is hard coded to 1
-	if ($stat->{'_class_parent'} == 1 && (my $classChildDec = hex($stat->{'_class_child'})) < 100) {
-
-		# Split off the different types of updates
-		if ($classChildDec == 1) {
-			$sid = opentrafficshaper::plugins::statistics::getSIDFromCID($interface,0);
-		} else {
-			# Save the class with the decimal number
-			if (my $tcClass =  opentrafficshaper::plugins::tc::isTcTrafficClassValid($interface,1,$stat->{'_class_child'})) {
-				my $classID = hex($tcClass);
-				$sid = opentrafficshaper::plugins::statistics::getSIDFromCID($interface,$classID);
+	my $classChildDec = hex($stat->{'_class_child'});
+	if ($stat->{'_class_parent'} == 1) {
+		# Check if this is a limit class...
+		if (opentrafficshaper::plugins::tc::isTcLimitClass($interface,1,$stat->{'_class_child'})) {
+			if (defined(my $lid = opentrafficshaper::plugins::tc::getLIDFromTcLimitClass($interface,$stat->{'_class_child'}))) {
+				$sid = opentrafficshaper::plugins::statistics::getSIDFromLID($lid);
+				$direction = opentrafficshaper::plugins::statistics::getTrafficDirection($lid,$interface);
 			} else {
-				$logger->log(LOG_WARN,"[TCSTATS] System traffic class '%s:%s' NOT FOUND",$stat->{'_class_parent'},$stat->{'_class_child'});
+				$logger->log(LOG_WARN,"[TCSTATS] Limit traffic class '%s:%s' NOT FOUND",$stat->{'_class_parent'},$stat->{'_class_child'});
 			}
-		}
-
-	} else {
-		if (defined(my $lid = opentrafficshaper::plugins::tc::getLIDFromTcLimitClass($interface,$stat->{'_class_child'}))) {
-			$sid = opentrafficshaper::plugins::statistics::getSIDFromLID($lid);
-			$direction = opentrafficshaper::plugins::statistics::getTrafficDirection($lid,$interface);
+		} else {
+			# Class = 1 is the root
+			if ($classChildDec == 1) {
+				# This is a special case case
+				$sid = opentrafficshaper::plugins::statistics::getSIDFromCID($interface,0);
+			} else {
+				# Save the class with the decimal number
+				if (my $tcClass =  opentrafficshaper::plugins::tc::isTcTrafficClassValid($interface,1,$stat->{'_class_child'})) {
+					my $classID = hex($tcClass);
+					$sid = opentrafficshaper::plugins::statistics::getSIDFromCID($interface,$classID);
+				} else {
+					$logger->log(LOG_WARN,"[TCSTATS] System traffic class '%s:%s' NOT FOUND",$stat->{'_class_parent'},$stat->{'_class_child'});
+				}
+			}
 		}
 	}
 
