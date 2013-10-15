@@ -551,6 +551,23 @@ sub getLIDFromTcLimitClass
 }
 
 
+# Function to return if this is linked to a system class or limit class
+sub isTcLimitClass
+{
+	my ($interface,$majorTcClass,$minorTcClass) = @_;
+
+
+	# Return the class ID if found
+	if (my $ref = __getRefByMinorTcClass($interface,$majorTcClass,$minorTcClass)) {
+		if (!($ref =~ /^_class_/)) {
+			return $minorTcClass;
+		}
+	}
+
+	return undef;
+}
+
+
 # Function to return the traffic class ID if its valid
 sub isTcTrafficClassValid
 {
