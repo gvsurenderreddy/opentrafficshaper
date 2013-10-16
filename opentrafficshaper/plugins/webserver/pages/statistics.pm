@@ -51,11 +51,6 @@ sub bylimit
 	my ($kernel,$globals,$client_session_id,$request) = @_;
 
 
-	# If the plugin is not loaded, we cannot pull stats
-	if (!plugin_is_loaded('statistics')) {
-		return undef;
-	}
-
 	# Header
 	my $content = <<EOF;
 		<div id="header">
@@ -140,11 +135,6 @@ sub databylimit
 	my ($kernel,$globals,$client_session_id,$request) = @_;
 
 
-	# If the plugin is not loaded, we cannot pull stats
-	if (!plugin_is_loaded('statistics')) {
-		return undef;
-	}
-
 	# Parse GET data
 	my $queryParams = parseURIQuery($request);
 
@@ -194,11 +184,6 @@ sub byclass
 {
 	my ($kernel,$globals,$client_session_id,$request) = @_;
 
-
-	# If the plugin is not loaded, we cannot pull stats
-	if (!plugin_is_loaded('statistics')) {
-		return undef;
-	}
 
 	# Header
 	my $content = <<EOF;
@@ -305,11 +290,6 @@ sub databyclass
 {
 	my ($kernel,$globals,$client_session_id,$request) = @_;
 
-
-	# If the plugin is not loaded, we cannot pull stats
-	if (!plugin_is_loaded('statistics')) {
-		return undef;
-	}
 
 	# Parse GET data
 	my $queryParams = parseURIQuery($request);

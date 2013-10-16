@@ -139,7 +139,7 @@ EOF
 		# If the statistics plugin is loaded pull in some stats
 		my $statsPPSTx = my $statsRateTx = my $statsPrioTx = "-";
 		my $statsPPSRx = my $statsRateRx = my $statsPrioRx = "-";
-		if (plugin_is_loaded('statistics')) {
+		if (isPluginLoaded('statistics')) {
 			my $stats = opentrafficshaper::plugins::statistics::getLastStats($limit->{'Username'});
 			# Pull off tx stats
 			if (my $statsTx = $stats->{'tx'}) {

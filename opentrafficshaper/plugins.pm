@@ -28,7 +28,7 @@ require Exporter;
 our (@ISA,@EXPORT,@EXPORT_OK);
 @ISA = qw(Exporter);
 @EXPORT = qw(
-	plugin_is_loaded
+	isPluginLoaded
 );
 @EXPORT_OK = qw(
 	plugin_register
@@ -39,7 +39,7 @@ my $globals;
 
 
 # Check if a plugin is loaded
-sub plugin_is_loaded
+sub isPluginLoaded
 {
 	my $pluginName = shift;
 
@@ -122,7 +122,7 @@ sub _plugin_register {
 		# Loop with plugin requires
 		foreach my $require (@{$pluginInfo->{'Requires'}}) {
 			# Check if plugin is loaded
-			my $found = plugin_is_loaded($require);
+			my $found = isPluginLoaded($require);
 			# If still not found ERR out
 			if (!$found) {
 				$logger->log(LOG_ERR,"[MAIN] Dependency '$require' for plugin '$pluginName' NOT MET. Make sure its loaded before '$pluginName'");

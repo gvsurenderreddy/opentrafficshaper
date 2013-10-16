@@ -37,7 +37,6 @@ use opentrafficshaper::plugins;
 use opentrafficshaper::plugins::webserver::pages::static;
 use opentrafficshaper::plugins::webserver::pages::index;
 use opentrafficshaper::plugins::webserver::pages::limits;
-use opentrafficshaper::plugins::webserver::pages::statistics;
 use opentrafficshaper::plugins::webserver::pages::configmanager;
 
 
@@ -89,12 +88,6 @@ my $resources = {
 			'limit-add' => \&opentrafficshaper::plugins::webserver::pages::limits::limit_addedit,
 			'limit-remove' => \&opentrafficshaper::plugins::webserver::pages::limits::limit_remove,
 			'limit-edit' => \&opentrafficshaper::plugins::webserver::pages::limits::limit_addedit,
-		},
-		'statistics' => {
-			'by-limit' => \&opentrafficshaper::plugins::webserver::pages::statistics::bylimit,
-			'data-by-limit' => \&opentrafficshaper::plugins::webserver::pages::statistics::databylimit,
-			'by-class' => \&opentrafficshaper::plugins::webserver::pages::statistics::byclass,
-			'data-by-class' => \&opentrafficshaper::plugins::webserver::pages::statistics::databyclass,
 		},
 		'configmanager' => {
 			'default' => \&opentrafficshaper::plugins::webserver::pages::configmanager::default,
@@ -148,6 +141,21 @@ sub plugin_init
 		Stopped => \&server_session_stop,
 	);
 
+
+	# Load statistics pages if the statistics module is enabled
+	if (isPluginLoaded('statistics')) {
+		use opentrafficshaper::plugins::webserver::pages::statistics;
+
+		# Load resources
+		$resources->{'HTTP'}->{'statistics'} = {
+			'by-limit' => \&opentrafficshaper::plugins::webserver::pages::statistics::bylimit,
+			'data-by-limit' => \&opentrafficshaper::plugins::webserver::pages::statistics::databylimit,
+			'by-class' => \&opentrafficshaper::plugins::webserver::pages::statistics::byclass,
+			'data-by-class' => \&opentrafficshaper::plugins::webserver::pages::statistics::databyclass,
+		};
+
+		$logger->log(LOG_INFO,"[WEBSERVER] Loaded statistics pages as statistics module is loaded");
+	}
 
 	return 1;
 }
@@ -635,7 +643,7 @@ sub _parse_http_resource
 		# If we have a list of requires, check them
 		if (defined($handler->{'requires'})) {
 			foreach my $require (@{$handler->{'requires'}}) {
-				if (!plugin_is_loaded($require)) {
+				if (!isPluginLoaded($require)) {
 					return httpDisplayFault(HTTP_NOT_IMPLEMENTED,"Method Not Available","The requested method '$action' in '$module' is not currently available");
 				}
 			}
