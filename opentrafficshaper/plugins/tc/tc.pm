@@ -471,6 +471,12 @@ sub do_remove
 		return;
 	}
 
+	# Make sure its being shaped at present, it could be we have multiple removes queued?
+	if (getShaperState($lid) == SHAPER_NOTLIVE) {
+		$logger->log(LOG_INFO,"[TC] Ignoring duplicate remove for '$limit->{'Username'}' [$lid]");
+		return;
+	}
+
 	$logger->log(LOG_INFO,"[TC] Remove '$limit->{'Username'}' [$lid]");
 
 	# Grab our interfaces
