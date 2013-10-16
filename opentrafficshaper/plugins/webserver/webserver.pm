@@ -1,6 +1,6 @@
 # OpenTrafficShaper webserver module
 # Copyright (C) 2007-2013, AllWorldIT
-# 
+#
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
@@ -60,7 +60,7 @@ use constant {
 our $pluginInfo = {
 	Name => "Webserver",
 	Version => VERSION,
-	
+
 	Init => \&plugin_init,
 	Start => \&plugin_start,
 };
@@ -192,7 +192,7 @@ sub server_client_connected
 }
 
 
-# Signal that the client has disconnected 
+# Signal that the client has disconnected
 sub server_client_disconnected
 {
 	my ($kernel,$heap,$session,$request) = @_[KERNEL, HEAP, SESSION, ARG0];
@@ -203,7 +203,7 @@ sub server_client_disconnected
 	if (
 			defined($connections->{$client_session_id}->{'resource'}) &&
 			defined($connections->{$client_session_id}->{'resource'}->{'handler'}) &&
-			ref($connections->{$client_session_id}->{'resource'}->{'handler'}) eq 'HASH' && 
+			ref($connections->{$client_session_id}->{'resource'}->{'handler'}) eq 'HASH' &&
 			defined($connections->{$client_session_id}->{'resource'}->{'handler'}->{'on_disconnect'})
 	) {
 		# Call disconnection function
@@ -555,7 +555,7 @@ sub _server_request_http
 		# The content in a redirect is the URL
 		} elsif ($res == HTTP_TEMPORARY_REDIRECT) {
 			$response = httpRedirect("//".$request->header('host')."/" . $content);
-		# Extra in this case is the error description 
+		# Extra in this case is the error description
 		} else {
 			$response = httpDisplayFault($res,$content,$extra);
 		}
@@ -604,8 +604,8 @@ sub _parse_http_resource
 	$dmodule = "index" if (!defined($dmodule) || $dmodule eq "");
 	$daction = "default" if (!defined($daction) || $daction eq "");
 	# Sanitize
-	(my $module = $dmodule) =~ s/[^A-Za-z0-9]//g;	
-	(my $action = $daction) =~ s/[^A-Za-z0-9\-]//g;	
+	(my $module = $dmodule) =~ s/[^A-Za-z0-9]//g;
+	(my $action = $daction) =~ s/[^A-Za-z0-9\-]//g;
 
 	# If module name is sneaky? then just block it
 	if ($module ne $dmodule) {
@@ -637,7 +637,7 @@ sub _parse_http_resource
 			foreach my $require (@{$handler->{'requires'}}) {
 				if (!plugin_is_loaded($require)) {
 					return httpDisplayFault(HTTP_NOT_IMPLEMENTED,"Method Not Available","The requested method '$action' in '$module' is not currently available");
-				}	
+				}
 			}
 		}
 	}

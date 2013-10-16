@@ -36,7 +36,7 @@ use opentrafficshaper::plugins::configmanager qw(
 		getLimitRxInterface
 );
 
-# FIXME
+# NK: TODO: Maybe we want to remove timing at some stage? maybe not?
 use Time::HiRes qw( gettimeofday tv_interval );
 
 # Exporter stuff
@@ -450,7 +450,7 @@ sub do_update
 	my ($kernel, $statsData) = @_[KERNEL, ARG0];
 
 
-	# FIXME? This requires DB access
+	# TODO? This requires DB access
 	if (!$dbh) {
 		return;
 	}

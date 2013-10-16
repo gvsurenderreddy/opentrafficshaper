@@ -29,7 +29,7 @@ use opentrafficshaper::logger;
 use opentrafficshaper::utils;
 
 use opentrafficshaper::plugins::configmanager qw(
-		getLimit getLimitAttribute setLimitAttribute removeLimitAttribute 
+		getLimit getLimitAttribute setLimitAttribute removeLimitAttribute
 		getLimitTxInterface getLimitRxInterface getLimitMatchPriority
 
 		getTrafficPriority
@@ -695,7 +695,7 @@ sub _tc_iface_init
 					'dev',$interface,
 					'parent',"$defaultPoolClass:".toHex($prioBand),
 					'handle',_reserveMajorTcClass($interface,"$defaultPoolClass=>$prioBand").":",
-# FIXME: NK - try enable the below
+# TODO: NK - try enable the below
 #					'estimator','1sec','4sec', # Quick monitoring, every 1s with 4s constraint
 					'red',
 						'min',$redMin,
@@ -925,7 +925,7 @@ sub _tc_class_optimize
 						'at',22+$config->{'iphdr_offset'},
 				'flowid',"$limitTcClass:1",
 	]);
-	# FIXME: Make this customizable not hard coded
+	# TODO: Make this customizable not hard coded?
 	# Mikrotik Management Port
 	$changeSet->add([
 			'/sbin/tc','filter','add',
