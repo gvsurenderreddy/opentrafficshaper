@@ -144,17 +144,20 @@ sub plugin_init
 
 	# Load statistics pages if the statistics module is enabled
 	if (isPluginLoaded('statistics')) {
-		use opentrafficshaper::plugins::webserver::pages::statistics;
-
-		# Load resources
-		$resources->{'HTTP'}->{'statistics'} = {
-			'by-limit' => \&opentrafficshaper::plugins::webserver::pages::statistics::bylimit,
-			'data-by-limit' => \&opentrafficshaper::plugins::webserver::pages::statistics::databylimit,
-			'by-class' => \&opentrafficshaper::plugins::webserver::pages::statistics::byclass,
-			'data-by-class' => \&opentrafficshaper::plugins::webserver::pages::statistics::databyclass,
-		};
-
-		$logger->log(LOG_INFO,"[WEBSERVER] Loaded statistics pages as statistics module is loaded");
+		# Check if we can actually load the pages
+		eval{ use opentrafficshaper::plugins::webserver::pages::statistics };
+		if ($@) {
+			$logger->log(LOG_INFO,"[WEBSERVER] Failed to load statistics pages: $@");
+		} else {
+			# Load resources
+			$resources->{'HTTP'}->{'statistics'} = {
+				'by-limit' => \&opentrafficshaper::plugins::webserver::pages::statistics::bylimit,
+				'data-by-limit' => \&opentrafficshaper::plugins::webserver::pages::statistics::databylimit,
+				'by-class' => \&opentrafficshaper::plugins::webserver::pages::statistics::byclass,
+				'data-by-class' => \&opentrafficshaper::plugins::webserver::pages::statistics::databyclass,
+			};
+			$logger->log(LOG_INFO,"[WEBSERVER] Loaded statistics pages as statistics module is loaded");
+		}
 	}
 
 	return 1;
