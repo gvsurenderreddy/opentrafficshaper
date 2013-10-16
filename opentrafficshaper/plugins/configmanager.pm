@@ -29,6 +29,8 @@ use opentrafficshaper::constants;
 use opentrafficshaper::logger;
 use opentrafficshaper::utils;
 
+# NK: TODO: Maybe we want to remove timing at some stage? maybe not?
+use Time::HiRes qw( gettimeofday tv_interval );
 
 
 # Exporter stuff
@@ -83,8 +85,9 @@ use constant {
 	# How often our config check ticks
 	TICK_PERIOD => 5,
 
-	# Cleanup interval
+	# Intervals for periodic actions
 	CLEANUP_INTERVAL => 300,
+	STATE_SYNC_INTERVAL => 300,
 };
 
 # Mandatory config attributes
@@ -203,6 +206,9 @@ our $config = {
 
 # Last time the cleanup ran
 my $lastCleanup = time();
+# If our state has changed and when last we sync'd to disk
+my $stateChanged = 0;
+my $lastStateSync = time();
 
 #
 # LIMITS
@@ -653,7 +659,11 @@ sub session_stop
 
 	$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Shutting down, saving configuration...");
 
-	_write_statefile();
+	# We only need to write the sate if something changed?
+	if ($stateChanged) {
+		# The 1 means FULL WRITE of all entries
+		_write_statefile(1);
+	}
 
 	# Blow away all data
 	$globals = undef;
@@ -703,6 +713,11 @@ sub session_tick
 	# If overrides changed, we need to reprocess all limits
 	if ($overridesChanged) {
 		_resolve_overrides_and_post($kernel);
+	}
+
+	# Check if we should sync state to disk
+	if ($stateChanged && $lastStateSync + STATE_SYNC_INTERVAL < $now) {
+		_write_statefile();
 	}
 
 	# Reset tick
@@ -1411,137 +1426,6 @@ sub _process_override_remove
 }
 
 
-# Load our statefile
-sub _load_statefile
-{
-	my $kernel = shift;
-
-
-	# Check if the state file exists first of all
-	if (! -e $config->{'statefile'}) {
-		$logger->log(LOG_INFO,"[CONFIGMANAGER] Statefile '".$config->{'statefile'}."' doesn't exist");
-		return;
-	}
-
-	# Pull in a hash for our statefile
-	my %stateHash;
-	if (! tie %stateHash, 'Config::IniFiles', ( -file => $config->{'statefile'} )) {
-		my $reason = $1 || "Config file blank?";
-		$logger->log(LOG_ERR,"[CONFIGMANAGER] Failed to open statefile '".$config->{'statefile'}."': $reason");
-		# NK: Breaks load on blank file
-		# Set it to undef so we don't overwrite it...
-		#$config->{'statefile'} = undef;
-		return;
-	}
-	# Grab the object handle
-	my $state = tied( %stateHash );
-
-	# Loop with user overrides
-	foreach my $section ($state->GroupMembers('override')) {
-		my $override = $stateHash{$section};
-
-		# Our user override
-		my $coverride;
-		foreach my $attr (OVERRIDE_PERSISTENT_ATTRIBUTES) {
-			if (defined($override->{$attr})) {
-				$coverride->{$attr} = $override->{$attr};
-			}
-		}
-
-		# Proces this override
-		_process_override_change($coverride);
-	}
-
-	# Loop with persistent limits
-	foreach my $section ($state->GroupMembers('persist')) {
-		my $user = $stateHash{$section};
-
-		# User to push through to process change
-		my $cuser;
-		foreach my $attr (LIMIT_PERSISTENT_ATTRIBUTES) {
-			if (defined($user->{$attr})) {
-				$cuser->{$attr} = $user->{$attr};
-			}
-		}
-		# This is a new entry
-		$cuser->{'Status'} = 'new';
-
-		# Check username & IP are defined
-		if (!defined($cuser->{'Username'}) || !defined($cuser->{'IP'})) {
-			$logger->log(LOG_WARN,"[CONFIGMANAGER] Failed to load persistent user with no username or IP '$section'");
-			next;
-		}
-
-		# Process this user
-		_process_limit_change($cuser);
-	}
-}
-
-
-# Write out statefile
-sub _write_statefile
-{
-	# Check if the state file exists first of all
-	if (!defined($config->{'statefile'})) {
-		$logger->log(LOG_WARN,"[CONFIGMANAGER] No statefile defined. Possible initial load error?");
-		return;
-	}
-
-	# Only write out if we actually have limits & overrides, else we may of crashed?
-	if (keys %{$limits} < 1 && keys %{$overrides} < 1) {
-		$logger->log(LOG_WARN,"[CONFIGMANAGER] Not writing state file as there are no active limits or overrides");
-		return;
-	}
-
-	# Create new state file object
-	my $state = new Config::IniFiles();
-
-	# Loop with persistent limits, these are limits with expires = 0
-	while ((undef, my $limit) = each(%{$limits})) {
-		# Skip over expiring entries, we only want persistent ones
-		# XXX: Should we not just save all of them? load?
-		next if ($limit->{'Expires'});
-		# Pull in the section name
-		my $section = "persist " . $limit->{'Username'};
-
-		# Add a new section for this user
-		$state->AddSection($section);
-		# Items we want for persistent entries
-		foreach my $pItem (LIMIT_PERSISTENT_ATTRIBUTES) {
-			# Set items up
-			if (defined(my $value = $limit->{$pItem})) {
-				$state->newval($section,$pItem,$value);
-			}
-		}
-	}
-
-	# Loop with overrides
-	foreach my $oid (keys %{$overrides}) {
-		# Pull in the section name
-		my $section = "override " . $oid;
-
-		# Add a new section for this user
-		$state->AddSection($section);
-		# Items we want for override entries
-		foreach my $pItem (OVERRIDE_PERSISTENT_ATTRIBUTES) {
-			# Set items up
-			if (defined(my $value = $overrides->{$oid}->{$pItem})) {
-				$state->newval($section,$pItem,$value);
-			}
-		}
-
-	}
-
-	# Check for an error
-	if (!defined($state->WriteConfig($config->{'statefile'}))) {
-		$logger->log(LOG_ERR,"[CONFIGMANAGER] Failed to write statefile '".$config->{'statefile'}."': $!");
-		return;
-	}
-
-	$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Configuration saved");
-}
-
-
 # Do the actual limit queue processing
 sub _process_limit_change_queue
 {
@@ -1728,6 +1612,8 @@ sub _process_limit_change_queue
 			delete($limitChangeQueue->{$lid});
 		}
 
+		# Well, we changed something...
+		$stateChanged++;
 	}
 
 
@@ -1793,6 +1679,9 @@ sub _process_override_change_queue
 		delete($overrideChangeQueue->{$oid});
 
 		$overridesChanged = 1;
+
+		# Something changed...
+		$stateChanged++;
 	}
 
 	return $overridesChanged;
@@ -1909,6 +1798,165 @@ sub _resolve_overrides
 	}
 
 	return @overridden;
+}
+
+
+# Load our statefile
+sub _load_statefile
+{
+	my $kernel = shift;
+
+
+	# Check if the state file exists first of all
+	if (! -e $config->{'statefile'}) {
+		$logger->log(LOG_INFO,"[CONFIGMANAGER] Statefile '".$config->{'statefile'}."' doesn't exist");
+		return;
+	}
+
+	# Pull in a hash for our statefile
+	my %stateHash;
+	if (! tie %stateHash, 'Config::IniFiles', ( -file => $config->{'statefile'} )) {
+		my $reason = $1 || "Config file blank?";
+		$logger->log(LOG_ERR,"[CONFIGMANAGER] Failed to open statefile '".$config->{'statefile'}."': $reason");
+		# NK: Breaks load on blank file
+		# Set it to undef so we don't overwrite it...
+		#$config->{'statefile'} = undef;
+		return;
+	}
+	# Grab the object handle
+	my $state = tied( %stateHash );
+
+	# Loop with user overrides
+	foreach my $section ($state->GroupMembers('override')) {
+		my $override = $stateHash{$section};
+
+		# Our user override
+		my $coverride;
+		foreach my $attr (OVERRIDE_PERSISTENT_ATTRIBUTES) {
+			if (defined($override->{$attr})) {
+				$coverride->{$attr} = $override->{$attr};
+			}
+		}
+
+		# Proces this override
+		_process_override_change($coverride);
+	}
+
+	# Loop with persistent limits
+	foreach my $section ($state->GroupMembers('persist')) {
+		my $user = $stateHash{$section};
+
+		# User to push through to process change
+		my $cuser;
+		foreach my $attr (LIMIT_PERSISTENT_ATTRIBUTES) {
+			if (defined($user->{$attr})) {
+				$cuser->{$attr} = $user->{$attr};
+			}
+		}
+		# This is a new entry
+		$cuser->{'Status'} = 'new';
+
+		# Check username & IP are defined
+		if (!defined($cuser->{'Username'}) || !defined($cuser->{'IP'})) {
+			$logger->log(LOG_WARN,"[CONFIGMANAGER] Failed to load persistent user with no username or IP '$section'");
+			next;
+		}
+
+		# Process this user
+		_process_limit_change($cuser);
+	}
+}
+
+
+# Write out statefile
+sub _write_statefile
+{
+	my $fullWrite = shift;
+
+
+	# We reset this early so we don't get triggred continuously if we encounter errors
+	$stateChanged = 0;
+	$lastStateSync = time();
+
+	# Check if the state file exists first of all
+	if (!defined($config->{'statefile'})) {
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] No statefile defined. Possible initial load error?");
+		return;
+	}
+
+	# Only write out if we actually have limits & overrides, else we may of crashed?
+	if (keys %{$limits} < 1 && keys %{$overrides} < 1) {
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Not writing state file as there are no active limits or overrides");
+		return;
+	}
+
+	my $timer1 = [gettimeofday];
+
+	# Create new state file object
+	my $state = new Config::IniFiles();
+
+	# Loop with persistent limits, these are limits with expires = 0
+	while ((undef, my $limit) = each(%{$limits})) {
+		# Skip over dynamic entries, we only want persistent ones unless we doing a full write
+		next if (!$fullWrite && $limit->{'Source'} eq "plugin.radius");
+
+		# Pull in the section name
+		my $section = "persist " . $limit->{'Username'};
+
+		# Add a new section for this user
+		$state->AddSection($section);
+		# Items we want for persistent entries
+		foreach my $pItem (LIMIT_PERSISTENT_ATTRIBUTES) {
+			# Set items up
+			if (defined(my $value = $limit->{$pItem})) {
+				$state->newval($section,$pItem,$value);
+			}
+		}
+	}
+
+	# Loop with overrides
+	foreach my $oid (keys %{$overrides}) {
+		# Pull in the section name
+		my $section = "override " . $oid;
+
+		# Add a new section for this user
+		$state->AddSection($section);
+		# Items we want for override entries
+		foreach my $pItem (OVERRIDE_PERSISTENT_ATTRIBUTES) {
+			# Set items up
+			if (defined(my $value = $overrides->{$oid}->{$pItem})) {
+				$state->newval($section,$pItem,$value);
+			}
+		}
+
+	}
+
+	# Check for an error
+	my $newFilename = $config->{'statefile'}.".new";
+	if (!defined($state->WriteConfig($newFilename))) {
+		$logger->log(LOG_ERR,"[CONFIGMANAGER] Failed to write temporary statefile '$newFilename': $!");
+		return;
+	}
+
+	# If we have a state file, we going to rename it
+	my $bakFilename = $config->{'statefile'}.".bak";
+	if (-f $config->{'statefile'}) {
+		# Check if we could rename/move
+		if (!rename($config->{'statefile'},$bakFilename)) {
+			$logger->log(LOG_ERR,"[CONFIGMANAGER] Failed to rename '%s' to '$bakFilename': $!",$config->{'statefile'});
+			return;
+		}
+	}
+	# Move the new filename in place
+	if (!rename($newFilename,$config->{'statefile'})) {
+		$logger->log(LOG_ERR,"[CONFIGMANAGER] Failed to rename '$newFilename' to '%s': $!",$config->{'statefile'});
+		return;
+	}
+
+	my $timer2 = [gettimeofday];
+	my $timediff2 = tv_interval($timer1,$timer2);
+
+	$logger->log(LOG_NOTICE,"[CONFIGMANAGER] State file '%s' saved in %s",$config->{'statefile'},sprintf('%.3fs',$timediff2));
 }
 
 
