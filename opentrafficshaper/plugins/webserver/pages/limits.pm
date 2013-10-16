@@ -290,6 +290,15 @@ sub limit_addedit
 		Notes
 	);
 
+	# Expires modifier options
+	my $expiresModifiers = {
+		'm' => "Minutes",
+		'h' => "Hours",
+		'd' => "Days",
+		'n' => "Never",
+	};
+
+
 	# Title of the form, by default its an add form
 	my $formType = "Add";
 	my $formNoEdit = "";
@@ -388,14 +397,16 @@ sub limit_addedit
 			} else {
 				# Check if its defined
 				if (defined($formData->{'inputExpires.modifier'}) && $formData->{'inputExpires.modifier'} ne "") {
-					# Minutes
-					if ($formData->{'inputExpires.modifier'} eq "m") {
+					# Never
+					if ($formData->{'inputExpires.modifier'} eq "n") {
+						$expires = 0;
+					} elsif ($formData->{'inputExpires.modifier'} eq "m") {
 						$expires *= 60;
 					# Hours
 					} elsif ($formData->{'inputExpires.modifier'} eq "h") {
 						$expires *= 3600;
 					# Days
-					} elsif ($formData->{'inputExpires,modifier'} eq "d") {
+					} elsif ($formData->{'inputExpires.modifier'} eq "d") {
 						$expires *= 86400;
 					} else {
 						push(@errors,"Expires modifier is not valid");
@@ -519,6 +530,22 @@ EOF
 		$trafficClassStr .= '<option value="'.$classID.'" '.$selected.'>'.$trafficClasses->{$classID}.'</option>';
 	}
 
+	# Generate expires modifiers list
+	my $expiresModifierStr = "";
+	foreach my $expireModifier (sort keys %{$expiresModifiers}) {
+		# Process selections nicely
+		my $selected = "";
+		if ($formData->{'inputExpires.modifier'} ne "" && $formData->{'inputExpires.modifier'} eq $expireModifier) {
+			$selected = "selected";
+		}
+		# Default to n if nothing is specified
+		if ($formData->{'inputExpires.modifier'} eq "" && $expireModifier eq "n") {
+			$selected = "selected";
+		}
+		# And build the options
+		$expiresModifierStr .= '<option value="'.$expireModifier.'" '.$selected.'>'.$expiresModifiers->{$expireModifier}.'</option>';
+	}
+
 	# Blank expires if its 0
 	if (defined($formData->{'Expires'}) && $formData->{'Expires'} eq "0") {
 		$formData->{'Expires'} = "";
@@ -585,13 +612,11 @@ EOF
 		<label for="Expires" class="col-lg-2 control-label">Expires</label>
 		<div class="row">
 			<div class="col-lg-2">
-				<input name="Expires" type="text" placeholder="Opt. Expires" class="form-control" value="$formData->{'Expires'}" />
+				<input name="Expires" type="text" placeholder="Optional" class="form-control" value="$formData->{'Expires'}" />
 			</div>
 			<div class="col-lg-2">
 				<select name="inputExpires.modifier" class="form-control" value="$formData->{'inputExpires.modifier'}">
-					<option value="m">Mins</option>
-					<option value="h">Hours</option>
-					<option value="d">Days</option>
+					$expiresModifierStr
 				</select>
 			</div>
 		</div>
