@@ -603,6 +603,7 @@ sub _tc_iface_init
 
 	# Grab our interface rate
 	my $rate = getInterfaceRate($interface);
+	my $cburst = $rate / 10 / 8; # Seems like a good value?
 	# Grab interface class configuration
 	my $classes = getInterfaceClasses($interface);
 
@@ -648,6 +649,8 @@ sub _tc_iface_init
 				'classid','1:1',
 				'htb',
 					'rate',"${rate}kbit",
+					'burst',"${rate}kb",
+					'cburst',"${cburst}kb",
 	]);
 
 	# Setup the classes
@@ -666,6 +669,7 @@ sub _tc_iface_init
 						'rate',"$class->{'cir'}kbit",
 						'ceil',"$class->{'limit'}kbit",
 						'prio',$trafficPriority,
+						'burst', "$class->{'limit'}kb",
 		]);
 	}
 
@@ -1195,6 +1199,9 @@ sub _tc_class_add
 {
 		my ($changeSet,$interface,$majorTcClass,$classTcClass,$limitTcClass,$rate,$ceil,$trafficPriority) = @_;
 
+		# Set burst to a sane value
+		my $burst = int($ceil / 8 / 5);
+
 		# Create main rate limiting classes
 		$changeSet->add([
 				'/sbin/tc','class','add',
@@ -1204,7 +1211,8 @@ sub _tc_class_add
 					'htb',
 						'rate', "${rate}kbit",
 						'ceil', "${ceil}kbit",
-						'prio', $trafficPriority
+						'prio', $trafficPriority,
+						'burst', "${burst}kb",
 		]);
 }
 
@@ -1213,6 +1221,10 @@ sub _tc_class_add
 sub _tc_class_change
 {
 		my ($changeSet,$interface,$majorTcClass,$classTcClass,$limitTcClass,$rate,$ceil,$trafficPriority) = @_;
+
+
+		# Set burst to a sane value
+		my $burst = int($ceil / 8 / 5);
 
 		# Create main rate limiting classes
 		$changeSet->add([
@@ -1223,7 +1235,8 @@ sub _tc_class_change
 					'htb',
 						'rate', "${rate}kbit",
 						'ceil', "${ceil}kbit",
-						'prio', $trafficPriority
+						'prio', $trafficPriority,
+						'burst', "${burst}kb",
 		]);
 }
 
