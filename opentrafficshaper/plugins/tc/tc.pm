@@ -588,6 +588,23 @@ sub isTcTrafficClassValid
 	return undef;
 }
 
+# Return the ClassID from a TC limit class
+# This is similar to isTcTrafficClassValid() but returns the ref, not the minor class
+sub getCIDFromTcLimitClass
+{
+	my ($interface,$majorTcClass,$minorTcClass) = @_;
+
+
+	# Grab ref
+	my $ref = __getRefByMinorTcClass($interface,$majorTcClass,$minorTcClass);
+	# Chop off _class: and return if we did
+	if ($ref =~ s/^_class_://) {
+		return $ref;
+	}
+
+	return undef;
+}
+
 
 
 #
