@@ -1892,6 +1892,8 @@ sub _write_statefile
 		return;
 	}
 
+	$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Saving statefile '%s'",$config->{'statefile'});
+
 	my $timer1 = [gettimeofday];
 
 	# Create new state file object
