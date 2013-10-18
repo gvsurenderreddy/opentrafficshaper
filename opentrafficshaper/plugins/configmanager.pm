@@ -818,7 +818,7 @@ sub getInterface
 	if (defined($config->{'interfaces'}->{$interface})) {
 		my $res = dclone($config->{'interfaces'}->{$interface});
 		# We don't really want to return classes
-		delete($config->{'interfaces'}->{$interface}->{'classes'});
+		delete($res->{'classes'});
 		# And return it...
 		return $res;
 	}
