@@ -51,7 +51,7 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 );
 
 use constant {
-	VERSION => '0.0.1'
+	VERSION => '0.0.2'
 };
 
 
@@ -140,7 +140,6 @@ sub plugin_init
 		Started => \&server_session_start,
 		Stopped => \&server_session_stop,
 	);
-
 
 	# Load statistics pages if the statistics module is enabled
 	if (isPluginLoaded('statistics')) {
@@ -413,6 +412,7 @@ $styleStr
 
 	<body>
 		<div class="navbar navbar-inverse navbar-fixed-top">
+			<a class="navbar-brand" href="/"><img src="/static/logo-inverted-short.png" alt="Open Traffic Shaper" width="100%" height="auto" /></a>
 			<div class="container">
 				<div class="navbar-header">
 					<button type="button" class="navbar-toggle" data-toggle="collapse" data-target=".navbar-collapse">
@@ -420,7 +420,6 @@ $styleStr
 						<span class="icon-bar"></span>
 						<span class="icon-bar"></span>
 					</button>
-   					<a class="navbar-brand" href="/">OpenTrafficShaper</a>
 				</div>
 				<div class="collapse navbar-collapse">
 					<ul class="nav navbar-nav">
