@@ -1809,9 +1809,11 @@ sub _load_statefile
 
 	# Check if the state file exists first of all
 	if (! -e $config->{'statefile'}) {
-		$logger->log(LOG_INFO,"[CONFIGMANAGER] Statefile '".$config->{'statefile'}."' doesn't exist");
+		$logger->log(LOG_ERR,"[CONFIGMANAGER] Statefile '%s' doesn't exist",$config->{'statefile'});
 		return;
 	}
+
+	$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Loading statefile '%s'",$config->{'statefile'});
 
 	# Pull in a hash for our statefile
 	my %stateHash;
