@@ -620,7 +620,6 @@ sub _tc_iface_init
 
 	# Grab our interface rate
 	my $rate = getInterfaceRate($interface);
-	my $cburst = $rate / 10 / 8; # Seems like a good value?
 	# Grab interface class configuration
 	my $classes = getInterfaceClasses($interface);
 
@@ -667,7 +666,6 @@ sub _tc_iface_init
 				'htb',
 					'rate',"${rate}kbit",
 					'burst',"${rate}kb",
-					'cburst',"${cburst}kb",
 	]);
 
 	# Setup the classes
