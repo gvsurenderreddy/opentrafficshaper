@@ -248,8 +248,7 @@ sub task_child_stdout
 				$sid = opentrafficshaper::plugins::statistics::getSIDFromCID($interface,0);
 			} else {
 				# Save the class with the decimal number
-				if (my $tcClass =  opentrafficshaper::plugins::tc::isTcTrafficClassValid($interface,1,$stat->{'_class_child'})) {
-					my $classID = hex($tcClass);
+				if (my $classID =  opentrafficshaper::plugins::tc::getCIDFromTcLimitClass($interface,1,$stat->{'_class_child'})) {
 					$sid = opentrafficshaper::plugins::statistics::getSIDFromCID($interface,$classID);
 				} else {
 					$logger->log(LOG_WARN,"[TCSTATS] System traffic class '%s:%s' NOT FOUND",$stat->{'_class_parent'},$stat->{'_class_child'});
