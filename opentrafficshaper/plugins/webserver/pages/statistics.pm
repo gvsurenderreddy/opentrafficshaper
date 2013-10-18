@@ -192,7 +192,7 @@ sub byclass
 		</div>
 EOF
 
-	my $iface;
+	my $interface;
 	my $cid;
 
 	# Check if its a GET request...
@@ -217,8 +217,8 @@ EOF
 EOF
 			goto END;
 		}
-		# Check if we get some data back when pulling the iface from the backend
-		if (!defined($iface = getInterface($queryParams->{'interface'}))) {
+		# Check if we get some data back when pulling the interface from the backend
+		if (!defined($interface = getInterface($queryParams->{'interface'}))) {
 			$content .=<<EOF;
 				<tr class="info">
 					<td colspan="8"><p class="text-center">No Interface Results</p></td>
@@ -237,8 +237,7 @@ EOF
 		}
 	}
 
-	my $interfaceEncoded = encode_entities($iface->{'Interface'});
-	my $interfaceNameEncoded = encode_entities($iface->{'Name'});
+	my $interfaceNameEncoded = encode_entities($interface->{'name'});
 
 	my $classNameEncoded;
 	if ($cid) {
@@ -253,7 +252,7 @@ EOF
 	<div id="content" style="float:left">
 
 		<div style="position: relative; top: 50px;">
-			<h4 style="color:#8f8f8f;">Latest Data For: $classNameEncoded on $interfaceEncoded</h4>
+			<h4 style="color:#8f8f8f;">Latest Data For: $classNameEncoded on $interfaceNameEncoded</h4>
 		<br/>
 
 		<div id="ajaxData" class="ajaxData" style="float:left; width:1024px; height: 560px"></div>
