@@ -175,6 +175,14 @@ sub override_addedit
 		TrafficLimitRx TrafficLimitRxBurst
 	);
 
+	# Expires modifier options
+	my $expiresModifiers = {
+		'm' => "Minutes",
+		'h' => "Hours",
+		'd' => "Days",
+		'n' => "Never",
+	};
+
 	# Title of the form, by default its an add form
 	my $formType = "Add";
 	my $formNoEdit = "";
@@ -299,8 +307,11 @@ sub override_addedit
 			} else {
 				# Check if its defined
 				if (defined($formData->{'inputExpires.modifier'}) && $formData->{'inputExpires.modifier'} ne "") {
+					# Never
+					if ($formData->{'inputExpires.modifier'} eq "n") {
+
 					# Minutes
-					if ($formData->{'inputExpires.modifier'} eq "m") {
+					} elsif ($formData->{'inputExpires.modifier'} eq "m") {
 						$expires *= 60;
 					# Hours
 					} elsif ($formData->{'inputExpires.modifier'} eq "h") {
@@ -404,6 +415,22 @@ EOF
 		}
 		# And build the options
 		$trafficClassStr .= '<option value="'.$classID.'" '.$selected.'>'.$trafficClasses->{$classID}.'</option>';
+	}
+
+	# Generate expires modifiers list
+	my $expiresModifierStr = "";
+	foreach my $expireModifier (sort keys %{$expiresModifiers}) {
+		# Process selections nicely
+		my $selected = "";
+		if ($formData->{'inputExpires.modifier'} ne "" && $formData->{'inputExpires.modifier'} eq $expireModifier) {
+			$selected = "selected";
+		}
+		# Default to n if nothing is specified
+		if ($formData->{'inputExpires.modifier'} eq "" && $expireModifier eq "n") {
+			$selected = "selected";
+		}
+		# And build the options
+		$expiresModifierStr .= '<option value="'.$expireModifier.'" '.$selected.'>'.$expiresModifiers->{$expireModifier}.'</option>';
 	}
 
 	# Blank expires if its 0
@@ -525,9 +552,7 @@ EOF
 			</div>
 			<div class="col-lg-2">
 				<select name="inputExpires.modifier" class="form-control" value="$formData->{'inputExpires.modifier'}">
-					<option value="m">Mins</option>
-					<option value="h">Hours</option>
-					<option value="d">Days</option>
+					$expiresModifierStr
 				</select>
 			</div>
 		</div>
