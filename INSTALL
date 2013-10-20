@@ -20,6 +20,9 @@ Debian: libdigest-sha-perl
 - JSON
 Debian: libjson-perl
 
+- DBD::MySQL
+Debian: libdbd-mysql-perl
+
 - Perl 5.6+
 
 
