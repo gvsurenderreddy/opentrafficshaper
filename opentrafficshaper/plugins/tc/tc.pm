@@ -530,9 +530,12 @@ sub do_remove
 				'classid',"1:$rxLimitTcClass",
 	]);
 
-	# And recycle the class
+	# And recycle the classs
 	_disposeLimitTcClass($txInterface,$txLimitTcClass);
 	_disposeLimitTcClass($rxInterface,$rxLimitTcClass);
+
+	_disposePrioTcClass($txInterface,$txLimitTcClass);
+	_disposePrioTcClass($rxInterface,$rxLimitTcClass);
 
 	# Post changeset
 	$kernel->post("_tc" => "queue" => $changeSet);
@@ -703,13 +706,15 @@ sub _tc_iface_init
 		my $redBurst = int( ($redMin+$redMax) / (2*$redAvPkt));
 		my $redLimit = $queueSize;
 
+		my $prioTcClass = _getPrioTcClass($interface,$defaultPoolClass);
+
 		# Priority band
 		my $prioBand = 1;
 		$changeSet->add([
 				'/sbin/tc','qdisc','add',
 					'dev',$interface,
-					'parent',"$defaultPoolClass:".toHex($prioBand),
-					'handle',_reserveMajorTcClass($interface,"$defaultPoolClass=>$prioBand").":",
+					'parent',"$prioTcClass:".toHex($prioBand),
+					'handle',_reserveMajorTcClass($interface,"_default_pool_:$defaultPoolClass=>$prioBand").":",
 					'bfifo',
 						'limit',$queueSize,
 		]);
@@ -718,8 +723,8 @@ sub _tc_iface_init
 		$changeSet->add([
 				'/sbin/tc','qdisc','add',
 					'dev',$interface,
-					'parent',"$defaultPoolClass:".toHex($prioBand),
-					'handle',_reserveMajorTcClass($interface,"$defaultPoolClass=>$prioBand").":",
+					'parent',"$prioTcClass:".toHex($prioBand),
+					'handle',_reserveMajorTcClass($interface,"_default_pool_:$defaultPoolClass=>$prioBand").":",
 # TODO: NK - try enable the below
 #					'estimator','1sec','4sec', # Quick monitoring, every 1s with 4s constraint
 					'red',
@@ -741,8 +746,8 @@ sub _tc_iface_init
 		$changeSet->add([
 				'/sbin/tc','qdisc','add',
 					'dev',$interface,
-					'parent',"$defaultPoolClass:".toHex($prioBand),
-					'handle',_reserveMajorTcClass($interface,"$defaultPoolClass=>$prioBand").":",
+					'parent',"$prioTcClass:".toHex($prioBand),
+					'handle',_reserveMajorTcClass($interface,"_default_pool_:$defaultPoolClass=>$prioBand").":",
 					'red',
 						'min',$redMin,
 						'max',$redMax,
@@ -772,6 +777,8 @@ sub _tc_class_optimize
 	$rateBand2 = PRIO_RATE_BURST_MIN if ($rateBand2 < PRIO_RATE_BURST_MIN);
 	my $rateBand2Burst = ($rateBand2 / 8) * PRIO_RATE_BURST_MAXM;
 
+	my $prioTcClass = _reservePrioTcClass($interface,$limitTcClass);
+
 	#
 	# DEFINE 3 PRIO BANDS
 	#
@@ -781,7 +788,7 @@ sub _tc_class_optimize
 			'/sbin/tc','qdisc','add',
 				'dev',$interface,
 				'parent',"1:$limitTcClass",
-				'handle',"$limitTcClass:",
+				'handle',"$prioTcClass:",
 				'prio',
 					'bands','3',
 					'priomap','2','2','2','2','2','2','2','2','2','2','2','2','2','2','2','2',
@@ -795,7 +802,7 @@ sub _tc_class_optimize
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$interface,
-				'parent',"$limitTcClass:",
+				'parent',"$prioTcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -803,13 +810,13 @@ sub _tc_class_optimize
 						'at',9+$config->{'iphdr_offset'},
 				'police',
 					'rate',"${rateBand1}kbit",'burst',"${rateBand1Burst}k",'continue',
-				'flowid',"$limitTcClass:1",
+				'flowid',"$prioTcClass:1",
 	]);
 	# Prioritize ACK up to a certain limit
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$interface,
-				'parent',"$limitTcClass:",
+				'parent',"$prioTcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -819,13 +826,13 @@ sub _tc_class_optimize
 						'at',33+$config->{'iphdr_offset'},
 				'police',
 					'rate',"${rateBand1}kbit",'burst',"${rateBand1Burst}k",'continue',
-				'flowid',"$limitTcClass:1",
+				'flowid',"$prioTcClass:1",
 	]);
 	# Prioritize SYN-ACK up to a certain limit
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$interface,
-				'parent',"$limitTcClass:",
+				'parent',"$prioTcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -835,13 +842,13 @@ sub _tc_class_optimize
 						'at',33+$config->{'iphdr_offset'},
 				'police',
 					'rate',"${rateBand1}kbit",'burst',"${rateBand1Burst}k",'continue',
-				'flowid',"$limitTcClass:1",
+				'flowid',"$prioTcClass:1",
 	]);
 	# Prioritize FIN up to a certain limit
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$interface,
-				'parent',"$limitTcClass:",
+				'parent',"$prioTcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -851,13 +858,13 @@ sub _tc_class_optimize
 						'at',33+$config->{'iphdr_offset'},
 				'police',
 					'rate',"${rateBand1}kbit",'burst',"${rateBand1Burst}k",'continue',
-				'flowid',"$limitTcClass:1",
+				'flowid',"$prioTcClass:1",
 	]);
 	# Prioritize RST up to a certain limit
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$interface,
-				'parent',"$limitTcClass:",
+				'parent',"$prioTcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -867,13 +874,13 @@ sub _tc_class_optimize
 						'at',33+$config->{'iphdr_offset'},
 				'police',
 					'rate',"${rateBand1}kbit",'burst',"${rateBand1Burst}k",'continue',
-				'flowid',"$limitTcClass:1",
+				'flowid',"$prioTcClass:1",
 	]);
 	# DNS
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$interface,
-				'parent',"$limitTcClass:",
+				'parent',"$prioTcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -881,12 +888,12 @@ sub _tc_class_optimize
 						'at',20+$config->{'iphdr_offset'},
 				'police',
 					'rate',"${rateBand2}kbit",'burst',"${rateBand2Burst}k",'continue',
-				'flowid',"$limitTcClass:1",
+				'flowid',"$prioTcClass:1",
 	]);
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$interface,
-				'parent',"$limitTcClass:",
+				'parent',"$prioTcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -894,13 +901,13 @@ sub _tc_class_optimize
 						'at',22+$config->{'iphdr_offset'},
 				'police',
 					'rate',"${rateBand2}kbit",'burst',"${rateBand2Burst}k",'continue',
-				'flowid',"$limitTcClass:1",
+				'flowid',"$prioTcClass:1",
 	]);
 	# VOIP
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$interface,
-				'parent',"$limitTcClass:",
+				'parent',"$prioTcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -908,12 +915,12 @@ sub _tc_class_optimize
 						'at',20+$config->{'iphdr_offset'},
 				'police',
 					'rate',"${rateBand2}kbit",'burst',"${rateBand2Burst}k",'continue',
-				'flowid',"$limitTcClass:1",
+				'flowid',"$prioTcClass:1",
 	]);
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$interface,
-				'parent',"$limitTcClass:",
+				'parent',"$prioTcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -921,13 +928,13 @@ sub _tc_class_optimize
 						'at',22+$config->{'iphdr_offset'},
 				'police',
 					'rate',"${rateBand2}kbit",'burst',"${rateBand2Burst}k",'continue',
-				'flowid',"$limitTcClass:1",
+				'flowid',"$prioTcClass:1",
 	]);
 	# SNMP
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$interface,
-				'parent',"$limitTcClass:",
+				'parent',"$prioTcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -935,12 +942,12 @@ sub _tc_class_optimize
 						'at',9+$config->{'iphdr_offset'},
 					'match','u16','0xa1','0xffff', # SPORT 161
 						'at',20+$config->{'iphdr_offset'},
-				'flowid',"$limitTcClass:1",
+				'flowid',"$prioTcClass:1",
 	]);
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$interface,
-				'parent',"$limitTcClass:",
+				'parent',"$prioTcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -948,14 +955,14 @@ sub _tc_class_optimize
 						'at',9+$config->{'iphdr_offset'},
 					'match','u16','0xa1','0xffff', # DPORT 161
 						'at',22+$config->{'iphdr_offset'},
-				'flowid',"$limitTcClass:1",
+				'flowid',"$prioTcClass:1",
 	]);
 	# TODO: Make this customizable not hard coded?
 	# Mikrotik Management Port
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$interface,
-				'parent',"$limitTcClass:",
+				'parent',"$prioTcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -963,12 +970,12 @@ sub _tc_class_optimize
 						'at',20+$config->{'iphdr_offset'},
 				'police',
 					'rate',"${rateBand2}kbit",'burst',"${rateBand2Burst}k",'continue',
-				'flowid',"$limitTcClass:1",
+				'flowid',"$prioTcClass:1",
 	]);
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$interface,
-				'parent',"$limitTcClass:",
+				'parent',"$prioTcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -976,13 +983,13 @@ sub _tc_class_optimize
 						'at',22+$config->{'iphdr_offset'},
 				'police',
 					'rate',"${rateBand2}kbit",'burst',"${rateBand2Burst}k",'continue',
-				'flowid',"$limitTcClass:1",
+				'flowid',"$prioTcClass:1",
 	]);
 	# SMTP
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$interface,
-				'parent',"$limitTcClass:",
+				'parent',"$prioTcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -990,12 +997,12 @@ sub _tc_class_optimize
 						'at',9+$config->{'iphdr_offset'},
 					'match','u16','0x19','0xffff', # SPORT 25
 						'at',20+$config->{'iphdr_offset'},
-				'flowid',"$limitTcClass:2",
+				'flowid',"$prioTcClass:2",
 	]);
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$interface,
-				'parent',"$limitTcClass:",
+				'parent',"$prioTcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -1003,13 +1010,13 @@ sub _tc_class_optimize
 						'at',9+$config->{'iphdr_offset'},
 					'match','u16','0x19','0xffff', # DPORT 25
 						'at',22+$config->{'iphdr_offset'},
-				'flowid',"$limitTcClass:2",
+				'flowid',"$prioTcClass:2",
 	]);
 	# POP3
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$interface,
-				'parent',"$limitTcClass:",
+				'parent',"$prioTcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -1017,12 +1024,12 @@ sub _tc_class_optimize
 						'at',9+$config->{'iphdr_offset'},
 					'match','u16','0x6e','0xffff', # SPORT 110
 						'at',20+$config->{'iphdr_offset'},
-				'flowid',"$limitTcClass:2",
+				'flowid',"$prioTcClass:2",
 	]);
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$interface,
-				'parent',"$limitTcClass:",
+				'parent',"$prioTcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -1030,13 +1037,13 @@ sub _tc_class_optimize
 						'at',9+$config->{'iphdr_offset'},
 					'match','u16','0x6e','0xffff', # DPORT 110
 						'at',22+$config->{'iphdr_offset'},
-				'flowid',"$limitTcClass:2",
+				'flowid',"$prioTcClass:2",
 	]);
 	# IMAP
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$interface,
-				'parent',"$limitTcClass:",
+				'parent',"$prioTcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -1044,12 +1051,12 @@ sub _tc_class_optimize
 						'at',9+$config->{'iphdr_offset'},
 					'match','u16','0x8f','0xffff', # SPORT 143
 						'at',20+$config->{'iphdr_offset'},
-				'flowid',"$limitTcClass:2",
+				'flowid',"$prioTcClass:2",
 	]);
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$interface,
-				'parent',"$limitTcClass:",
+				'parent',"$prioTcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -1057,13 +1064,13 @@ sub _tc_class_optimize
 						'at',9+$config->{'iphdr_offset'},
 					'match','u16','0x8f','0xffff', # DPORT 143
 						'at',22+$config->{'iphdr_offset'},
-				'flowid',"$limitTcClass:2",
+				'flowid',"$prioTcClass:2",
 	]);
 	# HTTP
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$interface,
-				'parent',"$limitTcClass:",
+				'parent',"$prioTcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -1071,12 +1078,12 @@ sub _tc_class_optimize
 						'at',9+$config->{'iphdr_offset'},
 					'match','u16','0x50','0xffff', # SPORT 80
 						'at',20+$config->{'iphdr_offset'},
-				'flowid',"$limitTcClass:2",
+				'flowid',"$prioTcClass:2",
 	]);
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$interface,
-				'parent',"$limitTcClass:",
+				'parent',"$prioTcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -1084,13 +1091,13 @@ sub _tc_class_optimize
 						'at',9+$config->{'iphdr_offset'},
 					'match','u16','0x50','0xffff', # DPORT 80
 						'at',22+$config->{'iphdr_offset'},
-				'flowid',"$limitTcClass:2",
+				'flowid',"$prioTcClass:2",
 	]);
 	# HTTPS
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$interface,
-				'parent',"$limitTcClass:",
+				'parent',"$prioTcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -1098,12 +1105,12 @@ sub _tc_class_optimize
 						'at',9+$config->{'iphdr_offset'},
 					'match','u16','0x1bb','0xffff', # SPORT 443
 						'at',20+$config->{'iphdr_offset'},
-				'flowid',"$limitTcClass:2",
+				'flowid',"$prioTcClass:2",
 	]);
 	$changeSet->add([
 			'/sbin/tc','filter','add',
 				'dev',$interface,
-				'parent',"$limitTcClass:",
+				'parent',"$prioTcClass:",
 				'prio','1',
 				'protocol',$config->{'ip_protocol'},
 				'u32',
@@ -1111,7 +1118,7 @@ sub _tc_class_optimize
 						'at',9+$config->{'iphdr_offset'},
 					'match','u16','0x1bb','0xffff', # DPORT 443
 						'at',22+$config->{'iphdr_offset'},
-				'flowid',"$limitTcClass:2",
+				'flowid',"$prioTcClass:2",
 	]);
 }
 
@@ -1274,6 +1281,16 @@ sub _reserveClassTcClass
 }
 
 
+# Get a prio class TC class
+# This is a MAJOR class!
+sub _reservePrioTcClass
+{
+	my ($interface,$classID) = @_;
+
+	return _reserveMajorTcClass($interface,"_prioclass_:$classID");
+}
+
+
 # Return TC class using class
 sub _getClassTcClass
 {
@@ -1283,12 +1300,38 @@ sub _getClassTcClass
 }
 
 
+# Return prio TC class using class
+# This returns a MAJOR class from a tc class
+sub _getPrioTcClass
+{
+	my ($interface,$tcClass) = @_;
+
+	return __getMajorTcClassByRef($interface,"_prioclass_:$tcClass");
+}
+
+
 # Function to dispose of a TC class
 sub _disposeLimitTcClass
 {
 	my ($interface,$tcClass) = @_;
 
 	return __disposeMinorTcClass($interface,TC_ROOT_CLASS,$tcClass);
+}
+
+
+# Function to dispose of a major TC class
+# Uses a TC class to get a MAJOR class, then disposes it
+sub _disposePrioTcClass
+{
+	my ($interface,$tcClass) = @_;
+
+
+	# If we can grab the major class dipose of it
+	if (my $majorTcClass = _getPrioTcClass($interface,$tcClass)) {
+		return __disposeMajorTcClass($interface,$majorTcClass);
+	}
+
+	return undef;
 }
 
 
@@ -1373,6 +1416,20 @@ sub __getMinorTcClassByRef
 }
 
 
+# Get a major class by its rerf
+sub __getMajorTcClassByRef
+{
+	my ($interface,$ref) = @_;
+
+
+	if (defined($tcClasses->{$interface})) {
+		return $tcClasses->{$interface}->{'reverse'}->{$ref};
+	}
+
+	return undef;
+}
+
+
 # Get ref using the minor tc class
 sub __getRefByMinorTcClass
 {
@@ -1399,6 +1456,21 @@ sub __disposeMinorTcClass
 	# Blank the value
 	$tcClasses->{$interface}->{$majorTcClass}->{'track'}->{$tcMinorClass} = undef;
 	delete($tcClasses->{$interface}->{$majorTcClass}->{'reverse'}->{$ref});
+}
+
+
+# Function to dispose of a major TC class
+sub __disposeMajorTcClass
+{
+	my ($interface,$tcMajorClass) = @_;
+
+
+	my $ref = $tcClasses->{$interface}->{'track'}->{$tcMajorClass};
+	# Push onto free list
+	push(@{$tcClasses->{$interface}->{'free'}},$tcMajorClass);
+	# Blank the value
+	$tcClasses->{$interface}->{'track'}->{$tcMajorClass} = undef;
+	delete($tcClasses->{$interface}->{'reverse'}->{$ref});
 }
 
 
