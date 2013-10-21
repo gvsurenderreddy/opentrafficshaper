@@ -309,7 +309,7 @@ sub override_addedit
 				if (defined($formData->{'inputExpires.modifier'}) && $formData->{'inputExpires.modifier'} ne "") {
 					# Never
 					if ($formData->{'inputExpires.modifier'} eq "n") {
-
+						$expires = 0;
 					# Minutes
 					} elsif ($formData->{'inputExpires.modifier'} eq "m") {
 						$expires *= 60;
