@@ -180,7 +180,7 @@ sub session_tick
 		) or $logger->log(LOG_ERR,"[TCSTATS] TC: Unable to start task");
 
 		# Intercept SIGCHLD
-		$kernel->sig_child($task->ID, "sig_child");
+		$kernel->sig_child($task->ID, "handle_SIGCHLD");
 
 		# Wheel events include the wheel's ID.
 		$heap->{task_by_wid}->{$task->ID} = $task;
