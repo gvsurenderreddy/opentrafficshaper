@@ -1220,29 +1220,29 @@ sub _process_limit_change
 	# We start off blank so we only pull in whats supported
 	my $limitChange;
 	if (!defined($limitChange->{'Username'} = $limit->{'Username'})) {
-		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process limit change as username is invalid.");
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process limit change as username is invalid.");
 		return;
 	}
 	$limitChange->{'Username'} = $limit->{'Username'};
 	$limitChange->{'IP'} = $limit->{'IP'};
 	# Check group is OK
 	if (!defined($limitChange->{'GroupID'} = checkGroupID($limit->{'GroupID'}))) {
-		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process limit change for '".$limit->{'Username'}."' as the GroupID is invalid.");
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process limit change for '".$limit->{'Username'}."' as the GroupID is invalid.");
 		return;
 	}
 	# Check interface group ID is OK
 	if (!defined($limitChange->{'InterfaceGroupID'} = checkInterfaceGroupID($limit->{'InterfaceGroupID'}))) {
-		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process limit change for '".$limit->{'Username'}."' as the InterfaceGroupID is invalid.");
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process limit change for '".$limit->{'Username'}."' as the InterfaceGroupID is invalid.");
 		return;
 	}
 	# Check match priority is OK
 	if (!defined($limitChange->{'MatchPriorityID'} = checkMatchPriorityID($limit->{'MatchPriorityID'}))) {
-		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process limit change for '".$limit->{'Username'}."' as the MatchPriorityID is invalid.");
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process limit change for '".$limit->{'Username'}."' as the MatchPriorityID is invalid.");
 		return;
 	}
 	# Check class is OK
 	if (!defined($limitChange->{'ClassID'} = checkClassID($limit->{'ClassID'}))) {
-		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process limit change for '".$limit->{'Username'}."' as the ClassID is invalid.");
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process limit change for '".$limit->{'Username'}."' as the ClassID is invalid.");
 		return;
 	}
 	$limitChange->{'TrafficLimitTx'} = $limit->{'TrafficLimitTx'};
@@ -1273,7 +1273,7 @@ sub _process_limit_change
 
 	# Check status is OK
 	if (!($limitChange->{'Status'} = checkStatus($limit->{'Status'}))) {
-		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process user change for '".$limit->{'Username'}."' as the Status is invalid.");
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process user change for '".$limit->{'Username'}."' as the Status is invalid.");
 		return;
 	}
 
