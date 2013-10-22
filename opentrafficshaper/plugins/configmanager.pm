@@ -1227,24 +1227,30 @@ sub _process_limit_change
 	$limitChange->{'IP'} = $limit->{'IP'};
 	# Check group is OK
 	if (!defined($limitChange->{'GroupID'} = checkGroupID($limit->{'GroupID'}))) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process limit change for '".$limit->{'Username'}."' as the GroupID is invalid.");
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process limit change for '%s' as the GroupID is invalid.",$limit->{'Username'});
 		return;
 	}
 	# Check interface group ID is OK
 	if (!defined($limitChange->{'InterfaceGroupID'} = checkInterfaceGroupID($limit->{'InterfaceGroupID'}))) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process limit change for '".$limit->{'Username'}."' as the InterfaceGroupID is invalid.");
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process limit change for '%s' as the InterfaceGroupID is invalid.",$limit->{'Username'});
 		return;
 	}
 	# Check match priority is OK
 	if (!defined($limitChange->{'MatchPriorityID'} = checkMatchPriorityID($limit->{'MatchPriorityID'}))) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process limit change for '".$limit->{'Username'}."' as the MatchPriorityID is invalid.");
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process limit change for '%s' as the MatchPriorityID is invalid.",$limit->{'Username'});
 		return;
 	}
 	# Check class is OK
 	if (!defined($limitChange->{'ClassID'} = checkClassID($limit->{'ClassID'}))) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process limit change for '".$limit->{'Username'}."' as the ClassID is invalid.");
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process limit change for '%s' as the ClassID is invalid.",$limit->{'Username'});
 		return;
 	}
+	# Make sure things are not attached to the default pool
+	if (defined($config->{'default_pool'}) && $limitChange->{'ClassID'} eq $config->{'default_pool'}) {
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process limit for '%s' as the ClassID is the 'default_pool' ClassID.",$limit->{'Username'});
+		return;
+	}
+
 	$limitChange->{'TrafficLimitTx'} = $limit->{'TrafficLimitTx'};
 	$limitChange->{'TrafficLimitRx'} = $limit->{'TrafficLimitRx'};
 	# Take base limits if we don't have any burst values set
@@ -1273,7 +1279,7 @@ sub _process_limit_change
 
 	# Check status is OK
 	if (!($limitChange->{'Status'} = checkStatus($limit->{'Status'}))) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process user change for '".$limit->{'Username'}."' as the Status is invalid.");
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process user change for '%s' as the Status is invalid.",$limit->{'Username'});
 		return;
 	}
 
