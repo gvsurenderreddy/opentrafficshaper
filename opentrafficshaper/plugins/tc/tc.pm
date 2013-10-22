@@ -601,7 +601,7 @@ sub getCIDFromTcLimitClass
 	# Grab ref
 	my $ref = __getRefByMinorTcClass($interface,$majorTcClass,$minorTcClass);
 	# Chop off _class: and return if we did
-	if ($ref =~ s/^_class_://) {
+	if (defined($ref) && $ref =~ s/^_class_://) {
 		return $ref;
 	}
 
