@@ -1072,6 +1072,12 @@ sub getTrafficClasses
 {
 	my $classes = dclone($config->{'classes'});
 
+
+	# Remove default pool class if we have one
+	if (defined(my $classID = $config->{'default_pool'})) {
+		delete($classes->{$classID});
+	}
+
 	return $classes;
 }
 
