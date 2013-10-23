@@ -308,7 +308,7 @@ sub task_child_close
 
 
 # Reap the dead child
-sub task_sigchld
+sub task_handle_sigchld
 {
 	my ($kernel,$heap,$pid,$status) = @_[KERNEL,HEAP,ARG1,ARG2];
 	my $task = $heap->{task_by_pid}->{$pid};
