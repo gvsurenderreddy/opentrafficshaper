@@ -244,43 +244,43 @@ sub do_add
 	my $trafficPriority = getTrafficPriority($limit->{'ClassID'});
 
 	# Check if we have a entry for the /8, if not we must create our 2nd level hash table and link it
-	if (!defined($tcFilterMappings->{$txInterface}->{$matchPriority}->{$ip1})) {
+	if (!defined($tcFilterMappings->{$txInterface}->{'dst'}->{$matchPriority}->{$ip1})) {
 		# Grab filter ID's for 2nd level
 		my $txFilterID = _reserveTcFilter($txInterface,$matchPriority,$lid);
 		# Track our mapping
-		$tcFilterMappings->{$txInterface}->{$matchPriority}->{$ip1}->{'id'} = $txFilterID;
+		$tcFilterMappings->{$txInterface}->{'dst'}->{$matchPriority}->{$ip1}->{'id'} = $txFilterID;
 		$logger->log(LOG_DEBUG,"[TC] Linking 2nd level TX hash table to '$txFilterID' to '$ip1.0.0.0/8', priority '$matchPriority'");
 		_tc_filter_add_dstlink($changeSet,$txInterface,TC_ROOT_CLASS,$matchPriority,$txFilterID,$config->{'ip_protocol'},800,"","$ip1.0.0.0/8","00ff0000");
 	}
-	if (!defined($tcFilterMappings->{$rxInterface}->{$matchPriority}->{$ip1})) {
+	if (!defined($tcFilterMappings->{$rxInterface}->{'src'}->{$matchPriority}->{$ip1})) {
 		# Grab filter ID's for 2nd level
 		my $rxFilterID = _reserveTcFilter($rxInterface,$matchPriority,$lid);
 		# Track our mapping
-		$tcFilterMappings->{$rxInterface}->{$matchPriority}->{$ip1}->{'id'} = $rxFilterID;
+		$tcFilterMappings->{$rxInterface}->{'src'}->{$matchPriority}->{$ip1}->{'id'} = $rxFilterID;
 		$logger->log(LOG_DEBUG,"[TC] Linking 2nd level RX hash table to '$rxFilterID' to '$ip1.0.0.0/8', priority '$matchPriority'");
 		_tc_filter_add_srclink($changeSet,$rxInterface,TC_ROOT_CLASS,$matchPriority,$rxFilterID,$config->{'ip_protocol'},800,"","$ip1.0.0.0/8","00ff0000");
 	}
 
 	# Check if we have our /16 hash entry, if not we must create the 3rd level hash table
-	if (!defined($tcFilterMappings->{$txInterface}->{$matchPriority}->{$ip1}->{$ip2})) {
+	if (!defined($tcFilterMappings->{$txInterface}->{'dst'}->{$matchPriority}->{$ip1}->{$ip2})) {
 		# Grab filter ID's for 3rd level
 		my $txFilterID = _reserveTcFilter($txInterface,$matchPriority,$lid);
 		# Track our mapping
-		$tcFilterMappings->{$txInterface}->{$matchPriority}->{$ip1}->{$ip2}->{'id'} = $txFilterID;
+		$tcFilterMappings->{$txInterface}->{'dst'}->{$matchPriority}->{$ip1}->{$ip2}->{'id'} = $txFilterID;
 		# Grab some hash table ID's we need
-		my $txIP1HtHex = $tcFilterMappings->{$txInterface}->{$matchPriority}->{$ip1}->{'id'};
+		my $txIP1HtHex = $tcFilterMappings->{$txInterface}->{'dst'}->{$matchPriority}->{$ip1}->{'id'};
 		# And hex our IP component
 		my $ip2Hex = toHex($ip2);
 		$logger->log(LOG_DEBUG,"[TC] Linking 3rd level TX hash table to '$txFilterID' to '$ip1.$ip2.0.0/16', priority '$matchPriority'");
 		_tc_filter_add_dstlink($changeSet,$txInterface,TC_ROOT_CLASS,$matchPriority,$txFilterID,$config->{'ip_protocol'},$txIP1HtHex,$ip2Hex,"$ip1.$ip2.0.0/16","0000ff00");
 	}
-	if (!defined($tcFilterMappings->{$rxInterface}->{$matchPriority}->{$ip1}->{$ip2})) {
+	if (!defined($tcFilterMappings->{$rxInterface}->{'src'}->{$matchPriority}->{$ip1}->{$ip2})) {
 		# Grab filter ID's for 3rd level
 		my $rxFilterID = _reserveTcFilter($rxInterface,$matchPriority,$lid);
 		# Track our mapping
-		$tcFilterMappings->{$rxInterface}->{$matchPriority}->{$ip1}->{$ip2}->{'id'} = $rxFilterID;
+		$tcFilterMappings->{$rxInterface}->{'src'}->{$matchPriority}->{$ip1}->{$ip2}->{'id'} = $rxFilterID;
 		# Grab some hash table ID's we need
-		my $rxIP1HtHex = $tcFilterMappings->{$rxInterface}->{$matchPriority}->{$ip1}->{'id'};
+		my $rxIP1HtHex = $tcFilterMappings->{$rxInterface}->{'src'}->{$matchPriority}->{$ip1}->{'id'};
 		# And hex our IP component
 		my $ip2Hex = toHex($ip2);
 		$logger->log(LOG_DEBUG,"[TC] Linking 3rd level RX hash table to '$rxFilterID' to '$ip1.$ip2.0.0/16', priority '$matchPriority'");
@@ -288,25 +288,25 @@ sub do_add
 	}
 
 	# Check if we have our /24 hash entry, if not we must create the 4th level hash table
-	if (!defined($tcFilterMappings->{$txInterface}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3})) {
+	if (!defined($tcFilterMappings->{$txInterface}->{'dst'}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3})) {
 		# Grab filter ID's for 4th level
 		my $txFilterID = _reserveTcFilter($txInterface,$matchPriority,$lid);
 		# Track our mapping
-		$tcFilterMappings->{$txInterface}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3}->{'id'} = $txFilterID;
+		$tcFilterMappings->{$txInterface}->{'dst'}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3}->{'id'} = $txFilterID;
 		# Grab some hash table ID's we need
-		my $txIP2HtHex = $tcFilterMappings->{$txInterface}->{$matchPriority}->{$ip1}->{$ip2}->{'id'};
+		my $txIP2HtHex = $tcFilterMappings->{$txInterface}->{'dst'}->{$matchPriority}->{$ip1}->{$ip2}->{'id'};
 		# And hex our IP component
 		my $ip3Hex = toHex($ip3);
 		$logger->log(LOG_DEBUG,"[TC] Linking 4th level TX hash table to '$txFilterID' to '$ip1.$ip2.$ip3.0/24', priority '$matchPriority'");
 		_tc_filter_add_dstlink($changeSet,$txInterface,TC_ROOT_CLASS,$matchPriority,$txFilterID,$config->{'ip_protocol'},$txIP2HtHex,$ip3Hex,"$ip1.$ip2.$ip3.0/24","000000ff");
 	}
-	if (!defined($tcFilterMappings->{$rxInterface}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3})) {
+	if (!defined($tcFilterMappings->{$rxInterface}->{'src'}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3})) {
 		# Grab filter ID's for 4th level
 		my $rxFilterID = _reserveTcFilter($rxInterface,$matchPriority,$lid);
 		# Track our mapping
-		$tcFilterMappings->{$rxInterface}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3}->{'id'} = $rxFilterID;
+		$tcFilterMappings->{$rxInterface}->{'src'}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3}->{'id'} = $rxFilterID;
 		# Grab some hash table ID's we need
-		my $rxIP2HtHex = $tcFilterMappings->{$rxInterface}->{$matchPriority}->{$ip1}->{$ip2}->{'id'};
+		my $rxIP2HtHex = $tcFilterMappings->{$rxInterface}->{'src'}->{$matchPriority}->{$ip1}->{$ip2}->{'id'};
 		# And hex our IP component
 		my $ip3Hex = toHex($ip3);
 		$logger->log(LOG_DEBUG,"[TC] Linking 4th level RX hash table to '$rxFilterID' to '$ip1.$ip2.$ip3.0/24', priority '$matchPriority'");
@@ -321,7 +321,7 @@ sub do_add
 		my $classID = $changes->{'ClassID'};
 		my $txClassTcClass = _getClassTcClass($txInterface,$classID);
 		# Grab some hash table ID's we need
-		my $txIP3HtHex = $tcFilterMappings->{$txInterface}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3}->{'id'};
+		my $txIP3HtHex = $tcFilterMappings->{$txInterface}->{'dst'}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3}->{'id'};
 		# And hex our IP component
 		my $ip4Hex = toHex($ip4);
 		$logger->log(LOG_DEBUG,"[TC] Linking TX IP '$limit->{'IP'}' to class '$txClassTcClass' at hash endpoint '$txIP3HtHex:$ip4Hex'");
@@ -347,7 +347,7 @@ sub do_add
 		my $classID = $changes->{'ClassID'};
 		my $rxClassTcClass = _getClassTcClass($rxInterface,$classID);
 		# Grab some hash table ID's we need
-		my $rxIP3HtHex = $tcFilterMappings->{$rxInterface}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3}->{'id'};
+		my $rxIP3HtHex = $tcFilterMappings->{$rxInterface}->{'src'}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3}->{'id'};
 		# And hex our IP component
 		my $ip4Hex = toHex($ip4);
 		$logger->log(LOG_DEBUG,"[TC] Linking RX IP '$limit->{'IP'}' to class '$rxClassTcClass' at hash endpoint '$rxIP3HtHex:$ip4Hex'");
