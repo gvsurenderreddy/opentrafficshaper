@@ -1323,10 +1323,10 @@ sub _process_limit_remove
 		# Set this UID as no longer using this IP
 		# NK: If we try remove it before the limit is actually removed we could get a reconnection causing this value
 		#     to be totally gone, which means we not tracking this limit using this IP anymore, not easily solved!!
-		delete($limitIPMap->{$limit->{'IP'}}->{$lid});
+		delete($limitIPMap->{$limit->{'InterfaceGroupID'}}->{$limit->{'IP'}}->{$lid});
 		# Check if we can delete the IP too
-		if (keys %{$limitIPMap->{$limit->{'IP'}}} == 0) {
-			delete($limitIPMap->{$limit->{'IP'}});
+		if (keys %{$limitIPMap->{$limit->{'InterfaceGroupID'}}->{$limit->{'IP'}}} == 0) {
+			delete($limitIPMap->{$limit->{'InterfaceGroupID'}}->{$limit->{'IP'}});
 		}
 
 		# Remove from change queue
@@ -1548,11 +1548,16 @@ sub _process_limit_change_queue
 
 				my $updateShaper = 0;
 
+				# Initialize the IP map if the interface group ID hash is undefined
+				if (!defined($limitIPMap->{$climit->{'InterfaceGroupID'}})) {
+					$limitIPMap->{$climit->{'InterfaceGroupID'}} = { };
+				}
+
 				# We first going to look for IP conflicts...
-				my @ipLimits = keys %{$limitIPMap->{$climit->{'IP'}}};
+				my @ipLimits = keys %{$limitIPMap->{$climit->{'InterfaceGroupID'}}->{$climit->{'IP'}}};
 				if (
 					# If there is already an entry and its not us ...
-					( @ipLimits == 1 && !defined($limitIPMap->{$climit->{'IP'}}->{$lid}) )
+					( @ipLimits == 1 && !defined($limitIPMap->{$climit->{'InterfaceGroupID'}}->{$climit->{'IP'}}->{$lid}) )
 					# Or if there is more than 1 entry...
 					|| @ipLimits > 1
 				) {
@@ -1572,7 +1577,7 @@ sub _process_limit_change_queue
 					# IP from the shaper below...
 					foreach my $lid2 (@ipLimits) {
 						# Check if the limit has been setup already (all but the limit we busy with, as its setup below)
-						if (defined($limitIPMap->{$climit->{'IP'}}->{$lid2})) {
+						if (defined($limitIPMap->{$climit->{'InterfaceGroupID'}}->{$climit->{'IP'}}->{$lid2})) {
 							my $glimit2 = $limits->{$lid2};
 
 							# If the limit is active or pending on the shaper, remove it
@@ -1594,7 +1599,7 @@ sub _process_limit_change_queue
 				}
 
 				# Set this UID as using this IP
-				$limitIPMap->{$climit->{'IP'}}->{$lid} = 1;
+				$limitIPMap->{$climit->{'InterfaceGroupID'}}->{$climit->{'IP'}}->{$lid} = 1;
 
 				# This is now live
 				$limits->{$lid} = $climit;
