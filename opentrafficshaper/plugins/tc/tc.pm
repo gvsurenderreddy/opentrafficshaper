@@ -316,17 +316,17 @@ sub do_add
 	# Only if we have TX limits setup process them
 	if (defined($changes->{'TrafficLimitTx'})) {
 		# Generate our limit TC class
-		my $txLimitTcClass = _reserveLimitTcClass($txInterface,$lid);
+		my $txLimitTcClass = _reserveTcClassByLimitID($txInterface,$lid);
 		# Get traffic class TC class
 		my $classID = $changes->{'ClassID'};
-		my $txClassTcClass = _getClassTcClass($txInterface,$classID);
+		my $txTrafficClassTcClass = _getTcClassFromClassID($txInterface,$classID);
 		# Grab some hash table ID's we need
 		my $txIP3HtHex = $tcFilterMappings->{$txInterface}->{'dst'}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3}->{'id'};
 		# And hex our IP component
 		my $ip4Hex = toHex($ip4);
-		$logger->log(LOG_DEBUG,"[TC] Linking TX IP '$limit->{'IP'}' to class '$txClassTcClass' at hash endpoint '$txIP3HtHex:$ip4Hex'");
+		$logger->log(LOG_DEBUG,"[TC] Linking TX IP '$limit->{'IP'}' to class '$txTrafficClassTcClass' at hash endpoint '$txIP3HtHex:$ip4Hex'");
 		# Add shaping classes
-		_tc_class_add($changeSet,$txInterface,TC_ROOT_CLASS,$txClassTcClass,$txLimitTcClass,$changes->{'TrafficLimitTx'},$changes->{'TrafficLimitTxBurst'},$trafficPriority);
+		_tc_class_add($changeSet,$txInterface,TC_ROOT_CLASS,$txTrafficClassTcClass,$txLimitTcClass,$changes->{'TrafficLimitTx'},$changes->{'TrafficLimitTxBurst'},$trafficPriority);
 		# Link filter to traffic flow (class)
 		_tc_filter_add_flowlink($changeSet,$txInterface,TC_ROOT_CLASS,$trafficPriority,$config->{'ip_protocol'},$txIP3HtHex,$ip4Hex,"dst",16,$limit->{'IP'},$txLimitTcClass);
 		# Add optimizations
@@ -342,17 +342,17 @@ sub do_add
 	# Only if we have RX limits setup process them
 	if (defined($changes->{'TrafficLimitRx'})) {
 		# Generate our limit TC class
-		my $rxLimitTcClass = _reserveLimitTcClass($rxInterface,$lid);
+		my $rxLimitTcClass = _reserveTcClassByLimitID($rxInterface,$lid);
 		# Get traffic class TC class
 		my $classID = $changes->{'ClassID'};
-		my $rxClassTcClass = _getClassTcClass($rxInterface,$classID);
+		my $rxTrafficClassTcClass = _getTcClassFromClassID($rxInterface,$classID);
 		# Grab some hash table ID's we need
 		my $rxIP3HtHex = $tcFilterMappings->{$rxInterface}->{'src'}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3}->{'id'};
 		# And hex our IP component
 		my $ip4Hex = toHex($ip4);
-		$logger->log(LOG_DEBUG,"[TC] Linking RX IP '$limit->{'IP'}' to class '$rxClassTcClass' at hash endpoint '$rxIP3HtHex:$ip4Hex'");
+		$logger->log(LOG_DEBUG,"[TC] Linking RX IP '$limit->{'IP'}' to class '$rxTrafficClassTcClass' at hash endpoint '$rxIP3HtHex:$ip4Hex'");
 		# Add shaping classes
-		_tc_class_add($changeSet,$rxInterface,TC_ROOT_CLASS,$rxClassTcClass,$rxLimitTcClass,$changes->{'TrafficLimitRx'},$changes->{'TrafficLimitRxBurst'},$trafficPriority);
+		_tc_class_add($changeSet,$rxInterface,TC_ROOT_CLASS,$rxTrafficClassTcClass,$rxLimitTcClass,$changes->{'TrafficLimitRx'},$changes->{'TrafficLimitRxBurst'},$trafficPriority);
 		# Link filter to traffic flow (class)
 		_tc_filter_add_flowlink($changeSet,$rxInterface,TC_ROOT_CLASS,$trafficPriority,$config->{'ip_protocol'},$rxIP3HtHex,$ip4Hex,"src",12,$limit->{'IP'},$rxLimitTcClass);
 		# Add optimizations
@@ -441,15 +441,15 @@ sub do_change
 	my $txLimitTcClass = getLimitAttribute($lid,'tc.txclass');
 	my $rxLimitTcClass = getLimitAttribute($lid,'tc.rxclass');
 	# Grab our minor classes
-	my $txClassTcClass = _getClassTcClass($txInterface,$classID);
-	my $rxClassTcClass = _getClassTcClass($rxInterface,$classID);
+	my $txTrafficClassTcClass = _getTcClassFromClassID($txInterface,$classID);
+	my $rxTrafficClassTcClass = _getTcClassFromClassID($rxInterface,$classID);
 	# Grab traffic priority
 	my $trafficPriority = getTrafficPriority($classID);
 
 	# Generate changeset
 	my $changeSet = TC::ChangeSet->new();
-	_tc_class_change($changeSet,$txInterface,TC_ROOT_CLASS,$txClassTcClass,$txLimitTcClass,$trafficLimitTx,$trafficLimitTxBurst,$trafficPriority);
-	_tc_class_change($changeSet,$rxInterface,TC_ROOT_CLASS,$rxClassTcClass,$rxLimitTcClass,$trafficLimitRx,$trafficLimitRxBurst,$trafficPriority);
+	_tc_class_change($changeSet,$txInterface,TC_ROOT_CLASS,$txTrafficClassTcClass,$txLimitTcClass,$trafficLimitTx,$trafficLimitTxBurst,$trafficPriority);
+	_tc_class_change($changeSet,$rxInterface,TC_ROOT_CLASS,$rxTrafficClassTcClass,$rxLimitTcClass,$trafficLimitRx,$trafficLimitRxBurst,$trafficPriority);
 
 	# Post changeset
 	$kernel->post("_tc" => "queue" => $changeSet);
@@ -493,8 +493,8 @@ sub do_remove
 	my $classID = getLimitAttribute($lid,'tc.live.ClassID');
 	my $trafficPriority = getTrafficPriority($classID);
 	# Grab our minor classes
-	my $txClassTcClass = _getClassTcClass($txInterface,$classID);
-	my $rxClassTcClass = _getClassTcClass($rxInterface,$classID);
+	my $txTrafficClassTcClass = _getTcClassFromClassID($txInterface,$classID);
+	my $rxTrafficClassTcClass = _getTcClassFromClassID($rxInterface,$classID);
 
 
 	# Clear up the filter
@@ -520,13 +520,13 @@ sub do_remove
 	$changeSet->add([
 			'/sbin/tc','class','del',
 				'dev',$txInterface,
-				'parent',"1:$txClassTcClass",
+				'parent',"1:$txTrafficClassTcClass",
 				'classid',"1:$txLimitTcClass",
 	]);
 	$changeSet->add([
 			'/sbin/tc','class','del',
 				'dev',$rxInterface,
-				'parent',"1:$rxClassTcClass",
+				'parent',"1:$rxTrafficClassTcClass",
 				'classid',"1:$rxLimitTcClass",
 	]);
 
@@ -637,7 +637,7 @@ sub _tc_iface_init
 	# Create our parent classes
 	foreach my $classID (sort {$a <=> $b} keys %{$classes}) {
 		# We don't really need the result, we just need the class created
-		_reserveClassTcClass($interface,$classID);
+		_reserveTcClassByClassID($interface,$classID);
 	}
 
 	# Do we have a default pool? if so we must direct traffic there
@@ -646,7 +646,7 @@ sub _tc_iface_init
 	my $defaultPoolClass;
 	if (defined($defaultPool)) {
 		# Push unclassified traffic to this class
-		$defaultPoolClass = _getClassTcClass($interface,$defaultPool);
+		$defaultPoolClass = _getTcClassFromClassID($interface,$defaultPool);
 		push(@qdiscOpts,'default',$defaultPoolClass);
 	}
 
@@ -673,7 +673,7 @@ sub _tc_iface_init
 
 	# Setup the classes
 	while ((my $classID, my $class) = each(%{$classes})) {
-		my $classTcClass = _getClassTcClass($interface,$classID);
+		my $trafficClassTcClass = _getTcClassFromClassID($interface,$classID);
 
 		my $trafficPriority = getTrafficPriority($classID);
 
@@ -682,7 +682,7 @@ sub _tc_iface_init
 				'/sbin/tc','class','add',
 					'dev',$interface,
 					'parent','1:1',
-					'classid',"1:$classTcClass",
+					'classid',"1:$trafficClassTcClass",
 					'htb',
 						'rate',"$class->{'cir'}kbit",
 						'ceil',"$class->{'limit'}kbit",
@@ -733,7 +733,8 @@ sub _tc_iface_init
 						'limit',$redLimit,
 						'burst',$redBurst,
 						'avpkt',$redAvPkt,
-						'ecn'
+# NK: ECN may cause excessive dips in traffic if there is an exceptional amount of traffic
+#						'ecn'
 # XXX: Very new kernels only ... use redflowlimit in future
 #						'sfq',
 #							'divisor','16384',
@@ -754,7 +755,8 @@ sub _tc_iface_init
 						'limit',$redLimit,
 						'burst',$redBurst,
 						'avpkt',$redAvPkt,
-						'ecn'
+# NK: ECN may cause excessive dips in traffic if there is an exceptional amount of traffic
+#						'ecn'
 		]);
 	}
 
@@ -777,7 +779,7 @@ sub _tc_class_optimize
 	$rateBand2 = PRIO_RATE_BURST_MIN if ($rateBand2 < PRIO_RATE_BURST_MIN);
 	my $rateBand2Burst = ($rateBand2 / 8) * PRIO_RATE_BURST_MAXM;
 
-	my $prioTcClass = _reservePrioTcClass($interface,$limitTcClass);
+	my $prioTcClass = _reserveMajorTcClassByPrioClass($interface,$limitTcClass);
 
 	#
 	# DEFINE 3 PRIO BANDS
@@ -1219,7 +1221,7 @@ sub _tc_filter_add
 # Function to add a TC class
 sub _tc_class_add
 {
-		my ($changeSet,$interface,$majorTcClass,$classTcClass,$limitTcClass,$rate,$ceil,$trafficPriority) = @_;
+		my ($changeSet,$interface,$majorTcClass,$trafficClassTcClass,$limitTcClass,$rate,$ceil,$trafficPriority) = @_;
 
 		# Set burst to a sane value
 		my $burst = int($ceil / 8 / 5);
@@ -1228,7 +1230,7 @@ sub _tc_class_add
 		$changeSet->add([
 				'/sbin/tc','class','add',
 					'dev',$interface,
-					'parent',"$majorTcClass:$classTcClass",
+					'parent',"$majorTcClass:$trafficClassTcClass",
 					'classid',"$majorTcClass:$limitTcClass",
 					'htb',
 						'rate', "${rate}kbit",
@@ -1242,7 +1244,7 @@ sub _tc_class_add
 # Function to change a TC class
 sub _tc_class_change
 {
-		my ($changeSet,$interface,$majorTcClass,$classTcClass,$limitTcClass,$rate,$ceil,$trafficPriority) = @_;
+		my ($changeSet,$interface,$majorTcClass,$trafficClassTcClass,$limitTcClass,$rate,$ceil,$trafficPriority) = @_;
 
 
 		# Set burst to a sane value
@@ -1252,7 +1254,7 @@ sub _tc_class_change
 		$changeSet->add([
 				'/sbin/tc','class','change',
 					'dev',$interface,
-					'parent',"$majorTcClass:$classTcClass",
+					'parent',"$majorTcClass:$trafficClassTcClass",
 					'classid',"$majorTcClass:$limitTcClass",
 					'htb',
 						'rate', "${rate}kbit",
@@ -1264,7 +1266,7 @@ sub _tc_class_change
 
 
 # Get a limit class TC class
-sub _reserveLimitTcClass
+sub _reserveTcClassByLimitID
 {
 	my ($interface,$lid) = @_;
 
@@ -1273,7 +1275,7 @@ sub _reserveLimitTcClass
 
 
 # Get a traffic class TC class
-sub _reserveClassTcClass
+sub _reserveTcClassByClassID
 {
 	my ($interface,$classID) = @_;
 
@@ -1283,7 +1285,7 @@ sub _reserveClassTcClass
 
 # Get a prio class TC class
 # This is a MAJOR class!
-sub _reservePrioTcClass
+sub _reserveMajorTcClassByPrioClass
 {
 	my ($interface,$classID) = @_;
 
@@ -1292,7 +1294,7 @@ sub _reservePrioTcClass
 
 
 # Return TC class using class
-sub _getClassTcClass
+sub _getTcClassFromClassID
 {
 	my ($interface,$classID) = @_;
 
