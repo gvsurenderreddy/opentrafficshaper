@@ -308,7 +308,7 @@ sub task_child_close
 
 
 # Reap the dead child
-sub task_handle_sigchld
+sub task_handle_SIGCHLD
 {
 	my ($kernel,$heap,$pid,$status) = @_[KERNEL,HEAP,ARG1,ARG2];
 	my $task = $heap->{task_by_pid}->{$pid};
@@ -323,6 +323,23 @@ sub task_handle_sigchld
 	delete($heap->{task_by_pid}->{$pid});
 	delete($heap->{task_by_wid}->{$task->ID});
 	delete($heap->{task_data}->{$task->ID});
+}
+
+
+# Handle SIGINT
+sub task_handle_SIGINT
+{
+	my ($kernel,$heap,$signal_name) = @_[KERNEL,HEAP,ARG0];
+
+	# Shutdown stdin on all children, this will terminate /sbin/tc
+	foreach my $task_id (keys %{$heap->{'task_by_wid'}}) {
+		my $task = $heap->{'task_by_wid'}{$task_id};
+#		$kernel->sig_child($task->PID, "asig_child");
+#		$task->kill("INT"); #NK: doesn't work
+		$kernel->post($task,"shutdown_stdin"); #NK: doesn't work
+	}
+
+	$logger->log(LOG_WARN,"[TCSTATS] Killed children processes");
 }
 
 
