@@ -96,7 +96,7 @@ EOF
 			<h4 style="color:#8f8f8f;">Latest Data For: $usernameEncoded</h4>
 		<br/>
 
-		<div id="ajaxData" class="ajaxData" style="float:left; width:1024px; height: 560px"></div>
+		<div id="ajaxData" class="ajaxData" style="float:left; width:1024px; height: 610px"></div>
 		</div>
 
 	</div>
