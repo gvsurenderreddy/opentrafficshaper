@@ -460,10 +460,11 @@ sub _build_raw_response
 	if (!defined($response->header("Server"))) {
 		$response->push_header("Server","POE Hybrid HTTP Server v$VERSION");
 	}
-	# Set our content Length
-	if (my $length = length($response->content)) {
-	    $response->push_header("Content-Length",$length);
-	}
+
+	# Set our content length
+	# - This is required even if the content length is 0, for instance when we doing a REDIRECT with no content some browsers hang if
+	# - there is no content length set.
+	$response->push_header("Content-Length",length($response->content));
 
 	# Setup our output
 	my $output = sprintf("%s %s",$self->{'protocol'},$response->status_line);
