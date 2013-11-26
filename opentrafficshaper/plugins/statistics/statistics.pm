@@ -275,7 +275,8 @@ sub plugin_init
 		# Set last cleanup to now
 		my $now = time();
 		foreach my $key (keys %{$statsConfig}) {
-			$lastCleanup->{$key} = $now;
+			# Get aligned time so we cleanup sooner
+			$lastCleanup->{$key} = _getAlignedTime($now);
 		}
 		$lastConfigManagerStats = $now;
 	}
