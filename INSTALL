@@ -38,3 +38,6 @@ Debian: libdbd-mysql-perl
 3. Browse to it using http://SERVER:8088/
 
 
+For more configuration information see this link:
+http://wiki.opentrafficshaper.org/documentation
+
