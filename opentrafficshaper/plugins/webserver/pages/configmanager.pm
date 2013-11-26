@@ -211,7 +211,7 @@ sub override_addedit
 		# We need a ID first of all...
 		if (defined($queryParams->{'oid'})) {
 			# Check if we get some data back when pulling the override from the backend
-			if (defined($formData = getOverride($queryParams->{'oid'}))) {
+			if (defined($formData = getOverride($queryParams->{'oid'}->{'value'}))) {
 				# Setup our checkboxes
 				foreach my $checkbox (@formElementCheckboxes) {
 					if (defined($formData->{$checkbox})) {
@@ -223,7 +223,7 @@ sub override_addedit
 				# XXX - TODO
 			# If we didn't get any data, then something went wrong
 			} else {
-				my $encodedID = encode_entities($queryParams->{'oid'});
+				my $encodedID = encode_entities($queryParams->{'oid'}->{'value'});
 				push(@errors,"Override data could not be loaded using oid '$encodedID'");
 			}
 			# Lastly if we were given a oid, this is actually an edit
@@ -600,10 +600,10 @@ EOF
 	}
 
 	# Grab the override
-	my $override = getOverride($queryParams->{'oid'});
+	my $override = getOverride($queryParams->{'oid'}->{'value'});
 
 	# Make the oid safe for HTML
-	my $encodedID = encode_entities($queryParams->{'oid'});
+	my $encodedID = encode_entities($queryParams->{'oid'}->{'value'});
 
 	# Make sure the oid was valid... we would have an override now if it was
 	if (!defined($override)) {

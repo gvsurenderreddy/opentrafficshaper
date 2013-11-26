@@ -79,17 +79,23 @@ sub parseFormContent
 	return \%res;
 }
 
+
 # Parse query data
 sub parseURIQuery
 {
 	my $request = shift;
 	my %res;
 
-	use URI::QueryParam;
 
-	# Pull in URL params
-	foreach my $key ($request->uri->query_param) {
-		$res{$key} = $request->uri->query_param($key);
+	# Grab URI components
+	my @components = $request->uri->query_form;
+	# Loop with the components in sets of name & value
+	while (@components) {
+		my ($name,$value) = (shift(@components),shift(@components));
+
+		# Store values and the last value we go
+		push(@{$res{$name}->{'values'}},$value);
+		$res{$name}->{'value'} = $value;
 	}
 
 	return \%res;

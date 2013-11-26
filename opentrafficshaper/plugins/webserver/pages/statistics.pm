@@ -74,7 +74,7 @@ EOF
 			goto END;
 		}
 		# Check if we get some data back when pulling the limit from the backend
-		if (!defined($limit = getLimit($queryParams->{'lid'}))) {
+		if (!defined($limit = getLimit($queryParams->{'lid'}->{'value'}))) {
 			$content .=<<EOF;
 				<tr class="info">
 					<td colspan="8"><p class="text-center">No Results</p></td>
@@ -144,12 +144,12 @@ sub databylimit
 	}
 
 	my $limit;
-	if (!defined($limit = getLimit($queryParams->{'lid'}))) {
+	if (!defined($limit = getLimit($queryParams->{'lid'}->{'value'}))) {
 		return (HTTP_OK,{ 'error' => 'Invalid limit' },{ 'type' => 'json' });
 	}
 
 	# Pull in stats data
-	my $statsData = opentrafficshaper::plugins::statistics::getStatsByLID($queryParams->{'lid'});
+	my $statsData = opentrafficshaper::plugins::statistics::getStatsByLID($queryParams->{'lid'}->{'value'});
 
 	# First stage refinement
 	my $rawData;

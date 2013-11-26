@@ -110,7 +110,7 @@ EOF
 
 		# Conditionals
 		if (defined($queryParams->{'source'})) {
-			if ($limit->{'Source'} ne $queryParams->{'source'}) {
+			if ($limit->{'Source'} ne $queryParams->{'source'}->{'value'}) {
 				next;
 			}
 		}
@@ -323,7 +323,7 @@ sub limit_addedit
 		# We need a key first of all...
 		if (defined($queryParams->{'lid'})) {
 			# Check if we get some data back when pulling the limit from the backend
-			if (defined($formData = getLimit($queryParams->{'lid'}))) {
+			if (defined($formData = getLimit($queryParams->{'lid'}->{'value'}))) {
 				# We need to make sure we're only editing our own limits
 				if ($formData->{'Source'} ne "plugin.webserver.limits") {
 					return (HTTP_TEMPORARY_REDIRECT,'limits');
@@ -333,7 +333,7 @@ sub limit_addedit
 # XXX - TODO
 			# If we didn't get any data, then something went wrong
 			} else {
-				my $encodedID = encode_entities($queryParams->{'lid'});
+				my $encodedID = encode_entities($queryParams->{'lid'}->{'value'});
 				push(@errors,"Limit data could not be loaded using limit ID '$encodedID'");
 			}
 			# Lastly if we were given a key, this is actually an edit
@@ -702,10 +702,10 @@ EOF
 	}
 
 	# Grab the limit
-	my $limit = getLimit($queryParams->{'lid'});
+	my $limit = getLimit($queryParams->{'lid'}->{'value'});
 
 	# Make the key safe for HTML
-	my $encodedLID = encode_entities($queryParams->{'lid'});
+	my $encodedLID = encode_entities($queryParams->{'lid'}->{'value'});
 
 	# Make sure the limit ID is valid... we would have a limit now if it was
 	if (!defined($limit)) {
