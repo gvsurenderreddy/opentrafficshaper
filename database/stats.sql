@@ -42,3 +42,26 @@ CREATE INDEX stats_idx3 ON stats (`IdentifierID`,`Key`,`Timestamp`);
 /* For cleanups */
 CREATE INDEX stats_idx4 ON stats (`Key`,`Timestamp`);
 
+
+
+/* Basic statistics */
+DROP TABLE IF EXISTS stats_basic;
+
+CREATE TABLE stats_basic (
+	`ID`					SERIAL,
+
+	`IdentifierID`			BIGINT UNSIGNED NOT NULL,
+	`Key`					TINYINT UNSIGNED NOT NULL,  /* 1 = < 5min, 2 = 5min, 3 = 15min, 4 = 1hr, 5 = 6hr, 6 = 1 day */
+
+	`Timestamp`				INTEGER UNSIGNED NOT NULL,
+
+	`Counter`				BIGINT UNSIGNED NOT NULL
+) Engine=MyISAM;
+
+/* For queries */
+CREATE INDEX stats_basic_idx1 ON stats (`IdentifierID`);
+CREATE INDEX stats_basic_idx2 ON stats (`IdentifierID`,`Key`);
+CREATE INDEX stats_basic_idx3 ON stats (`IdentifierID`,`Key`,`Timestamp`);
+/* For cleanups */
+CREATE INDEX stats_basic_idx4 ON stats (`Key`,`Timestamp`);
+
