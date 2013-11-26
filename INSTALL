@@ -26,5 +26,15 @@ Debian: libdbd-mysql-perl
 - Perl 5.6+
 
 
-1. Copy opentrafficshaper to /usr/local/sbin/
+
+*
+* Next steps
+*
+
+1. Edit the config file
+
+2. You can now run opentrafficshaper by using ./opentrafficshaperd --debug --config=opentrafficshaper.conf --fg
+
+3. Browse to it using http://SERVER:8088/
+
 
