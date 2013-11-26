@@ -1,16 +1,18 @@
 
+/* Identifiers used for our statistics */
 DROP TABLE IF EXISTS identifiers;
 
 CREATE TABLE identifiers (
 	`ID`					SERIAL,
 	`Identifier`			VARCHAR(255) NOT NULL
-) Type=MyISAM;
+) Engine=MyISAM;
 
 /* For queries */
 CREATE INDEX identifiers_idx1 ON identifiers (`Identifier`);
 
 
 
+/* Limit statistics */
 DROP TABLE IF EXISTS stats;
 
 CREATE TABLE stats (
@@ -31,7 +33,7 @@ CREATE TABLE stats (
 	`Total_Packets`			BIGINT UNSIGNED NOT NULL,
 	`Total_Overlimits`		BIGINT UNSIGNED NOT NULL,
 	`Total_Dropped`			BIGINT UNSIGNED NOT NULL
-) Type=MyISAM;
+) Engine=MyISAM;
 
 /* For queries */
 CREATE INDEX stats_idx1 ON stats (`IdentifierID`);
