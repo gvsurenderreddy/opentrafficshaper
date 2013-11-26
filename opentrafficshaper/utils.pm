@@ -52,12 +52,14 @@ sub prettyUndef
 	}
 }
 
+
 # Return hex representation of a decimal
 sub toHex
 {
 	my $decimal = shift;
 	return sprintf('%x',$decimal);
 }
+
 
 # Parse form post data from HTTP content
 sub parseFormContent
@@ -92,7 +94,6 @@ sub parseURIQuery
 
 	return \%res;
 }
-
 
 
 
