@@ -30,10 +30,15 @@ use opentrafficshaper::logger;
 use opentrafficshaper::utils;
 
 use opentrafficshaper::plugins::configmanager qw(
+		getLimit
+		getLimits
+
 		getLimitUsername
 
 		getLimitTxInterface
 		getLimitRxInterface
+
+		getTrafficClasses
 );
 
 # NK: TODO: Maybe we want to remove timing at some stage? maybe not?
