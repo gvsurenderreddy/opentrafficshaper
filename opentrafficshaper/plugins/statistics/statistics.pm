@@ -639,38 +639,21 @@ sub getLastStats
 }
 
 
-# Return stats based on a LID
-sub getStatsByLID
+# Return stats by SID
+sub getStatsBySID
 {
-	my $lid = shift;
+	my $sid = shift;
 
-
-	# Max entries
-	my $entriesLeft = 100;
-
-	# Grab stats ID from LID
-	my $sid = getSIDFromLID($lid);
-	if (!defined($sid)) {
-		return { };
-	}
-
-	return _getStatsBySID($sid);
+	return  _getStatsBySID($sid);
 }
 
 
-# Return stats based on an interface
-sub getStatsByClass
+# Return basic stats by SID
+sub getStatsBasicBySID
 {
-	my ($iface,$cid) = @_;
+	my $sid = shift;
 
-
-	# Grab stats ID from LID
-	my $sid = getSIDFromCID($iface,$cid);
-	if (!defined($sid)) {
-		return { };
-	}
-
-	return _getStatsBySID($sid);
+	return  _getStatsBasicBySID($sid);
 }
 
 
@@ -679,15 +662,32 @@ sub getSIDFromCID
 {
 	my ($iface,$cid) = @_;
 
+
 	my $identifier = "Class:$iface:$cid";
 	return _getSIDFromIdentifier($identifier);
+}
+
+
+# Set the stats ID from Class ID
+sub setSIDFromCID
+{
+	my ($iface,$cid) = @_;
+
+
+	my $identifier = "Class:$iface:$cid";
+	my $sid = _getSIDFromIdentifier($identifier);
+	if (!defined($sid)) {
+		$sid = _setSIDFromIdentifier($identifier);
+	}
+	return $sid;
 }
 
 
 # Get the stats ID from a LID
 sub getSIDFromLID
 {
-	my ($lid) = @_;
+	my $lid = shift;
+
 
 	if (defined(my $username = getLimitUsername($lid))) {
 		my $identifier = "Username:$username";
@@ -695,6 +695,51 @@ sub getSIDFromLID
 	}
 
 	return undef;
+}
+
+
+# Set the stats ID from a LID
+sub setSIDFromLID
+{
+	my $lid = shift;
+
+
+	if (defined(my $username = getLimitUsername($lid))) {
+		my $identifier = "Username:$username";
+		my $sid = _getSIDFromIdentifier($identifier);
+		if (!defined($sid)) {
+			$sid = _setSIDFromIdentifier($identifier);
+		}
+		return $sid;
+	}
+
+	return undef;
+}
+
+
+# Get the stats ID from a counter
+sub getSIDFromCounter
+{
+	my $counter = shift;
+
+
+	my $identifier = "Counter:$counter";
+	return _getSIDFromIdentifier($identifier);
+}
+
+
+# Set the stats ID from a counter
+sub setSIDFromCounter
+{
+	my $counter = shift;
+
+
+	my $identifier = "Counter:$counter";
+	my $sid = _getSIDFromIdentifier($identifier);
+	if (!defined($sid)) {
+		$sid = _setSIDFromIdentifier($identifier);
+	}
+	return $sid;
 }
 
 
@@ -847,13 +892,26 @@ sub _getSIDFromIdentifier
 warn "FAILED TO EXECUTE GETUSER: ".$identifierGetSTH->errstr;
 	}
 
+	return undef;
+}
+
+
+# Set SID from identifier in DB
+sub _setSIDFromIdentifier
+{
+	my $identifier = shift;
+
+
 	# Try add it to the DB
 	my $identifierAddSTH = $statsPreparedStatements->{'identifier_add'};
 	if (my $res = $identifierAddSTH->execute($identifier)) {
 		return $statsDBIdentifierMap->{$identifier} = $dbh->last_insert_id("","","","");
 	} else {
+# FIXME
 warn "DB ADD IDENTIFIER ERROR: ".$identifierAddSTH->errstr;
 	}
+
+	return undef;
 }
 
 
