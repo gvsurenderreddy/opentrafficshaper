@@ -202,7 +202,6 @@ sub plugin_init
 			$dbh->disconnect();
 			$dbh = undef;
 		}
-
 		# Prepare identifier get statement
 		if ($dbh && (my $res = $dbh->prepare('SELECT ID FROM identifiers WHERE `Identifier` = ?'))) {
 			$statsPreparedStatements->{'identifier_get'} = $res;
@@ -212,7 +211,7 @@ sub plugin_init
 			$dbh = undef;
 		}
 
-		# Prepare stats consolidation statement
+		# Prepare stats consolidation statements
 		if ($dbh && (my $res = $dbh->prepare('
 			SELECT
 				`IdentifierID`, `Timestamp` - (`Timestamp` % ?) AS TimestampM,
@@ -608,6 +607,7 @@ sub do_unsubscribe
 	delete($subscribers->{$item}->{$handler}->{$handlerEvent});
 }
 
+
 # Return user last stats
 sub getLastStats
 {
@@ -824,6 +824,7 @@ sub _getCachedSIDFromIdentifier
 }
 
 
+# Grab or add the identifier to the DB
 sub _getSIDFromIdentifier
 {
 	my $identifier = shift;
