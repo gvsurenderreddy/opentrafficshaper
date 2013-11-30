@@ -276,7 +276,7 @@ sub plugin_init
 		my $now = time();
 		foreach my $key (keys %{$statsConfig}) {
 			# Get aligned time so we cleanup sooner
-			$lastCleanup->{$key} = _getAlignedTime($now);
+			$lastCleanup->{$key} = _getAlignedTime($now,$statsConfig->{$key}->{'precision'});
 		}
 		$lastConfigManagerStats = $now;
 	}
@@ -779,18 +779,18 @@ sub getConfigManagerCounters
 	# Grab user count
 	my %counters;
 
-	$counters{"ConfigManager:TotalUsers"} = @limits;
+	$counters{"ConfigManager:TotalLimits"} = @limits;
 
 	# Start off with 0's
 	foreach my $cid (keys %{$classes}) {
-		$counters{"ConfigManager:ClassUsers:$cid"} = 0;
+		$counters{"ConfigManager:ClassLimits:$cid"} = 0;
 	}
 	# Generate ClassID counts
 	foreach my $lid (@limits) {
 		my $limit = getLimit($lid);
 		my $cid = $limit->{'ClassID'};
 		# Bump the class counter
-		$counters{"ConfigManager:ClassUsers:$cid"}++;
+		$counters{"ConfigManager:ClassLimits:$cid"}++;
 	}
 
 	return \%counters;
@@ -847,7 +847,7 @@ sub _getConfigManagerStats
 
 	# Loop through counters and create stats items
 	foreach my $item (%{$counters}) {
-		my $identifierID = getSIDFromCounter($item);
+		my $identifierID = setSIDFromCounter($item);
 		my $stat = {
 			'identifierid' => $identifierID,
 			'timestamp' => $now,
