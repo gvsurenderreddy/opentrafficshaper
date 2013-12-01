@@ -69,6 +69,7 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 		getInterfaceClasses
 		getInterfaceDefaultPool
 		getInterfaceRate
+		getInterfaceGroup
 		getInterfaceGroups
 		isInterfaceGroupValid
 
@@ -769,9 +770,12 @@ sub process_override_remove
 sub checkGroupID
 {
 	my $gid = shift;
+
+
 	if (defined($config->{'groups'}->{$gid})) {
 		return $gid;
 	}
+
 	return undef;
 }
 
@@ -780,9 +784,12 @@ sub checkGroupID
 sub checkInterfaceGroupID
 {
 	my $igid = shift;
+
+
 	if (defined($config->{'interface_groups'}->{$igid})) {
 		return $igid;
 	}
+
 	return undef;
 }
 
@@ -791,9 +798,12 @@ sub checkInterfaceGroupID
 sub checkMatchPriorityID
 {
 	my $mpid = shift;
+
+
 	if (defined($config->{'match_priorities'}->{$mpid})) {
 		return $mpid;
 	}
+
 	return undef;
 }
 
@@ -802,9 +812,12 @@ sub checkMatchPriorityID
 sub checkClassID
 {
 	my $cid = shift;
+
+
 	if (defined($config->{'classes'}->{$cid})) {
 		return $cid;
 	}
+
 	return undef;
 }
 
@@ -822,6 +835,7 @@ sub getInterface
 		# And return it...
 		return $res;
 	}
+
 	return undef;
 }
 
@@ -838,10 +852,12 @@ sub getInterfaceClasses
 {
 	my $interface = shift;
 
+
 	# If we have this interface return its classes
 	if (defined($config->{'interfaces'}->{$interface})) {
 		return dclone($config->{'interfaces'}->{$interface}->{'classes'});
 	}
+
 	return undef;
 }
 
@@ -850,6 +866,8 @@ sub getInterfaceClasses
 sub getInterfaceDefaultPool
 {
 	my $interface = shift;
+
+
 	# We don't really need the interface to return the default pool
 	return $config->{'default_pool'};
 }
@@ -860,10 +878,12 @@ sub getInterfaceRate
 {
 	my $interface = shift;
 
+
 	# If we have this interface return its rate
 	if (defined($config->{'interfaces'}->{$interface})) {
 		return $config->{'interfaces'}->{$interface}->{'rate'};
 	}
+
 	return undef;
 }
 
@@ -873,7 +893,22 @@ sub getInterfaceGroups
 {
 	my $interface_groups = dclone($config->{'interface_groups'});
 
+
 	return $interface_groups;
+}
+
+
+# Function to get an interface group
+sub getInterfaceGroup
+{
+	my $interfaceGroup = shift;
+
+
+	if (defined($config->{'interface_groups'}->{$interfaceGroup})) {
+		return dclone($config->{'interface_groups'}->{$interfaceGroup});
+	}
+
+	return undef;
 }
 
 
@@ -881,9 +916,12 @@ sub getInterfaceGroups
 sub isInterfaceGroupValid
 {
 	my $interfaceGroup = shift;
+
+
 	if (defined($interfaceGroup) && defined($config->{'interface_groups'}->{$interfaceGroup})) {
 		return $interfaceGroup;
 	}
+
 	return undef;
 }
 
@@ -893,6 +931,7 @@ sub getMatchPriorities
 {
 	my $match_priorities = dclone($config->{'match_priorities'});
 
+
 	return $match_priorities;
 }
 
@@ -901,9 +940,12 @@ sub getMatchPriorities
 sub isMatchPriorityValid
 {
 	my $matchPriority = shift;
+
+
 	if (defined($matchPriority) && defined($config->{'match_priorities'}->{$matchPriority})) {
 		return $matchPriority;
 	}
+
 	return undef;
 }
 
@@ -912,9 +954,12 @@ sub isMatchPriorityValid
 sub checkStatus
 {
 	my $status = shift;
+
+
 	if ($status eq "new" || $status eq "offline" || $status eq "online" || $status eq "conflict" || $status eq "unknown") {
 		return $status
 	}
+
 	return undef;
 }
 
@@ -923,6 +968,8 @@ sub checkStatus
 sub getLimitUsername
 {
 	my $lid = shift;
+
+
 	if (defined($limits->{$lid})) {
 		return $limits->{$lid}->{'Username'};
 	}
@@ -934,9 +981,12 @@ sub getLimitUsername
 sub getLimitTxInterface
 {
 	my $lid = shift;
+
+
 	if (defined($limits->{$lid})) {
 		return $config->{'interface_groups'}->{$limits->{$lid}->{'InterfaceGroupID'}}->{'txiface'};
 	}
+
 	return undef;
 }
 
@@ -945,9 +995,12 @@ sub getLimitTxInterface
 sub getLimitRxInterface
 {
 	my $lid = shift;
+
+
 	if (defined($limits->{$lid})) {
 		return $config->{'interface_groups'}->{$limits->{$lid}->{'InterfaceGroupID'}}->{'rxiface'};
 	}
+
 	return undef;
 }
 
@@ -956,10 +1009,13 @@ sub getLimitRxInterface
 sub getLimitMatchPriority
 {
 	my $lid = shift;
+
+
 	if (defined($limits->{$lid})) {
 		# NK: No actual mappping yet
 		return $limits->{$lid}->{'MatchPriorityID'};
 	}
+
 	return undef;
 }
 
@@ -969,10 +1025,12 @@ sub getLimit
 {
 	my $lid = shift;
 
+
 	if (defined($limits->{$lid})) {
 		my %limit = %{$limits->{$lid}};
 		return \%limit;
 	}
+
 	return undef;
 }
 
@@ -1033,6 +1091,7 @@ sub getOverride
 		my %override = %{$overrides->{$oid}};
 		return \%override;
 	}
+
 	return undef;
 }
 
@@ -1049,9 +1108,11 @@ sub setShaperState
 {
 	my ($lid,$state) = @_;
 
+
 	if (defined($lid) && defined($limits->{$lid})) {
 		$limits->{$lid}->{'_shaper.state'} = $state;
 	}
+
 	return undef;
 }
 
@@ -1060,9 +1121,12 @@ sub setShaperState
 sub getShaperState
 {
 	my $lid = shift;
+
+
 	if (defined($lid) && defined($limits->{$lid})) {
 		return $limits->{$lid}->{'_shaper.state'};
 	}
+
 	return undef;
 }
 
@@ -1086,9 +1150,12 @@ sub getTrafficClasses
 sub getTrafficClassName
 {
 	my $class = shift;
+
+
 	if (defined($class) && defined($config->{'classes'}->{$class})) {
 		return $config->{'classes'}->{$class};
 	}
+
 	return undef;
 }
 
@@ -1097,9 +1164,12 @@ sub getTrafficClassName
 sub isTrafficClassValid
 {
 	my $class = shift;
+
+
 	if (defined($class) && defined($config->{'classes'}->{$class})) {
 		return $class;
 	}
+
 	return undef;
 }
 
@@ -1108,10 +1178,13 @@ sub isTrafficClassValid
 sub getTrafficPriority
 {
 	my $class = shift;
+
+
 	# NK: Short circuit, our ClassID = Priority
 	if (defined($class) && defined($config->{'classes'}->{$class})) {
 		return $class;
 	}
+
 	return undef;
 }
 
@@ -1134,6 +1207,7 @@ sub handle_SIGHUP
 sub _getAppliedLimitChangeset
 {
 	my ($orig,$new) = @_;
+
 
 	my $res;
 
