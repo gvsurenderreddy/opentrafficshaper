@@ -1,4 +1,4 @@
-# OpenTrafficShaper webserver module: users page
+# OpenTrafficShaper webserver module: statistics page
 # Copyright (C) 2007-2013, AllWorldIT
 #
 # This program is free software: you can redistribute it and/or modify
@@ -37,9 +37,19 @@ use JSON;
 
 use opentrafficshaper::logger;
 use opentrafficshaper::plugins;
-use opentrafficshaper::utils qw( parseURIQuery );
+use opentrafficshaper::utils qw(
+	parseURIQuery
+);
 
-use opentrafficshaper::plugins::configmanager qw( getLimit getInterface isTrafficClassValid getTrafficClassName );
+use opentrafficshaper::plugins::configmanager qw(
+	getLimit
+
+	getInterfaceGroup
+	getInterface
+
+	isTrafficClassValid
+	getTrafficClassName
+);
 
 use opentrafficshaper::plugins::statistics::statistics;
 
@@ -90,16 +100,9 @@ EOF
 
 	# Build content
 	$content = <<EOF;
-	<div id="content" style="float:left">
-
-		<div style="position: relative; top: 50px;">
-			<h4 style="color:#8f8f8f;">Latest Data For: $usernameEncoded</h4>
+		<h4 style="color:#8f8f8f;">Latest Data For: $usernameEncoded</h4>
 		<br/>
-
-		<div id="ajaxData" class="ajaxData" style="float:left; width:1024px; height: 610px"></div>
-		</div>
-
-	</div>
+		<div id="flotCanvas" class="flotCanvas" style="width: 1000px; height: 400px"></div>
 EOF
 
 	#$content .= statistics::do_test();
@@ -107,76 +110,23 @@ EOF
 
 	# Files loaded at end of HTML document
 	my @javascripts = (
-		'/static/awit-flot/jquery.flot.min.js',
-		'/static/awit-flot/jquery.flot.time.min.js',
+		'/static/flot/jquery.flot.min.js',
+		'/static/flot/jquery.flot.time.min.js',
+		'/static/awit-flot/functions.js',
 #		'/static/awit-flot/jquery.flot.websockets.js'
 	);
 
 	# Build our data path using the URI module to make sure its nice and clean
-	my $dataPath = URI->new('/statistics/data-by-limit');
-	# Pass it the original query, just incase we had extra params we can use
-	$dataPath->query_form( $request->uri->query_form() );
-	my $dataPathStr = $dataPath->as_string();
-
+	my $dataPath = sprintf('/statistics/jsondata?limit=%s',$limit->{'ID'});
 
 	# String put in <script> </script> tags after the above files are loaded
-	my $javascript = _getJavascript($dataPathStr);
+	my $javascript = _getJavascript($dataPath);
 
 END:
 
 	return (HTTP_OK,$content,{ 'javascripts' => \@javascripts, 'javascript' => $javascript });
 }
 
-
-
-# Return data by limit
-sub databylimit
-{
-	my ($kernel,$globals,$client_session_id,$request) = @_;
-
-
-	# Parse GET data
-	my $queryParams = parseURIQuery($request);
-
-	# Check if the limit ID was passed to us
-	if (!defined($queryParams->{'lid'})) {
-		return (HTTP_OK,{ 'error' => 'Invalid lid' },{ 'type' => 'json' });
-	}
-
-	my $limit;
-	if (!defined($limit = getLimit($queryParams->{'lid'}->{'value'}))) {
-		return (HTTP_OK,{ 'error' => 'Invalid limit' },{ 'type' => 'json' });
-	}
-
-	# Pull in stats data
-	my $statsData = opentrafficshaper::plugins::statistics::getStatsByLID($queryParams->{'lid'}->{'value'});
-
-	# First stage refinement
-	my $rawData;
-	foreach my $timestamp (sort keys %{$statsData}) {
-		foreach my $direction (keys %{$statsData->{$timestamp}}) {
-
-			foreach my $stat ('rate','pps','cir','limit') {
-				push(  @{$rawData->{"$direction.$stat"}->{'data'}} , [ $timestamp , $statsData->{$timestamp}->{$direction}->{$stat} ] );
-			}
-
-		}
-	}
-	# Second stage - add labels
-	foreach my $direction ('tx','rx') {
-		foreach my $stat ('rate','pps','cir','limit') {
-				# Make it looks nice:  Tx Rate
-				my $label = uc($direction) . " " . ucfirst($stat);
-				# And set it as the label
-				$rawData->{"$direction.$stat"}->{'label'} = $label;
-		}
-	}
-
-	# Final stage, chop it out how we need it
-	my $jsonData = [ $rawData->{'tx.limit'}, $rawData->{'rx.limit'}, $rawData->{'tx.rate'} , $rawData->{'rx.rate'} ];
-
-	return (HTTP_OK,$jsonData,{ 'type' => 'json' });
-}
 
 
 # Graphs by class
@@ -208,6 +158,15 @@ EOF
 EOF
 			goto END;
 		}
+		# Check if we get some data back when pulling the interface from the backend
+		if (!defined($interface = getInterface($queryParams->{'interface'}->{'value'}))) {
+			$content .=<<EOF;
+				<tr class="info">
+					<td colspan="8"><p class="text-center">No Interface Results</p></td>
+				</tr>
+EOF
+			goto END;
+		}
 		# Grab the class
 		if (!defined($queryParams->{'class'})) {
 			$content .=<<EOF;
@@ -217,17 +176,8 @@ EOF
 EOF
 			goto END;
 		}
-		# Check if we get some data back when pulling the interface from the backend
-		if (!defined($interface = getInterface($queryParams->{'interface'}))) {
-			$content .=<<EOF;
-				<tr class="info">
-					<td colspan="8"><p class="text-center">No Interface Results</p></td>
-				</tr>
-EOF
-			goto END;
-		}
 		# Check if our traffic class is valid
-		if (!defined($cid = isTrafficClassValid($queryParams->{'class'})) && $queryParams->{'class'} ne "0") {
+		if (!defined($cid = isTrafficClassValid($queryParams->{'class'}->{'value'})) && $queryParams->{'class'}->{'value'} ne "0") {
 			$content .=<<EOF;
 				<tr class="info">
 					<td colspan="8"><p class="text-center">No Class Results</p></td>
@@ -249,33 +199,24 @@ EOF
 
 	# Build content
 	$content = <<EOF;
-	<div id="content" style="float:left">
-
-		<div style="position: relative; top: 50px;">
 			<h4 style="color:#8f8f8f;">Latest Data For: $classNameEncoded on $interfaceNameEncoded</h4>
-		<br/>
-
-		<div id="ajaxData" class="ajaxData" style="float:left; width:1024px; height: 560px"></div>
-		</div>
-
-	</div>
+			<br/>
+			<div id="flotCanvas" class="flotCanvas" style="width: 1000px; height: 400px"></div>
 EOF
 
 	# Files loaded at end of HTML document
 	my @javascripts = (
-		'/static/awit-flot/jquery.flot.min.js',
-		'/static/awit-flot/jquery.flot.time.min.js',
+		'/static/flot/jquery.flot.min.js',
+		'/static/flot/jquery.flot.time.min.js',
+		'/static/awit-flot/functions.js',
 	);
 
 	# Build our data path using the URI module to make sure its nice and clean
-	my $dataPath = URI->new('/statistics/data-by-class');
-	# Pass it the original query, just incase we had extra params we can use
-	$dataPath->query_form( $request->uri->query_form() );
-	my $dataPathStr = $dataPath->as_string();
+	my $dataPath = '/statistics/jsondata?counter=ConfigManager:TotalLimits&interface-group=eth4,eth5';
 
 
 	# String put in <script> </script> tags after the above files are loaded
-	my $javascript = _getJavascript($dataPathStr);
+	my $javascript = _getJavascript($dataPath);
 
 END:
 
@@ -284,8 +225,24 @@ END:
 
 
 
-# Return data by class
-sub databyclass
+# Return data in json format
+#
+# Supported URLs:
+#
+#	limit=<limit-id>
+#
+#	class=<interface-group-id>:<class-id>,...
+#	- must return both tx and rx sides
+#
+#	interface-group=<interface-group>,...
+#	- must retun both tx and rx sides
+#
+#	counter=<counter>,...
+#
+#	max=<max number of entries to return, default 100>
+#
+#	key=<data key to return>
+sub jsondata
 {
 	my ($kernel,$globals,$client_session_id,$request) = @_;
 
@@ -293,54 +250,196 @@ sub databyclass
 	# Parse GET data
 	my $queryParams = parseURIQuery($request);
 
-	# Check if the username was passed to us
-	if (!defined($queryParams->{'interface'})) {
-		return (HTTP_OK,{ 'error' => 'Missing interface' },{ 'type' => 'json' });
-	}
-	if (!defined($queryParams->{'class'})) {
-		return (HTTP_OK,{ 'error' => 'Missing class' },{ 'type' => 'json' });
-	}
-	if (!defined(my $iface = getInterface($queryParams->{'interface'}))) {
-		return (HTTP_OK,{ 'error' => 'Invalid interface' },{ 'type' => 'json' });
-	}
-	if (!defined(my $cid = isTrafficClassValid($queryParams->{'class'})) && $queryParams->{'class'} ne "0") {
-		return (HTTP_OK,{ 'error' => 'Invalid class' },{ 'type' => 'json' });
-	}
-
-	# Pull in stats data
-	my $statsData = opentrafficshaper::plugins::statistics::getStatsByClass($queryParams->{'interface'},$queryParams->{'class'});
-
-	# First stage refinement
-	my $rawData;
-	foreach my $timestamp (sort keys %{$statsData}) {
-		foreach my $direction (keys %{$statsData->{$timestamp}}) {
-
-			foreach my $stat ('rate','pps','cir','limit') {
-				push(  @{$rawData->{"$direction.$stat"}->{'data'}} , [ $timestamp , $statsData->{$timestamp}->{$direction}->{$stat} ] );
-			}
-
-		}
-	}
-
 	my $jsonData = [ ];
 
-	# Second stage - add labels
-	foreach my $direction ('tx','rx') {
-		foreach my $stat ('rate','pps','cir','limit') {
-				# Make it looks nice:  Tx Rate
-				my $label = uc($direction) . " " . ucfirst($stat);
-				# And set it as the label
-				$rawData->{"$direction.$stat"}->{'label'} = $label;
+	# Process limits
+	if (defined($queryParams->{'limit'})) {
+		# Lets get unique limits as keys
+		my %limits;
+		foreach my $lid (@{$queryParams->{'limit'}->{'values'}}) {
+			$limits{$lid} = 1;
 		}
 
-		# JSON stuff we looking for
-		foreach my $stat ('limit','rate') {
-			if (defined($rawData->{"$direction.$stat"}->{'data'})) {
-					push(@{$jsonData},$rawData->{"$direction.$stat"});
+		# Then loop through the unique keys
+		foreach my $lid (keys %limits) {
+			# Grab limit
+			my $limit = getLimit($lid);
+			if (!defined($limit)) {
+				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Got request for non-existent limit ID '$lid'");
+				next;
+			}
+
+			# Pull in stats data
+			my $sid = opentrafficshaper::plugins::statistics::getSIDFromLID($limit->{'ID'});
+			my $statsData = opentrafficshaper::plugins::statistics::getStatsBySID($sid);
+
+			# First stage, pull in the data items we want
+			my $rawData;
+			foreach my $timestamp (sort keys %{$statsData}) {
+				foreach my $direction (keys %{$statsData->{$timestamp}}) {
+					foreach my $stat ('cir','limit','pps','rate') {
+						# Flow of traffic is always in tx direction
+						push(  @{$rawData->{"$direction.$stat"}->{'data'}} , [ $timestamp , $statsData->{$timestamp}->{$direction}->{$stat} ] );
+					}
+				}
+			}
+
+			# JSON stuff we looking for
+			foreach my $direction ('tx','rx') {
+				foreach my $stat ('cir','limit','rate') {
+					# Make it looks nice:  Tx Rate
+					my $label = uc($direction) . " " . ucfirst($stat);
+					# And set it as the label
+					$rawData->{"$direction.$stat"}->{'label'} = $label;
+					# Push the data to return...
+					if (defined($rawData->{"$direction.$stat"}->{'data'})) {
+							push(@{$jsonData},$rawData->{"$direction.$stat"});
+					}
+				}
 			}
 		}
 	}
 
+	# Process classes
+	if (defined($queryParams->{'class'})) {
+		# Lets get unique counters as keys
+		my %classes;
+		foreach my $rawClass (@{$queryParams->{'class'}->{'values'}}) {
+			$classes{$rawClass} = 1;
+		}
+		# Then loop through the unique keys
+		foreach my $rawClass (keys %classes) {
+			# Split off based on :
+			my ($rawInterfaceGroup,$rawClass) = split(/:/,$rawClass);
+
+			# Get more sane values...
+			my $interfaceGroup = getInterfaceGroup($rawInterfaceGroup);
+			if (!defined($interfaceGroup)) {
+				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Got request for non-existent interface group '$rawInterfaceGroup'");
+				next;
+			}
+			my $class = isTrafficClassValid($rawClass);
+			if (!defined($class)) {
+				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Got request for non-existent traffic class '$rawClass'");
+				next;
+			}
+
+			# Second stage - add labels
+			foreach my $direction ('tx','rx') {
+				my $rawData;
+
+				# Pull in stats data
+				my $sid = opentrafficshaper::plugins::statistics::getSIDFromCID($interfaceGroup->{"${direction}iface"},$class);
+				my $statsData = opentrafficshaper::plugins::statistics::getStatsBySID($sid);
+
+				# First stage, pull in the data items we want
+				foreach my $timestamp (sort keys %{$statsData}) {
+					foreach my $stat ('cir','limit','pps','rate') {
+						# Flow of traffic is always in tx direction
+						push(  @{$rawData->{"$direction.$stat"}->{'data'}} , [ $timestamp , $statsData->{$timestamp}->{"tx"}->{$stat} ] );
+					}
+				}
+				# Second state, add labels
+				foreach my $stat ('cir','limit','pps','rate') {
+					# Make it looks nice:  Tx Rate
+					my $label = uc($direction) . " " . ucfirst($stat);
+					# And set it as the label
+					$rawData->{"$direction.$stat"}->{'label'} = $label;
+				}
+
+				# JSON stuff we looking for
+				foreach my $stat ('cir','limit','rate') {
+					if (defined($rawData->{"$direction.$stat"}->{'data'})) {
+							push(@{$jsonData},$rawData->{"$direction.$stat"});
+					}
+				}
+			}
+		}
+	}
+
+	# Process interface groups
+	if (defined($queryParams->{'interface-group'})) {
+		# Lets get unique counters as keys
+		my %interfaceGroups;
+		foreach my $group (@{$queryParams->{'interface-group'}->{'values'}}) {
+			$interfaceGroups{$group} = 1;
+		}
+		# Then loop through the unique keys
+		foreach my $group (keys %interfaceGroups) {
+			my $interfaceGroup = getInterfaceGroup($group);
+			if (!defined($interfaceGroup)) {
+				next;
+			}
+
+			# Second stage - add labels
+			foreach my $direction ('tx','rx') {
+				my $rawData;
+
+				# Pull in stats data
+				my $sid = opentrafficshaper::plugins::statistics::getSIDFromCID($interfaceGroup->{"${direction}iface"},0);
+				my $statsData = opentrafficshaper::plugins::statistics::getStatsBySID($sid);
+
+				# First stage, pull in the data items we want
+				foreach my $timestamp (sort keys %{$statsData}) {
+					foreach my $stat ('cir','limit','pps','rate') {
+						# Flow of traffic is always in tx direction
+						push(  @{$rawData->{"$direction.$stat"}->{'data'}} , [ $timestamp , $statsData->{$timestamp}->{"tx"}->{$stat} ] );
+					}
+				}
+				# Second state, add labels
+				foreach my $stat ('cir','limit','pps','rate') {
+					# Make it looks nice:  Tx Rate
+					my $label = uc($direction) . " " . ucfirst($stat);
+					# And set it as the label
+					$rawData->{"$direction.$stat"}->{'label'} = $label;
+				}
+
+				# JSON stuff we looking for
+				foreach my $stat ('cir','limit','rate') {
+					if (defined($rawData->{"$direction.$stat"}->{'data'})) {
+							push(@{$jsonData},$rawData->{"$direction.$stat"});
+					}
+				}
+			}
+		}
+	}
+
+	# If we need to return a counter, lets see what there is we can return...
+	if (defined($queryParams->{'counter'})) {
+		# Lets get unique counters as keys
+		my %counters;
+		foreach my $counter (@{$queryParams->{'counter'}->{'values'}}) {
+			$counters{$counter} = 1;
+		}
+		# Then loop through the unique keys
+		foreach my $counter (keys %counters) {
+			# Grab the SID
+			if (my $sid = opentrafficshaper::plugins::statistics::getSIDFromCounter($counter)) {
+				my $rawData;
+
+				# Grab stats
+				my $statsData = opentrafficshaper::plugins::statistics::getStatsBasicBySID($sid);
+
+				# First stage refinement
+				foreach my $timestamp (sort keys %{$statsData}) {
+					# Flow of traffic is always in tx direction
+					push(  @{$rawData->{'data'}} , [ $timestamp , $statsData->{$timestamp}->{'counter'} ] );
+				}
+
+				# We need to give it a funky name ...
+				$rawData->{'label'} = "Unknown";
+				if ($counter eq "ConfigManager:TotalLimits") {
+					$rawData->{'label'} = "Total Limits";
+				}
+
+				# Push it onto our data stack...
+				push(@{$jsonData},$rawData);
+
+			} else {
+				return (HTTP_OK,{ 'error' => 'Invalid Counter' },{ 'type' => 'json' });
+			}
+		}
+	}
 
 	return (HTTP_OK,$jsonData,{ 'type' => 'json' });
 }
@@ -349,134 +448,24 @@ sub databyclass
 # Return javascript for the graph
 sub _getJavascript
 {
-	my $dataPath = shift;
+	my $graphData = shift;
 
+	# Build our data path using the URI module to make sure its nice and clean
+	my $dataPath = URI->new($graphData);
+	my $dataPathStr = $dataPath->as_string();
 
 	my $javascript =<<EOF;
-// Tooltip - Displays detailed information regarding the data point
-function showTooltip(x, y, contents) {
-	jQuery('<div id="tooltip">' + contents + '</div>').css({
-			position: 'absolute',
-			display: 'none',
-			top: y - 30,
-			left: x - 50,
-			color: "#fff",
-			padding: '2px 5px',
-			'border-radius': '6px',
-			'background-color': '#000',
-			opacity: 0.80
-	}).appendTo("body").fadeIn(200);
-}
-
-var previousPoint = null;
-jQuery("#ajaxData").bind("plothover", function (event, pos, item) {
-	if (item) {
-		if (previousPoint != item.dataIndex) {
-			previousPoint = item.dataIndex;
-			jQuery("#tooltip").remove();
-			showTooltip(item.pageX, item.pageY, item.series.label);
-		}
-	} else {
-		jQuery("#tooltip").remove();
-		previousPoint = null;
-	}
-});
-
-
-// Setting up the graph here
-options = {
-
-	series: {
-		lines: {
-			show: true,
-			lineWidth: 1,
-			fill: true,
-			fillColor: {
-				colors: [
-					{ opacity: 0.1 },
-					{ opacity: 0.13 }
-				]
+	awit_flot_draw_graph({
+		url: '$dataPathStr',
+		yaxes: [
+			{
+				labels: ['Total Limits'],
+				position: 'right',
+				tickDecimals: 0,
+				min: 0	
 			}
-		},
-
-		points: {
-			show: false,
-			lineWidth: 2,
-			radius: 3
-		},
-
-		shadowSize: 0,
-		stack: true
-	},
-
-	grid: {
-		hoverable: true,
-		clickable: false,
-		tickColor: "#f9f9f9",
-		borderWidth: 0
-	},
-
-	legend: {
-		labelBoxBorderColor: "#fff"
-	},
-
-	xaxis: {
-		mode: "time",
-
-		tickSize: [60, "second"],
-
-		tickFormatter: function (v, axis) {
-			var date = new Date(v);
-
-			if (date.getSeconds() % 5 == 0) {
-				var hours = date.getHours() < 10 ? "0" + date.getHours() : date.getHours();
-				var minutes = date.getMinutes() < 10 ? "0" + date.getMinutes() : date.getMinutes();
-				var seconds = date.getSeconds() < 10 ? "0" + date.getSeconds() : date.getSeconds();
-
-				return hours + ":" + minutes + ":" + seconds;
-			} else {
-				return "";
-			}
-		},
-	},
-
-	yaxis: {
-		min: 0,
-//		max: 4000,
-		tickFormatter: function (v, axis) {
-			if (v % 10 == 0) {
-				res = v.toString().replace(/\\B(?=(\\d{3})+(?!\\d))/g, ",");
-				console.log(res);
-				return res + ' Kbps';
-			} else {
-				return "";
-			}
-		},
-	}
-}
-
-// Load data from ajax
-jQuery.ajax({
-	url: '$dataPath',
-	dataType: 'json',
-
-	success: function(statsData) {
-		plot = null;
-
-		// formatting time to match javascript's epoch in milliseconds
-		for (i = 0; (i < statsData.length); i++) {
-			//console.log(statsData[i].data);
-			for (y = 0; (y < statsData[i].data.length); y++) {
-				d = new Date(statsData[i].data[y][0] * 1000);
-				statsData[i].data[y][0] = statsData[i].data[y][0] * 1000;
-			}
-		}
-
-		if (statsData.length > 0) {
-			plot = jQuery.plot(jQuery("#ajaxData"), statsData, options);
-		}
-	}
-});
+		]
+	});
 EOF
 
 	return $javascript;
