@@ -330,6 +330,9 @@ sub httpCreateResponse
 		# Set header
 		$headers->content_type("text/html");
 
+		# Bootstrap stuff
+		my $mainCols = 12;
+
 		# Check if we have a menu structure, if we do, display the sidebar
 		my $styleStr = "";
 		my $menuStr = "";
@@ -343,12 +346,13 @@ sub httpCreateResponse
 			# Check if menu exists
 			if (my $menu = $options->{'menu'}) {
 				$menuStr =<<EOF;
-					<ul class="nav nav-pills nav-stacked">
+					<div class="col-md-2">
+						<ul class="nav nav-pills nav-stacked">
 EOF
 				# Loop with sub menu sections
 				foreach my $section (keys %{$menu}) {
 					$menuStr .=<<EOF;
-						<li class="nav-header">$section</li>
+							<li class="nav-header">$section</li>
 EOF
 					# Loop with menu items
 					foreach my $item (keys %{$menu->{$section}}) {
@@ -358,13 +362,17 @@ EOF
 
 						# Build sections
 						$menuStr .=<<EOF;
-							<li><a href="$link">$item</a></li>
+								<li><a href="$link">$item</a></li>
 EOF
 					}
 				}
 				$menuStr .=<<EOF;
-					</ul>
+						</ul>
+					</div>
 EOF
+
+				# Reduce number of main cols to make way for menu
+				$mainCols = 10;
 			}
 
 			# Check if we have a list of javascript assets
@@ -400,11 +408,6 @@ EOF
 			body {
 				padding-top: 50px;
 			}
-
-			.main-area {
-				padding-top: 15px;
-				padding-bottom: 15px;
-			}
 $styleStr
 		</style>
 		<!-- End Assets -->
@@ -423,7 +426,7 @@ $styleStr
 				</div>
 				<div class="collapse navbar-collapse">
 					<ul class="nav navbar-nav">
-						<li class="active"><a href="#">Home</a></li>
+						<li class="active"><a href="/">Home</a></li>
 						<li><a href="/limits">Limits</a></li>
 						<li><a href="/configmanager">ConfigManager</a></li>
 					</ul>
@@ -431,20 +434,20 @@ $styleStr
 			</div>
 		</div>
 
-		<div class="main-area container">
-				<div class="col-md-2">
+		<div style="padding: 15px 15px">
+			<div class="row">
 $menuStr
-				</div>
-				<div class="col-md-10">
+				<div class="col-md-$mainCols">
 $content
 				</div>
 			</div>
-			<hr>
+		</div>
+		<div style="padding: 0 15px">
+			<hr />
 			<footer>
 				<p class="muted">v$globals->{'version'} - Copyright &copy; 2013,  <a href="http://www.allworldit.com">AllWorldIT</a></p>
 			</footer>
 		</div>
-
 	</body>
 
 
