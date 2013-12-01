@@ -1,0 +1,10 @@
+#!/bin/bash
+
+git submodule update --recursive --init
+
+pushd opentrafficshaper/awitpt
+git checkout v0.0.x
+git pull
+popd
+
+git submodule update
