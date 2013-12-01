@@ -236,7 +236,7 @@ sub task_child_stdout
 		# Check if this is a limit class...
 		if (opentrafficshaper::plugins::tc::isTcLimitClass($interface,1,$stat->{'_class_child'})) {
 			if (defined(my $lid = opentrafficshaper::plugins::tc::getLIDFromTcLimitClass($interface,$stat->{'_class_child'}))) {
-				$sid = opentrafficshaper::plugins::statistics::getSIDFromLID($lid);
+				$sid = opentrafficshaper::plugins::statistics::setSIDFromLID($lid);
 				$direction = opentrafficshaper::plugins::statistics::getTrafficDirection($lid,$interface);
 			} else {
 				$logger->log(LOG_WARN,"[TCSTATS] Limit traffic class '%s:%s' NOT FOUND",$stat->{'_class_parent'},$stat->{'_class_child'});
@@ -245,11 +245,11 @@ sub task_child_stdout
 			# Class = 1 is the root
 			if ($classChildDec == 1) {
 				# This is a special case case
-				$sid = opentrafficshaper::plugins::statistics::getSIDFromCID($interface,0);
+				$sid = opentrafficshaper::plugins::statistics::setSIDFromCID($interface,0);
 			} else {
 				# Save the class with the decimal number
 				if (my $classID =  opentrafficshaper::plugins::tc::getCIDFromTcLimitClass($interface,1,$stat->{'_class_child'})) {
-					$sid = opentrafficshaper::plugins::statistics::getSIDFromCID($interface,$classID);
+					$sid = opentrafficshaper::plugins::statistics::setSIDFromCID($interface,$classID);
 				} else {
 					$logger->log(LOG_WARN,"[TCSTATS] System traffic class '%s:%s' NOT FOUND",$stat->{'_class_parent'},$stat->{'_class_child'});
 				}
