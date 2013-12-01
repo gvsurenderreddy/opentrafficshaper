@@ -151,9 +151,9 @@ sub plugin_init
 			# Load resources
 			$resources->{'HTTP'}->{'statistics'} = {
 				'by-limit' => \&opentrafficshaper::plugins::webserver::pages::statistics::bylimit,
-				'data-by-limit' => \&opentrafficshaper::plugins::webserver::pages::statistics::databylimit,
 				'by-class' => \&opentrafficshaper::plugins::webserver::pages::statistics::byclass,
-				'data-by-class' => \&opentrafficshaper::plugins::webserver::pages::statistics::databyclass,
+
+				'jsondata' => \&opentrafficshaper::plugins::webserver::pages::statistics::jsondata
 			};
 			$logger->log(LOG_INFO,"[WEBSERVER] Loaded statistics pages as statistics module is loaded");
 		}
