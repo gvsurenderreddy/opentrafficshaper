@@ -26,6 +26,13 @@ Debian: libdbd-mysql-perl
 - Perl 5.6+
 
 
+*
+* Pull in dependency code
+*
+
+./update-git-modules
+
+
 
 *
 * Next steps
