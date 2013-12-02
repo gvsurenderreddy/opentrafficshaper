@@ -44,14 +44,43 @@ use opentrafficshaper::plugins::configmanager qw( getOverrides getOverride getTr
 
 
 # Sidebar menu options for this module
-my $menu = {
-	'View Overrides' =>  {
-		'All Overrides' => '',
+my $menu = [
+	{
+		'name' => 'Limit Overrides',
+		'items' => [
+			{
+				'name' => 'View Overrides',
+				'link' => 'override-list'
+			},
+			{
+				'name' => 'Add Override',
+				'link' => 'override-add'
+			}
+		]
 	},
-	'Admin' =>  {
-		'Add Override' => 'override-add',
+	{
+		'name' => 'Limit Pools',
+		'items' => [
+			{
+				'name' => 'View Pools',
+				'link' => 'pools-list'
+			},
+			{
+				'name' => 'Add Pool',
+				'link' => 'pools-add'
+			}
+		]
 	},
-};
+	{
+		'name' => 'Admin',
+		'items' => [
+			{
+				'name' => 'Configuration',
+				'link' => 'configuration-list'
+			}
+		]
+	}
+];
 
 
 

@@ -56,15 +56,30 @@ use opentrafficshaper::plugins::configmanager qw(
 
 
 # Sidebar menu options for this module
-my $menu = {
-	'View Limits' =>  {
-		'All Limits' => '',
-		'Manual Limits' => './?source=plugin.webserver.limits',
+my $menu = [
+	{
+		'name' => 'View Limits',
+		'items' => [
+			{
+				'name' => 'All Limits',
+				'link' => ''
+			},
+			{
+				'name' => 'Manual Limits',
+				'link' => './?source=plugin.webserver.limits'
+			}
+		]
 	},
-	'Admin' => {
-		'Add Limit' => 'limit-add',
-	},
-};
+	{
+		'name' => 'Admin',
+		'items' => [
+			{
+				'name' => 'Add Limit',
+				'link' => 'limit-add'
+			}
+		]
+	}
+];
 
 
 

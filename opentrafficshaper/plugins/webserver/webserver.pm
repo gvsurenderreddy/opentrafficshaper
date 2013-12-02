@@ -346,23 +346,25 @@ sub httpCreateResponse
 			# Check if menu exists
 			if (my $menu = $options->{'menu'}) {
 				$menuStr =<<EOF;
-					<div class="col-md-2">
+					<div class="col-xs-2">
 						<ul class="nav nav-pills nav-stacked">
 EOF
 				# Loop with sub menu sections
-				foreach my $section (keys %{$menu}) {
+				foreach my $section (@{$menu}) {
+					my $sectionName = encode_entities($section->{'name'});
 					$menuStr .=<<EOF;
-							<li class="nav-header">$section</li>
+							<li class="nav-header">$sectionName</li>
 EOF
 					# Loop with menu items
-					foreach my $item (keys %{$menu->{$section}}) {
-						my $link = "/" . $module . "/" . $menu->{$section}->{$item};
-						# Sanitize slightly
-						$link =~ s,/+$,,;
+					foreach my $item (@{$section->{'items'}}) {
+						my $itemName = encode_entities($item->{'name'});
+						# Sanitize link
+						my $itemLink = "/" . $module . "/" . $item->{'link'};
+						$itemLink =~ s,/+$,,;
 
 						# Build sections
 						$menuStr .=<<EOF;
-								<li><a href="$link">$item</a></li>
+								<li><a href="$itemLink">$itemName</a></li>
 EOF
 					}
 				}
@@ -437,7 +439,7 @@ $styleStr
 		<div style="padding: 15px 15px">
 			<div class="row">
 $menuStr
-				<div class="col-md-$mainCols">
+				<div class="col-xs-$mainCols">
 $content
 				</div>
 			</div>
