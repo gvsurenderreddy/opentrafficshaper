@@ -21,7 +21,7 @@ use warnings;
 
 # Set the dirs we look for library files in
 use lib('/usr/local/lib/opentrafficshaper-1.0','/usr/lib/opentrafficshaper-1.0',
-		'/usr/lib64/opentrafficshaper-1.0','opentrafficshaper','awitpt', 'lib');
+		'/usr/lib64/opentrafficshaper-1.0','opentrafficshaper','awitpt','lib');
 
 # Enable assertions
 BEGIN {
