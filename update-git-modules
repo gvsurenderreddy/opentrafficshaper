@@ -3,7 +3,7 @@
 git submodule update --recursive --init
 
 pushd opentrafficshaper/awitpt
-git checkout v0.0.x
+git checkout v0.1.x
 git pull
 popd
 
