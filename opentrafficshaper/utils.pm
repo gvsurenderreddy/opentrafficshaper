@@ -92,10 +92,18 @@ sub parseFormContent
 	# Split information into name/value pairs
 	my @pairs = split(/&/, $data);
 	foreach my $pair (@pairs) {
+		# Spaces are represented by +'s
+		$pair =~ tr/+/ /;
+		# Split off name value pairs
 		my ($name, $value) = split(/=/, $pair);
-		$value =~ tr/+/ /;
-		$value =~ s/%(..)/pack("C", hex($1))/eg;
-		$res{$name} = $value;
+		# Unescape name value pair
+		$name =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/eg;
+		$value =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/eg;
+		# Cleanup...
+		$name =~ s/[^0-9A-Za-z\[\]\.]/_/g;
+		# Add to hash
+		$res{$name}->{'value'} = $value;
+		push(@{$res{$name}->{'values'}},$value);
 	}
 
 	return \%res;
