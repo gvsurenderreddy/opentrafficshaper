@@ -27,6 +27,7 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 @ISA = qw(Exporter);
 @EXPORT = qw(
 	prettyUndef
+	getHashChanges
 	toHex
 	isVariable
 	isUsername
@@ -50,6 +51,27 @@ sub prettyUndef
 	} else {
 		return $var;
 	}
+}
+
+
+# Function to return the changes between two hashes using a list of keys
+sub getHashChanges
+{
+	my ($orig,$new,$keys) = @_;
+
+
+	my $changed = { };
+
+	foreach my $key (@{$keys}) {
+		# We can only do this if we have a new value
+		if (defined($new->{$key})) {
+			if (!defined($orig->{$key}) || $orig->{$key} ne $new->{$key}) {
+				$changed->{$key} = $new->{$key};
+			}
+		}
+	}
+
+	return $changed;
 }
 
 
