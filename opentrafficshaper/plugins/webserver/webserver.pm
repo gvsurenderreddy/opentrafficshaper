@@ -398,8 +398,11 @@ EOF
 		# Create the payload we returning
 		$payload = <<EOF;
 <!DOCTYPE html>
+<html>
 	<head>
 		<title>OpenTrafficShaper - Enterprise Traffic Shaper</title>
+		<!-- Meta -->
+		<meta charset="UTF-8">
 		<meta name="viewport" content="width=device-width, initial-scale=1.0">
 		<!-- Assets -->
 		<link href="/static/favicon.ico" rel="icon" />
