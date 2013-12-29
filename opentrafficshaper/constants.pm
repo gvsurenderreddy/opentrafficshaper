@@ -31,6 +31,9 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 );
 
 
+# SHAPER_NOTLIVE - Nothing is going on yet, something should happen
+# SHAPER_PENDING - Waiting on shaper to do a change
+# SHAPER_LIVE - Shaper is up to date with our config
 use constant {
 	SHAPER_NOTLIVE => 0,
 	SHAPER_PENDING => 1,
