@@ -64,8 +64,8 @@ sub getHashChanges
 
 	foreach my $key (@{$keys}) {
 		# We can only do this if we have a new value
-		if (defined($new->{$key})) {
-			if (!defined($orig->{$key}) || $orig->{$key} ne $new->{$key}) {
+		if (exists($new->{$key})) {
+			if (!defined($orig->{$key}) || !defined($new->{$key}) || $orig->{$key} ne $new->{$key}) {
 				$changed->{$key} = $new->{$key};
 			}
 		}
