@@ -346,13 +346,16 @@ sub httpCreateResponse
 			# Check if menu exists
 			if (my $menu = $options->{'menu'}) {
 				$menuStr =<<EOF;
-					<div class="col-xs-2">
+					<div class="col-md-2">
 						<ul class="nav nav-pills nav-stacked">
 EOF
 				# Loop with sub menu sections
+				my @menuItems = ();
 				foreach my $section (@{$menu}) {
+					my $menuItem = "";
+
 					my $sectionName = encode_entities($section->{'name'});
-					$menuStr .=<<EOF;
+					$menuItem .=<<EOF;
 							<li class="nav-header">$sectionName</li>
 EOF
 					# Loop with menu items
@@ -363,11 +366,20 @@ EOF
 						$itemLink =~ s,/+$,,;
 
 						# Build sections
-						$menuStr .=<<EOF;
-								<li><a href="$itemLink">$itemName</a></li>
+						$menuItem .=<<EOF;
+							<li><a href="$itemLink">$itemName</a></li>
 EOF
 					}
+
+					# Add menu item
+					push(@menuItems,$menuItem);
 				}
+
+				# Join menu items
+				$menuStr .= join(<<EOF,@menuItems);
+							<hr />
+EOF
+
 				$menuStr .=<<EOF;
 						</ul>
 					</div>
@@ -442,7 +454,7 @@ $styleStr
 		<div style="padding: 15px 15px">
 			<div class="row">
 $menuStr
-				<div class="col-xs-$mainCols">
+				<div class="col-md-$mainCols">
 $content
 				</div>
 			</div>
