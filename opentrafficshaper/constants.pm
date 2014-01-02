@@ -25,10 +25,27 @@ require Exporter;
 our (@ISA,@EXPORT,@EXPORT_OK);
 @ISA = qw(Exporter);
 @EXPORT = qw(
+	CFGM_NEW
+	CFGM_OFFLINE
+	CFGM_ONLINE
+	CFGM_CHANGED
+
 	SHAPER_NOTLIVE
 	SHAPER_PENDING
 	SHAPER_LIVE
 );
+
+
+# CFGM_NEW - New
+# CFGM_OFFLINE - Offline
+# CFGM_ONLINE - Online
+# CFGM_CHANGED - Changed
+use constant {
+	CFGM_OFFLINE => 0,
+	CFGM_CHANGED => 1,
+	CFGM_ONLINE => 2,
+	CFGM_NEW => 4,
+};
 
 
 # SHAPER_NOTLIVE - Nothing is going on yet, something should happen
