@@ -1,5 +1,5 @@
 # OpenTrafficShaper Linux tcstats traffic shaping statistics
-# Copyright (C) 2007-2013, AllWorldIT
+# Copyright (C) 2007-2014, AllWorldIT
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -31,7 +31,7 @@ use opentrafficshaper::logger;
 use opentrafficshaper::utils;
 
 use opentrafficshaper::plugins::configmanager qw(
-		getInterfaces
+	getInterfaces
 );
 
 
@@ -45,7 +45,7 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 );
 
 use constant {
-	VERSION => '0.0.1',
+	VERSION => '0.1.2',
 
 	# How often our config check ticks
 	TICK_PERIOD => 5,
@@ -82,23 +82,23 @@ sub plugin_init
 	# Setup our environment
 	$logger = $globals->{'logger'};
 
-	$logger->log(LOG_NOTICE,"[TCSTATS] OpenTrafficShaper tc Statistics Integration v".VERSION." - Copyright (c) 2013, AllWorldIT");
-
+	$logger->log(LOG_NOTICE,"[TCSTATS] OpenTrafficShaper tc Statistics Integration v%s - Copyright (c) 2013-2014, AllWorldIT",
+			VERSION
+	);
 
 	# This session is our main session, its alias is "shaper"
 	POE::Session->create(
 		inline_states => {
-			_start => \&session_start,
-			_stop => \&session_stop,
+			_start => \&_session_start,
+			_stop => \&_session_stop,
+			_tick => \&_session_tick,
 
-			tick => \&session_tick,
-			# Internal
-			task_child_stdout => \&task_child_stdout,
-			task_child_stderr => \&task_child_stderr,
-			task_child_close => \&task_child_close,
-			# Signals
-			handle_SIGCHLD => \&task_handle_SIGCHLD,
-			handle_SIGINT => \&task_handle_SIGINT,
+			_task_child_stdout => \&_task_child_stdout,
+			_task_child_stderr => \&_task_child_stderr,
+			_task_child_close => \&_task_child_close,
+
+			_SIGCHLD => \&_task_handle_SIGCHLD,
+			_SIGINT => \&_task_handle_SIGINT,
 		}
 	);
 
@@ -114,7 +114,7 @@ sub plugin_start
 
 
 # Initialize this plugins main POE session
-sub session_start
+sub _session_start
 {
 	my ($kernel,$heap) = @_[KERNEL,HEAP];
 
@@ -123,14 +123,14 @@ sub session_start
 	$kernel->alias_set("tcstats");
 
 	# Set delay on config updates
-	$kernel->delay(tick => TICK_PERIOD);
+	$kernel->delay('_tick' => TICK_PERIOD);
 
 	$logger->log(LOG_DEBUG,"[TCSTATS] Initialized");
 }
 
 
 # Shut down session
-sub session_stop
+sub _session_stop
 {
 	my ($kernel,$heap) = @_[KERNEL,HEAP];
 
@@ -146,7 +146,7 @@ sub session_stop
 
 
 # Time ticker for processing changes
-sub session_tick
+sub _session_tick
 {
 	my ($kernel,$heap) = @_[KERNEL,HEAP];
 
@@ -159,11 +159,13 @@ sub session_tick
 	foreach my $interface (@{getInterfaces()})	{
 
 		# Skip to next if we've already run for this interface
-		if (defined($lastStats->{$interface}) && $lastStats->{$interface} + opentrafficshaper::plugins::statistics::STATISTICS_PERIOD > $now) {
+		if (defined($lastStats->{$interface}) &&
+				$lastStats->{$interface} + opentrafficshaper::plugins::statistics::STATISTICS_PERIOD > $now
+		) {
 			next;
 		}
 
-		$logger->log(LOG_INFO,"[TCSTATS] Generating stats for '$interface'");
+		$logger->log(LOG_INFO,"[TCSTATS] Generating stats for '%s'",$interface);
 
 		# TC commands to run
 		my $cmd = [ '/sbin/tc', '-s', 'class', 'show', 'dev', $interface, 'parent', '1:' ];
@@ -174,13 +176,13 @@ sub session_tick
 			StdinFilter => POE::Filter::Line->new(),
 			StdoutFilter => POE::Filter::TCStatistics->new(),
 			StderrFilter => POE::Filter::Line->new(),
-			StdoutEvent => 'task_child_stdout',
-			StderrEvent => 'task_child_stderr',
-			CloseEvent => 'task_child_close',
+			StdoutEvent => '_task_child_stdout',
+			StderrEvent => '_task_child_stderr',
+			CloseEvent => '_task_child_close',
 		) or $logger->log(LOG_ERR,"[TCSTATS] TC: Unable to start task");
 
 		# Intercept SIGCHLD
-		$kernel->sig_child($task->ID, "handle_SIGCHLD");
+		$kernel->sig_child($task->ID, "_SIGCHLD");
 
 		# Wheel events include the wheel's ID.
 		$heap->{task_by_wid}->{$task->ID} = $task;
@@ -195,7 +197,7 @@ sub session_tick
 
 		# Build commandline string
 		my $cmdStr = join(' ',@{$cmd});
-		$logger->log(LOG_DEBUG,"[TCSTATS] TASK/".$task->ID.": Starting '$cmdStr' as ".$task->ID." with PID ".$task->PID);
+		$logger->log(LOG_DEBUG,"[TCSTATS] TASK/%s: Starting '%s' as %s with PID %s",$task->ID,$cmdStr,$task->ID,$task->PID);
 
 		# Set last time we were run to now
 		$lastStats->{$interface} = $now;
@@ -207,15 +209,17 @@ sub session_tick
 
 	# If we didn't fire up any stats, re-tick
 	if (!$interfaceCount) {
-		$kernel->delay(tick => TICK_PERIOD);
+		$kernel->delay('_tick' => TICK_PERIOD);
 	}
 };
 
 
 # Child writes to STDOUT
-sub task_child_stdout
+sub _task_child_stdout
 {
 	my ($kernel,$heap,$stat,$task_id) = @_[KERNEL,HEAP,ARG0,ARG1];
+
+
 	my $task = $heap->{task_by_wid}->{$task_id};
 
 	# Grab task data
@@ -230,29 +234,38 @@ sub task_child_stdout
 	my $direction = opentrafficshaper::plugins::statistics::STATISTICS_DIR_TX;
 
 	# Is this a system class?
-	# XXX: _class_parent is hard coded to 1
 	my $classChildDec = hex($stat->{'_class_child'});
-	if ($stat->{'_class_parent'} == 1) {
-		# Check if this is a limit class...
-		if (opentrafficshaper::plugins::tc::isTcLimitClass($interface,1,$stat->{'_class_child'})) {
-			if (defined(my $lid = opentrafficshaper::plugins::tc::getLIDFromTcLimitClass($interface,$stat->{'_class_child'}))) {
-				$sid = opentrafficshaper::plugins::statistics::setSIDFromLID($lid);
-				$direction = opentrafficshaper::plugins::statistics::getTrafficDirection($lid,$interface);
-			} else {
-				$logger->log(LOG_WARN,"[TCSTATS] Limit traffic class '%s:%s' NOT FOUND",$stat->{'_class_parent'},$stat->{'_class_child'});
-			}
+	# Check if this is a limit class...
+	if (opentrafficshaper::plugins::tc::isPoolTcClass($interface,$stat->{'_class_parent'},$stat->{'_class_child'})) {
+
+		if (defined(my $pid = opentrafficshaper::plugins::tc::getPIDFromTcClass($interface,$stat->{'_class_parent'},
+						$stat->{'_class_child'}))
+		) {
+			$sid = opentrafficshaper::plugins::statistics::setSIDFromPID($pid);
+			$direction = opentrafficshaper::plugins::statistics::getTrafficDirection($pid,$interface);
 		} else {
-			# Class = 1 is the root
-			if ($classChildDec == 1) {
-				# This is a special case case
-				$sid = opentrafficshaper::plugins::statistics::setSIDFromCID($interface,0);
+			$logger->log(LOG_WARN,"[TCSTATS] Pool traffic class '%s:%s' NOT FOUND",$stat->{'_class_parent'},
+					$stat->{'_class_child'}
+			);
+		}
+
+	} else {
+		# Class = 1 is the root
+		# XXX: Should this be hard coded or used like TC_ROOT_CLASS is
+		if ($classChildDec == 1) {
+			# This is a special case case
+			$sid = opentrafficshaper::plugins::statistics::setSIDFromCID($interface,0);
+
+		} else {
+			# Save the class with the decimal number
+			if (my $classID = opentrafficshaper::plugins::tc::getCIDFromTcClass($interface,
+						opentrafficshaper::plugins::tc::TC_ROOT_CLASS,$stat->{'_class_child'})
+			) {
+				$sid = opentrafficshaper::plugins::statistics::setSIDFromCID($interface,$classID);
 			} else {
-				# Save the class with the decimal number
-				if (my $classID =  opentrafficshaper::plugins::tc::getCIDFromTcLimitClass($interface,1,$stat->{'_class_child'})) {
-					$sid = opentrafficshaper::plugins::statistics::setSIDFromCID($interface,$classID);
-				} else {
-					$logger->log(LOG_WARN,"[TCSTATS] System traffic class '%s:%s' NOT FOUND",$stat->{'_class_parent'},$stat->{'_class_child'});
-				}
+				$logger->log(LOG_WARN,"[TCSTATS] System traffic class '%s:%s' NOT FOUND",$stat->{'_class_parent'},
+						$stat->{'_class_child'}
+				);
 			}
 		}
 	}
@@ -269,33 +282,36 @@ sub task_child_stdout
 
 
 # Child writes to STDERR
-sub task_child_stderr
+sub _task_child_stderr
 {
 	my ($kernel,$heap,$stdout,$task_id) = @_[KERNEL,HEAP,ARG0,ARG1];
+
+
 	my $task = $heap->{task_by_wid}->{$task_id};
 
-	$logger->log(LOG_WARN,"[TCSTATS] TASK/$task_id: STDERR => ".$stdout);
+	$logger->log(LOG_WARN,"[TCSTATS] TASK/%s: STDERR => %s",$task_id,$stdout);
 }
 
 
 # Child closed its handles, it won't communicate with us, so remove it
-sub task_child_close
+sub _task_child_close
 {
 	my ($kernel,$heap,$task_id) = @_[KERNEL,HEAP,ARG0];
+
+
 	my $task = $heap->{task_by_wid}->{$task_id};
 	my $taskData = $heap->{'task_data'}->{$task_id};
 
-
 	# May have been reaped by task_sigchld()
 	if (!defined($task)) {
-		$logger->log(LOG_DEBUG,"[TCSTATS] TASK/$task_id: Closed dead child");
+		$logger->log(LOG_DEBUG,"[TCSTATS] TASK/%s: Closed dead child",$task_id);
 		return;
 	}
 
 	# Push consolidated update through
 	$kernel->post("statistics" => "update" => $taskData->{'stats'});
 
-	$logger->log(LOG_DEBUG,"[TCSTATS] TASK/$task_id: Closed PID ".$task->PID);
+	$logger->log(LOG_DEBUG,"[TCSTATS] TASK/%s: Closed PID %s",$task_id,$task->PID);
 
 	# Cleanup
 	delete($heap->{task_by_pid}->{$task->PID});
@@ -303,18 +319,18 @@ sub task_child_close
 	delete($heap->{task_data}->{$task_id});
 
 	# Fire up next tick
-	$kernel->delay(tick => TICK_PERIOD);
+	$kernel->delay('_tick' => TICK_PERIOD);
 }
 
 
 # Reap the dead child
-sub task_handle_SIGCHLD
+sub _task_handle_SIGCHLD
 {
 	my ($kernel,$heap,$pid,$status) = @_[KERNEL,HEAP,ARG1,ARG2];
 	my $task = $heap->{task_by_pid}->{$pid};
 
 
-	$logger->log(LOG_DEBUG,"[TCSTATS] TASK: Task with PID $pid exited with status $status");
+	$logger->log(LOG_DEBUG,"[TCSTATS] TASK: Task with PID %s exited with status %s",$pid,$status);
 
 	# May have been reaped by task_child_close()
 	return if (!defined($task));
@@ -327,7 +343,7 @@ sub task_handle_SIGCHLD
 
 
 # Handle SIGINT
-sub task_handle_SIGINT
+sub _task_handle_SIGINT
 {
 	my ($kernel,$heap,$signal_name) = @_[KERNEL,HEAP,ARG0];
 
