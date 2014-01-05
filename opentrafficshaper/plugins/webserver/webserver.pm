@@ -1,5 +1,5 @@
 # OpenTrafficShaper webserver module
-# Copyright (C) 2007-2013, AllWorldIT
+# Copyright (C) 2007-2014, AllWorldIT
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -51,7 +51,7 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 );
 
 use constant {
-	VERSION => '0.0.2'
+	VERSION => '0.1.1'
 };
 
 
@@ -84,16 +84,33 @@ my $resources = {
 			'_catchall' => \&opentrafficshaper::plugins::webserver::pages::static::_catchall,
 		},
 		'limits' => {
-			'default' => \&opentrafficshaper::plugins::webserver::pages::limits::default,
-			'limit-add' => \&opentrafficshaper::plugins::webserver::pages::limits::limit_addedit,
+			'default' => \&opentrafficshaper::plugins::webserver::pages::limits::pool_list,
+			'pool-list' => \&opentrafficshaper::plugins::webserver::pages::limits::pool_list,
+
+
+			'override-add' => \&opentrafficshaper::plugins::webserver::pages::limits::override_addedit,
+			'override-list' => \&opentrafficshaper::plugins::webserver::pages::limits::override_list,
+			'override-remove' => \&opentrafficshaper::plugins::webserver::pages::limits::override_remove,
+			'override-edit' => \&opentrafficshaper::plugins::webserver::pages::limits::override_addedit,
+
+			'pool-add' => \&opentrafficshaper::plugins::webserver::pages::limits::pool_addedit,
+			'pool-list' => \&opentrafficshaper::plugins::webserver::pages::limits::pool_list,
+			'pool-remove' => \&opentrafficshaper::plugins::webserver::pages::limits::pool_remove,
+			'pool-edit' => \&opentrafficshaper::plugins::webserver::pages::limits::pool_addedit,
+
+			'poolmember-add' => \&opentrafficshaper::plugins::webserver::pages::limits::poolmember_addedit,
+			'poolmember-list' => \&opentrafficshaper::plugins::webserver::pages::limits::poolmember_list,
+			'poolmember-remove' => \&opentrafficshaper::plugins::webserver::pages::limits::poolmember_remove,
+			'poolmember-edit' => \&opentrafficshaper::plugins::webserver::pages::limits::poolmember_addedit,
+
+			'limit-add' => \&opentrafficshaper::plugins::webserver::pages::limits::limit_add,
 			'limit-remove' => \&opentrafficshaper::plugins::webserver::pages::limits::limit_remove,
 			'limit-edit' => \&opentrafficshaper::plugins::webserver::pages::limits::limit_addedit,
+
 		},
 		'configmanager' => {
 			'default' => \&opentrafficshaper::plugins::webserver::pages::configmanager::default,
-			'override-add' => \&opentrafficshaper::plugins::webserver::pages::configmanager::override_addedit,
-			'override-remove' => \&opentrafficshaper::plugins::webserver::pages::configmanager::override_remove,
-			'override-edit' => \&opentrafficshaper::plugins::webserver::pages::configmanager::override_addedit,
+			'admin-config' => \&opentrafficshaper::plugins::webserver::pages::configmanager::admin_config,
 		},
 	},
 };
@@ -106,7 +123,7 @@ sub snapin_register
 	my ($protocol,$module,$action,$data) = @_;
 
 
-	$logger->log(LOG_INFO,"[WEBSERVER] Registered snapin: protocol = $protocol, module = $module, action = $action");
+	$logger->log(LOG_INFO,"[WEBSERVER] Registered snapin: protocol = %s, module = %s, action = %s",$protocol,$module,$action);
 
 	# Load resource
 	$resources->{$protocol}->{$module}->{$action} = $data;
@@ -124,7 +141,7 @@ sub plugin_init
 	# Setup our environment
 	$logger = $globals->{'logger'};
 
-	$logger->log(LOG_NOTICE,"[WEBSERVER] OpenTrafficShaper Webserver Module v".VERSION." - Copyright (c) 2013, AllWorldIT");
+	$logger->log(LOG_NOTICE,"[WEBSERVER] OpenTrafficShaper Webserver Module v%s - Copyright (c) 2013-2014, AllWorldIT",VERSION);
 
 	# Spawn a web server on port 8088 of all interfaces.
 	POE::Component::Server::TCP->new(
@@ -146,7 +163,7 @@ sub plugin_init
 		# Check if we can actually load the pages
 		eval("use opentrafficshaper::plugins::webserver::pages::statistics");
 		if ($@) {
-			$logger->log(LOG_INFO,"[WEBSERVER] Failed to load statistics pages: $@");
+			$logger->log(LOG_INFO,"[WEBSERVER] Failed to load statistics pages: %s",$@);
 		} else {
 			# Load resources
 			$resources->{'HTTP'}->{'statistics'} = {
@@ -432,7 +449,9 @@ $styleStr
 
 	<body>
 		<div class="navbar navbar-inverse navbar-fixed-top">
-			<a class="navbar-brand" href="/"><img src="/static/logo-inverted-short.png" alt="Open Traffic Shaper" width="100%" height="auto" /></a>
+			<a class="navbar-brand" href="/">
+					<img src="/static/logo-inverted-short.png" alt="Open Traffic Shaper" width="100%" height="auto" />
+			</a>
 			<div class="container">
 				<div class="navbar-header">
 					<button type="button" class="navbar-toggle" data-toggle="collapse" data-target=".navbar-collapse">
@@ -462,7 +481,9 @@ $content
 		<div style="padding: 0 15px">
 			<hr />
 			<footer>
-				<p class="muted">v$globals->{'version'} - Copyright &copy; 2013,  <a href="http://www.allworldit.com">AllWorldIT</a></p>
+				<p class="muted">
+						v$globals->{'version'} - Copyright &copy; 2013, <a href="http://www.allworldit.com">AllWorldIT</a>
+				</p>
 			</footer>
 		</div>
 	</body>
@@ -558,7 +579,7 @@ sub _server_request_http
 		return httpDisplayFault(HTTP_INTERNAL_SERVER_ERROR,"Internal server error","Server configuration error");
 	}
 
-	$logger->log(LOG_DEBUG,"[WEBSERVER] Parsed HTTP request into: module='$module', action='$action'");
+	$logger->log(LOG_DEBUG,"[WEBSERVER] Parsed HTTP request into: module='%s', action='%s'",$module,$action);
 
 	# Save what resource we just accessed
 	$connections->{$client_session_id}->{'resource'} = {
@@ -609,8 +630,15 @@ sub _server_request_http
 
 END:
 
-	$logger->log(LOG_INFO,"[WEBSERVER] $protocol Request: ".$response->code." [$module/$action] - ".encode_entities($request->method)." ".
-			encode_entities($request->uri)." ".encode_entities($request->protocol));
+	$logger->log(LOG_INFO,"[WEBSERVER] %s Request: %s [%s/%s] - %s %s %s",
+			$protocol,
+			$response->code,
+			$module,
+			$action,
+			encode_entities($request->method),
+			encode_entities($request->uri),
+			encode_entities($request->protocol)
+	);
 
 	return $response;
 }
@@ -666,7 +694,8 @@ sub _parse_http_resource
 		if (defined($handler->{'requires'})) {
 			foreach my $require (@{$handler->{'requires'}}) {
 				if (!isPluginLoaded($require)) {
-					return httpDisplayFault(HTTP_NOT_IMPLEMENTED,"Method Not Available","The requested method '$action' in '$module' is not currently available");
+					return httpDisplayFault(HTTP_NOT_IMPLEMENTED,"Method Not Available","The requested method '$action' in ".
+							"'$module' is not currently available");
 				}
 			}
 		}
@@ -696,8 +725,14 @@ sub _server_request_http_wsupgrade
 			$headers
 	);
 
-	$logger->log(LOG_INFO,"[WEBSERVER] WebSocket Upgrade: ".$response->code." [$module/$action] - ".encode_entities($request->method)." ".
-			encode_entities($request->uri)." ".encode_entities($request->protocol));
+	$logger->log(LOG_INFO,"[WEBSERVER] WebSocket Upgrade: %s [%s/%s] - %s %s %s",
+			$response->code,
+			$module,
+			$action,
+			encode_entities($request->method),
+			encode_entities($request->uri),
+			encode_entities($request->protocol)
+	);
 
 	return $response;
 }
