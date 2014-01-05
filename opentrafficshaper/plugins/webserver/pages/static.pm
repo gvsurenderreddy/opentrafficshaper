@@ -1,6 +1,6 @@
 # OpenTrafficShaper webserver module: index page
-# Copyright (C) 2007-2013, AllWorldIT
-# 
+# Copyright (C) 2007-2014, AllWorldIT
+#
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
@@ -48,7 +48,7 @@ sub _catchall
 
 
 	# Else get our resource name
-	(my $resource = $request->uri) =~ s/[^A-Za-z0-9\-\/\.]//g;	
+	(my $resource = $request->uri) =~ s/[^A-Za-z0-9\-\/\.]//g;
 	# Just abort if the request contains a transversal
 	return if ($resource =~ /\.\./);
 	# Again if its odd, abort
@@ -60,7 +60,7 @@ sub _catchall
 	# Join it back up
 	$resource = join('/',@pathComponents);
 
-	$logger->log(LOG_DEBUG,"[WEBSEVER/STATIC] Access request for resource '$resource'");
+	$logger->log(LOG_DEBUG,"[WEBSEVER/STATIC] Access request for resource '%s'",$resource);
 
 	# Check if this is a supported method
 	return if ($request->method ne "GET");
@@ -71,20 +71,20 @@ sub _catchall
 
 	# Check it exists...
 	if (! -f $filename) {
-		$logger->log(LOG_WARN,"[WEBSERVER/STATIC] Resource '$resource' does not exist or is not a normal file");
+		$logger->log(LOG_WARN,"[WEBSERVER/STATIC] Resource '%s' does not exist or is not a normal file",$resource);
 		return;
 	}
 
 	# Stat file first of all
     my $stat = stat($filename);
 	if (!$stat) {
-		$logger->log(LOG_WARN,"[WEBSERVER/STATIC] Unable to stat '$resource': $!");
+		$logger->log(LOG_WARN,"[WEBSERVER/STATIC] Unable to stat '%s': %s",$resource,$!);
 		return;
 	}
 
 	# Check this is a file
 	if (!S_ISREG($stat->mode)) {
-		$logger->log(LOG_WARN,"[WEBSERVER/STATIC] Not a file '$resource'");
+		$logger->log(LOG_WARN,"[WEBSERVER/STATIC] Not a file '%s'",$resource);
 		return;
 	}
 
@@ -108,7 +108,7 @@ sub _catchall
 
 	# Open file handle
     if (!open(FH, "< $filename")) {
-		$logger->log(LOG_WARN,"[WEBSERVER/STATIC] Unable to open '$resource': $!");
+		$logger->log(LOG_WARN,"[WEBSERVER/STATIC] Unable to open '%s': %s",$resource,$!);
 	}
 	# Set to binary mode
 	binmode(FH);
