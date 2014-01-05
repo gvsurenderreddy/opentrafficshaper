@@ -1,5 +1,5 @@
 # OpenTrafficShaper configuration manager
-# Copyright (C) 2007-2013, AllWorldIT
+# Copyright (C) 2007-2014, AllWorldIT
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -40,41 +40,63 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 @EXPORT = qw(
 );
 @EXPORT_OK = qw(
-		getLimit
-		getLimits
-		getLimitUsername
-		getLimitTxInterface
-		getLimitRxInterface
-		getLimitMatchPriority
-		setLimitAttribute
-		getLimitAttribute
-		removeLimitAttribute
+	createLimit
+	getLimit
+	getLimits
+	getLimitUsername
 
-		getOverride
-		getOverrides
+	getOverride
+	getOverrides
 
-		getShaperState
-		setShaperState
+	createPool
+	getPools
+	getPool
+	getPoolByIdentifer
+	getPoolTxInterface
+	getPoolRxInterface
+	getPoolTrafficClassID
+	setPoolAttribute
+	getPoolAttribute
+	removePoolAttribute
+	getPoolShaperState
+	setPoolShaperState
+	isPoolIDValid
+	isPoolReady
 
-		getTrafficClasses
-		getTrafficClassName
-		isTrafficClassValid
+	getEffectivePool
 
-		getTrafficPriority
+	getPoolMembers
+	getPoolMember
+	getPoolMembersByIP
+	getPoolMemberMatchPriority
+	setPoolMemberShaperState
+	getPoolMemberShaperState
+	getPoolMemberMatchPriority
+	setPoolMemberAttribute
+	getPoolMemberAttribute
+	removePoolMemberAttribute
+	isPoolMemberReady
 
-		getTrafficDirection
+	getTrafficClasses
+	getAllTrafficClasses
+	getTrafficClassName
+	isTrafficClassIDValid
 
-		getInterface
-		getInterfaces
-		getInterfaceClasses
-		getInterfaceDefaultPool
-		getInterfaceRate
-		getInterfaceGroup
-		getInterfaceGroups
-		isInterfaceGroupValid
+	getTrafficClassPriority
 
-		getMatchPriorities
-		isMatchPriorityValid
+	getTrafficDirection
+
+	getInterface
+	getInterfaces
+	getInterfaceTrafficClasses
+	getInterfaceDefaultPool
+	getInterfaceRate
+	getInterfaceGroup
+	getInterfaceGroups
+	isInterfaceGroupIDValid
+
+	getMatchPriorities
+	isMatchPriorityIDValid
 );
 
 use constant {
@@ -91,58 +113,130 @@ use constant {
 	STATE_SYNC_INTERVAL => 300,
 };
 
-# Mandatory config attributes
+
+# Mandatory pool attributes
+sub POOL_REQUIRED_ATTRIBUTES {
+	qw(
+		Identifier
+		InterfaceGroupID
+		ClassID TrafficLimitTx TrafficLimitRx
+		Source
+	)
+}
+
+# Pool attributes that can be changed
+sub POOL_CHANGE_ATTRIBUTES {
+	qw(
+		FriendlyName
+		ClassID TrafficLimitTx TrafficLimitRx TrafficLimitTxBurst TrafficLimitRxBurst
+		Expires
+		Notes
+	)
+}
+
+# Pool persistent attributes
+sub POOL_PERSISTENT_ATTRIBUTES {
+	qw(
+		Identifier
+		FriendlyName
+		InterfaceGroupID
+		ClassID TrafficLimitTx TrafficLimitRx TrafficLimitTxBurst TrafficLimitRxBurst
+		Expires
+		Source
+		Notes
+	)
+}
+
+
+# Mandatory pool member attributes
+sub POOLMEMBER_REQUIRED_ATTRIBUTES {
+	qw(
+		Username IPAddress
+		MatchPriorityID
+		PoolID
+		GroupID
+		Source
+	)
+}
+
+# Pool member attributes that can be changed
+sub POOLMEMBER_CHANGE_ATTRIBUTES {
+	qw(
+		FriendlyName
+		Expires
+		Notes
+	)
+}
+
+# Pool member persistent attributes
+sub POOLMEMBER_PERSISTENT_ATTRIBUTES {
+	qw(
+		FriendlyName
+		Username IPAddress
+		MatchPriorityID
+		PoolID
+		GroupID
+		Source
+		Expires
+		Notes
+	)
+}
+
+
+# Mandatory limit attributes
 sub LIMIT_REQUIRED_ATTRIBUTES {
 	qw(
-		Username IP
+		Username IPAddress
 		InterfaceGroupID MatchPriorityID
-		GroupID ClassID
-		TrafficLimitTx TrafficLimitRx
+		GroupID
+		ClassID	TrafficLimitTx TrafficLimitRx
 		Status
 		Source
 	)
 }
 
-# Limit Changeset attributes - things that can be changed on the fly in the shaper
-sub LIMIT_CHANGESET_ATTRIBUTES {
-	qw(
-		ClassID
-		TrafficLimitTx TrafficLimitRx TrafficLimitTxBurst TrafficLimitRxBurst
-	)
-}
-
-# Persistent attributes supported
-sub LIMIT_PERSISTENT_ATTRIBUTES {
-	qw(
-		Username IP
-		InterfaceGroupID MatchPriorityID
-		GroupID ClassID
-		TrafficLimitTx TrafficLimitRx TrafficLimitTxBurst TrafficLimitRxBurst
-		FriendlyName Notes
-		Expires Created
-		Source
-	)
-}
 
 # Override match attributes, one is required
 sub OVERRIDE_MATCH_ATTRIBUTES {
 	qw(
-		Username IP
+		PoolIdentifier Username IPAddress
 		GroupID
 	)
 }
+
+# Override attributes
+sub OVERRIDE_ATTRIBUTES {
+	qw(
+		FriendlyName
+		PoolIdentifier Username IPAddress GroupID
+		ClassID TrafficLimitTx TrafficLimitRx TrafficLimitTxBurst TrafficLimitRxBurst
+		Expires
+		Notes
+	)
+}
+
+# Override attributes that can be changed
+sub OVERRIDE_CHANGE_ATTRIBUTES {
+	qw(
+		FriendlyName
+		ClassID TrafficLimitTx TrafficLimitRx TrafficLimitTxBurst TrafficLimitRxBurst
+		Expires
+		Notes
+	)
+}
+
 # Override changeset attributes
 sub OVERRIDE_CHANGESET_ATTRIBUTES {
 	qw(
-		ClassID
-		TrafficLimitTx TrafficLimitRx TrafficLimitTxBurst TrafficLimitRxBurst
+		ClassID TrafficLimitTx TrafficLimitRx TrafficLimitTxBurst TrafficLimitRxBurst
 	)
 }
+
 # Override attributes supported for persistent storage
 sub OVERRIDE_PERSISTENT_ATTRIBUTES {
 	qw(
 		FriendlyName
-		Username IP GroupID
+		PoolIdentifier Username IPAddress GroupID
 		ClassID TrafficLimitTx TrafficLimitRx TrafficLimitTxBurst TrafficLimitRxBurst
 		Notes
 		Expires Created
@@ -150,15 +244,7 @@ sub OVERRIDE_PERSISTENT_ATTRIBUTES {
 		LastUpdate
 	)
 }
-# Override match criteria
-sub OVERRIDE_MATCH_CRITERIA {
-	(
-		['GroupID'], ['Username'], ['IP'],
-		['GroupID','Username'], ['GroupID','IP'],
-		['Username','IP'],
-		['GroupID','Username','IP'],
-	)
-}
+
 
 
 
@@ -211,22 +297,25 @@ my $lastCleanup = time();
 my $stateChanged = 0;
 my $lastStateSync = time();
 
+
 #
-# LIMITS
+# INTERFACES
 #
-# Supoprted user attributes:
-# * Username
-#    - Users username
-# * IP
-#    - Users IP
-# * GroupID
-#    - Group ID
-# * InterfaceGroupID
-#    - Interface group this limit is attached to
-# * MatchPriorityID
-#    - Match priority on the backend of this limit
+my $interfaceIPMap = {};
+
+
+#
+# POOLS
+#
+# Parameters:
+# * FriendlyName
+#    - Used for display purposes
+# * Identifier
+#    - Unix timestamp when this entry expires, 0 if never
 # * ClassID
 #    - Class ID
+# * InterfaceGroupID
+#    - Interface group this pool is attached to
 # * TrafficLimitTx
 #    - Traffic limit in kbps
 # * TrafficLimitRx
@@ -235,6 +324,31 @@ my $lastStateSync = time();
 #    - Traffic bursting limit in kbps
 # * TrafficLimitRxBurst
 #    - Traffic bursting limit in kbps
+# * Notes
+#    - Notes on this limit
+# * Source
+#    - This is the source of the limit, typically plugin.ModuleName
+my $pools = { };
+my $poolIdentifierMap = { };
+my $poolIDCounter = 1;
+
+
+#
+# POOL MEMBERS
+#
+# Supoprted user attributes:
+# * PoolID
+#    - Pool ID
+# * Username
+#    - Users username
+# * IPAddress
+#    - Users IP address
+# * GroupID
+#    - Group ID
+# * MatchPriorityID
+#    - Match priority on the backend of this limit
+# * ClassID
+#    - Class ID
 # * Expires
 #    - Unix timestamp when this entry expires, 0 if never
 # * FriendlyName
@@ -247,21 +361,22 @@ my $lastStateSync = time();
 #    - online
 #    - unknown
 # * Source
-#    - This is the source of the limit, typically  plugin.ModuleName
-my $limitChangeQueue = { };
-my $limits = { };
-my $limitIPMap = { };
-my $limitIDMap = { };
-my $limitIDCounter = 1;
+#    - This is the source of the limit, typically plugin.ModuleName
+my $poolMembers = { };
+my $poolMemberIDCounter = 1;
+my $poolMemberMap = { };
+
 
 #
 # OVERRIDES
 #
 # Selection criteria:
+# * PoolIdentifier
+#    - Pool identifier
 # * Username
 #    - Users username
-# * IP
-#    - Users IP
+# * IPAddress
+#    - Users IP address
 # * GroupID
 #    - Group ID
 #
@@ -285,13 +400,14 @@ my $limitIDCounter = 1;
 # * Notes
 #    - Notes on this limit
 # * Source
-#    - This is the source of the limit, typically  plugin.ModuleName
-my $overrideChangeQueue = { };
+#    - This is the source of the limit, typically plugin.ModuleName
 my $overrides = { };
-my $overrideMap = { };
-my $overrideIDMap = { };
 my $overrideIDCounter = 1;
 
+
+# Global change queues
+my $poolChangeQueue = { };
+my $poolMemberChangeQueue = { };
 
 
 
@@ -304,7 +420,9 @@ sub plugin_init
 	# Setup our environment
 	$logger = $globals->{'logger'};
 
-	$logger->log(LOG_NOTICE,"[CONFIGMANAGER] OpenTrafficShaper Config Manager v".VERSION." - Copyright (c) 2013, AllWorldIT");
+	$logger->log(LOG_NOTICE,"[CONFIGMANAGER] OpenTrafficShaper Config Manager v%s - Copyright (c) 2007-2014, AllWorldIT",
+			VERSION
+	);
 
 	# If we have global config, use it
 	my $gconfig = { };
@@ -333,17 +451,17 @@ sub plugin_init
 		# Split off group ID and group name
 		my ($groupID,$groupName) = split(/:/,$group);
 		if (!defined($groupID) || int($groupID) < 1) {
-			$logger->log(LOG_WARN,"[CONFIGMANAGER] Traffic group definition '$group' has invalid ID, ignoring");
+			$logger->log(LOG_WARN,"[CONFIGMANAGER] Traffic group definition '%s' has invalid ID, ignoring",$group);
 			next;
 		}
 		if (!defined($groupName) || $groupName eq "") {
-			$logger->log(LOG_WARN,"[CONFIGMANAGER] Traffic group definition '$group' has invalid name, ignoring");
+			$logger->log(LOG_WARN,"[CONFIGMANAGER] Traffic group definition '%s' has invalid name, ignoring",$group);
 			next;
 		}
 		$config->{'groups'}->{$groupID} = $groupName;
-		$logger->log(LOG_INFO,"[CONFIGMANAGER] Loaded traffic group '$groupName' with ID $groupID.");
+		$logger->log(LOG_INFO,"[CONFIGMANAGER] Loaded traffic group '%s' with ID %s.",$groupName,$groupID);
 	}
-	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Traffic groups loaded.");
+	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Traffic groups loaded");
 
 
 	# Split off traffic classes
@@ -367,17 +485,17 @@ sub plugin_init
 		# Split off class ID and class name
 		my ($classID,$className) = split(/:/,$class);
 		if (!defined(isNumber($classID))) {
-			$logger->log(LOG_WARN,"[CONFIGMANAGER] Traffic class definition '$class' has invalid ID, ignoring");
+			$logger->log(LOG_WARN,"[CONFIGMANAGER] Traffic class definition '%s' has invalid ID, ignoring",$class);
 			next;
 		}
 		if (!defined($className) || $className eq "") {
-			$logger->log(LOG_WARN,"[CONFIGMANAGER] Traffic class definition '$class' has invalid name, ignoring");
+			$logger->log(LOG_WARN,"[CONFIGMANAGER] Traffic class definition '%s' has invalid name, ignoring",$class);
 			next;
 		}
 		$config->{'classes'}->{$classID} = $className;
-		$logger->log(LOG_INFO,"[CONFIGMANAGER] Loaded traffic class '$className' with ID $classID.");
+		$logger->log(LOG_INFO,"[CONFIGMANAGER] Loaded traffic class '%s' with ID %s",$className,$classID);
 	}
-	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Traffic classes loaded.");
+	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Traffic classes loaded");
 
 
 	# Load interfaces
@@ -405,7 +523,9 @@ sub plugin_init
 			$config->{'interfaces'}->{$interface}->{'name'} = $iconfig->{'name'};
 		} else {
 			$config->{'interfaces'}->{$interface}->{'name'} = "$interface (auto)";
-			$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Interface '$interface' has no 'name' attribute, using '$interface (auto)'");
+			$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Interface '%s' has no 'name' attribute, using '%s (auto)'",
+					$interface,$interface
+			);
 		}
 
 		# Check our interface rate
@@ -414,11 +534,13 @@ sub plugin_init
 			if (defined(my $rate = isNumber($iconfig->{'rate'}))) {
 				$config->{'interfaces'}->{$interface}->{'rate'} = $rate;
 			} else {
-				$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface '$interface' has invalid 'rate' attribute, using 100000 instead");
+				$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface '%s' has invalid 'rate' attribute, using 100000 instead",
+						$interface
+				);
 			}
 		} else {
 			$config->{'interfaces'}->{$interface}->{'rate'} = 100000;
-			$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Interface '$interface' has no 'rate' attribute specified, using 100000");
+			$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Interface '%s' has no 'rate' attribute specified, using 100000",$interface);
 		}
 
 
@@ -442,11 +564,20 @@ sub plugin_init
 
 
 				if (!defined(isNumber($iclassID))) {
-					$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface '$interface' class definition '$iclass' has invalid Class ID, ignoring definition");
+					$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface '%s' class definition '%s' has invalid Class ID, ignoring ".
+							"definition",
+							$interface,
+							$iclass
+					);
 					next;
 				}
 				if (!defined($config->{'classes'}->{$iclassID})) {
-					$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface '$interface' class definition '$iclass' uses Class ID '$iclassID' which doesn't exist");
+					$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface '%s' class definition '%s' uses Class ID '%s' which doesn't ".
+							"exist",
+							$interface,
+							$iclass,
+							$iclassID
+					);
 					next;
 				}
 
@@ -462,11 +593,17 @@ sub plugin_init
 							$iclassCIR = $cir;
 						}
 					} else {
-						$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface '$interface' class '$iclassID' has invalid CIR, ignoring definition");
+						$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface '%s' class '%s' has invalid CIR, ignoring definition",
+								$interface,
+								$iclassID
+						);
 						next;
 					}
 				} else {
-					$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface '$interface' class '$iclassID' has missing CIR, ignoring definition");
+					$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface '%s' class '%s' has missing CIR, ignoring definition",
+							$interface,
+							$iclassID
+					);
 					next;
 				}
 
@@ -482,30 +619,53 @@ sub plugin_init
 							$iclassLimit = $Limit;
 						}
 					} else {
-						$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface '$interface' class '$iclassID' has invalid Limit, ignoring");
+						$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface '%s' class '%s' has invalid Limit, ignoring",
+								$interface,
+								$iclassID
+						);
 						next;
 					}
 				} else {
-					$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Interface '$interface' class '$iclassID' has missing Limit, using CIR '$iclassCIR' instead",
-							$config->{'interfaces'}->{$interface}->{'rate'});
+					$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Interface '%s' class '%s' has missing Limit, using CIR '%s' instead",
+							$interface,
+							$iclassID,
+							$iclassCIR
+					);
 					$iclassLimit = $iclassCIR;
 				}
 
 				# Check if rates are below are sane
 				if ($iclassCIR > $config->{'interfaces'}->{$interface}->{'rate'}) {
-					$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface '$interface' class '$iclassID' has CIR '$iclassCIR' > interface speed '%s', adjusting to '%s'",
+					$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface '%s' class '%s' has CIR '%s' > interface speed '%s', ".
+							"adjusting to '%s'",
+							$interface,
+							$iclassID,
+							$iclassCIR,
 							$iclassCIR > $config->{'interfaces'}->{$interface}->{'rate'},
-							$iclassCIR > $config->{'interfaces'}->{$interface}->{'rate'});
+							$iclassCIR > $config->{'interfaces'}->{$interface}->{'rate'}
+					);
 					$iclassCIR = $iclassCIR > $config->{'interfaces'}->{$interface}->{'rate'};
 				}
 				if ($iclassLimit > $config->{'interfaces'}->{$interface}->{'rate'}) {
-					$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface '$interface' class '$iclassID' has Limit '$iclassLimit' > interface speed '%s', adjusting to '%s'",
+					$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface '%s' class '%s' has Limit '%s' > interface speed '%s', ".
+							"adjusting to '%s'",
+							$interface,
+							$iclassID,
+							$iclassCIR,
 							$iclassCIR > $config->{'interfaces'}->{$interface}->{'rate'},
-							$iclassCIR > $config->{'interfaces'}->{$interface}->{'rate'});
+							$iclassCIR > $config->{'interfaces'}->{$interface}->{'rate'}
+					);
 					$iclassLimit = $iclassCIR > $config->{'interfaces'}->{$interface}->{'rate'};
 				}
 				if ($iclassCIR > $iclassLimit) {
-					$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface '$interface' class '$iclassID' has CIR '$iclassLimit' > Limit '$iclassLimit', adjusting CIR to '$iclassLimit");
+					$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface '%s' class '%s' has CIR '%s' > Limit '%s', adjusting CIR ".
+							"to '%s'",
+							$interface,
+							$iclassID,
+							$iclassLimit,
+							$iclassLimit,
+							$iclassLimit
+					);
 					$iclassCIR = $iclassLimit;
 				}
 
@@ -515,14 +675,22 @@ sub plugin_init
 					'limit' => $iclassLimit
 				};
 
-				$logger->log(LOG_INFO,"[CONFIGMANAGER] Loaded interface '$interface' class rate for class ID '$iclassID': $iclassCIR/$iclassLimit.");
+				$logger->log(LOG_INFO,"[CONFIGMANAGER] Loaded interface '%s' class rate for class ID '%s': %s/%s",
+						$interface,
+						$iclassID,
+						$iclassCIR,
+						$iclassLimit
+				);
 			}
 
 			# Time to check the interface classes
 			foreach my $classID (keys %{$config->{'classes'}}) {
 				# Check if we have a rate defined for this class in the interface definition
 				if (!defined($config->{'interfaces'}->{$interface}->{'classes'}->{$classID})) {
-					$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface '$interface' has no class '$classID' defined, using interface limit");
+					$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface '%s' has no class '%s' defined, using interface limit",
+							$interface,
+							$classID
+					);
 					$config->{'interfaces'}->{$interface}->{'classes'}->{$classID} = {
 						'cir' => $config->{'interfaces'}->{$interface}->{'rate'},
 						'limit' => $config->{'interfaces'}->{$interface}->{'rate'}
@@ -532,7 +700,7 @@ sub plugin_init
 		}
 
 	}
-	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Loading interfaces completed.");
+	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Loading interfaces completed");
 
 	# Pull in interface groupings
 	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Loading interface groups...");
@@ -555,15 +723,23 @@ sub plugin_init
 		# Split off class ID and class name
 		my ($txiface,$rxiface,$friendlyName) = split(/[:,]/,$interfaceGroup);
 		if (!defined($config->{'interfaces'}->{$txiface})) {
-			$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface group definition '$interfaceGroup' has invalid interface '$txiface', ignoring");
+			$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface group definition '%s' has invalid interface '%s', ignoring",
+					$interfaceGroup,
+					$txiface
+			);
 			next;
 		}
 		if (!defined($config->{'interfaces'}->{$rxiface})) {
-			$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface group definition '$interfaceGroup' has invalid interface '$rxiface', ignoring");
+			$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface group definition '%s' has invalid interface '%s', ignoring",
+					$interfaceGroup,
+					$rxiface
+			);
 			next;
 		}
 		if (!defined($friendlyName) || $friendlyName eq "") {
-			$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface group definition '$interfaceGroup' has invalid friendly name, ignoring");
+			$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface group definition '%s' has invalid friendly name, ignoring",
+					$interfaceGroup,
+			);
 			next;
 		}
 
@@ -573,9 +749,20 @@ sub plugin_init
 			'rxiface' => $rxiface
 		};
 
-		$logger->log(LOG_INFO,"[CONFIGMANAGER] Loaded interface group '$friendlyName' with interfaces '$txiface/$rxiface'.");
+		$logger->log(LOG_INFO,"[CONFIGMANAGER] Loaded interface group '%s' with interfaces '%s/%s'",
+				$friendlyName,
+				$txiface,
+				$rxiface
+		);
 	}
-	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Interface groups loaded.");
+
+	# Initialize IP address map
+	foreach my $interfaceGroupID (keys %{$config->{'interface_groups'}}) {
+		# Blank interface IP address map for interface group
+		$interfaceIPMap->{$interfaceGroupID} = { };
+	}
+
+	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Interface groups loaded");
 
 
 	# Check if we using a default pool or not
@@ -583,10 +770,15 @@ sub plugin_init
 		# Check if its a number
 		if (defined(my $default_pool = isNumber($gconfig->{'default_pool'}))) {
 			if (defined($config->{'classes'}->{$default_pool})) {
-				$logger->log(LOG_INFO,"[CONFIGMANAGER] Default pool set to use class '$default_pool' (%s)",$config->{'classes'}->{$default_pool});
+				$logger->log(LOG_INFO,"[CONFIGMANAGER] Default pool set to use class '%s' (%s)",
+						$default_pool,
+						$config->{'classes'}->{$default_pool}
+				);
 				$config->{'default_pool'} = $default_pool;
 			} else {
-				$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot enable default pool, class '$default_pool' does not exist");
+				$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot enable default pool, class '%s' does not exist",
+						$default_pool
+				);
 			}
 		} else {
 			$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot enable default pool, value for 'default_pool' is invalid");
@@ -596,24 +788,31 @@ sub plugin_init
 	# Check if we have a state file
 	if (defined(my $statefile = $globals->{'file.config'}->{'system'}->{'statefile'})) {
 		$config->{'statefile'} = $statefile;
-		$logger->log(LOG_INFO,"[CONFIGMANAGER] Set statefile to '$statefile'");
+		$logger->log(LOG_INFO,"[CONFIGMANAGER] Set statefile to '%s'",$statefile);
 	}
 
 	# This is our configuration processing session
 	POE::Session->create(
 		inline_states => {
-			_start => \&session_start,
-			_stop => \&session_stop,
+			_start => \&_session_start,
+			_stop => \&_session_stop,
+			_tick => \&_session_tick,
+			_SIGHUP => \&_session_SIGHUP,
 
-			tick => \&session_tick,
+			limit_add => \&_session_limit_add,
 
-			process_limit_change => \&process_limit_change,
-			process_limit_remove => \&process_limit_remove,
+			override_add => \&_session_override_add,
+			override_change => \&_session_override_change,
+			override_remove => \&_session_override_remove,
 
-			process_override_change => \&process_override_change,
-			process_override_remove => \&process_override_remove,
+			pool_add => \&_session_pool_add,
+			pool_remove => \&_session_pool_remove,
+			pool_change => \&_session_pool_change,
 
-			handle_SIGHUP => \&handle_SIGHUP,
+			poolmember_add => \&_session_poolmember_add,
+			poolmember_remove => \&_session_poolmember_remove,
+			poolmember_change => \&_session_poolmember_change,
+
 		}
 	);
 }
@@ -622,13 +821,17 @@ sub plugin_init
 # Start the plugin
 sub plugin_start
 {
-	$logger->log(LOG_INFO,"[CONFIGMANAGER] Started with ".( keys %{$limitChangeQueue} )." queued items");
+	$logger->log(LOG_INFO,"[CONFIGMANAGER] Started with %s pools, %s pool members and %s overrides",
+			scalar(keys %{$pools}),
+			scalar(keys %{$poolMembers}),
+			scalar(keys %{$overrides})
+	);
 }
 
 
 
 # Initialize config manager
-sub session_start
+sub _session_start
 {
 	my ($kernel,$heap) = @_[KERNEL,HEAP];
 
@@ -640,20 +843,20 @@ sub session_start
 	if (-f $config->{'statefile'}) {
 		_load_statefile($kernel);
 	} else {
-		$logger->log(LOG_WARN,"[CONFIGMANAGER] Statefile '$config->{'statefile'}' cannot be opened: $!");
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Statefile '%s' cannot be opened: %s",$config->{'statefile'},$!);
 	}
 
 	# Set delay on config updates
-	$kernel->delay(tick => TICK_PERIOD);
+	$kernel->delay('_tick' => TICK_PERIOD);
 
-	$kernel->sig('HUP', 'handle_SIGHUP');
+	$kernel->sig('HUP', '_SIGHUP');
 
 	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Initialized");
 }
 
 
 # Stop the session
-sub session_stop
+sub _session_stop
 {
 	my ($kernel,$heap) = @_[KERNEL,HEAP];
 
@@ -668,17 +871,20 @@ sub session_stop
 
 	# Blow away all data
 	$globals = undef;
-	$limitChangeQueue = { };
-	$limits = { };
-	$limitIPMap = { };
-	$limitIDMap = { };
-	$limitIDCounter = 1;
 
-	$overrideChangeQueue = { };
-	$overrides = { };
-	$overrideMap = { };
-	$overrideIDMap = { };
-	$overrideIDCounter = 1;
+	$interfaceIPMap = { };
+
+	$pools = { };
+	$poolIdentifierMap = { };
+	$poolIDCounter = 1;
+
+	$poolMembers = { };
+	$poolMemberIDCounter = 1;
+	$poolMemberMap = { };
+
+	$poolChangeQueue = { };
+	$poolMemberChangeQueue = { };
+
 	# XXX: Blow away rest? config?
 
 	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Shutdown");
@@ -688,86 +894,571 @@ sub session_stop
 
 
 # Time ticker for processing changes
-sub session_tick
+sub _session_tick
 {
 	my $kernel = $_[KERNEL];
 
+
 	my $now = time();
-	my $overridesChanged = 0;
-
-	# Process queues
-	if (_process_override_change_queue($kernel)) {
-		$overridesChanged++;
-	}
-	_process_limit_change_queue($kernel);
-
-	# Check if we must run cleanups
-	if ($lastCleanup + CLEANUP_INTERVAL < $now) {
-		_process_limit_cleanup($kernel);
-		# Bump up overridesChanged if something changed
-		if (_process_override_cleanup($kernel)) {
-			$overridesChanged++;
-		}
-		$lastCleanup = $now;
-	}
-
-	# If overrides changed, we need to reprocess all limits
-	if ($overridesChanged) {
-		_resolve_overrides_and_post($kernel);
-	}
 
 	# Check if we should sync state to disk
 	if ($stateChanged && $lastStateSync + STATE_SYNC_INTERVAL < $now) {
 		_write_statefile();
 	}
 
-	# Reset tick
-	$kernel->delay(tick => TICK_PERIOD);
-}
-
-# Process limit change
-sub process_limit_change
-{
-	my ($kernel, $limit) = @_[KERNEL, ARG0];
-
-	_process_limit_change($limit);
-	_process_limit_change_queue($kernel);
-}
-
-# Process limit remove
-sub process_limit_remove
-{
-	my ($kernel, $limit) = @_[KERNEL, ARG0];
-
-	_process_limit_remove($kernel,$limit);
-	_process_limit_change_queue($kernel);
-}
-
-# Process override change
-sub process_override_change
-{
-	my ($kernel, $override) = @_[KERNEL, ARG0];
-
-	_process_override_change($override);
-	# If something changed, reprocess the limits
-	if (_process_override_change_queue($kernel)) {
-		_resolve_overrides_and_post($kernel);
+	# Check if we should cleanup
+	if ($lastCleanup + CLEANUP_INTERVAL < $now) {
+		# Loop with all overrides and check for expired entries
+		while (my ($oid, $override) = each(%{$overrides})) {
+			# Override has effectively expired
+			if (defined($override->{'Expires'}) && $override->{'Expires'} > 0 && $override->{'Expires'} < $now) {
+				$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Override '%s' [%s] has expired, removing",
+						$override->{'FriendlyName'},
+						$oid
+				);
+				removeOverride($oid);
+			}
+		}
+		# Loop with all pool members and check for expired entries
+		while (my ($pmid, $poolMember) = each(%{$poolMembers})) {
+			# Pool member has effectively expired
+			if (defined($poolMember->{'Expires'}) && $poolMember->{'Expires'} > 0 && $poolMember->{'Expires'} < $now) {
+				$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool member '%s' [%s] has expired, removing",
+						$poolMember->{'Username'},
+						$pmid
+				);
+				removePoolMember($pmid);
+			}
+		}
+		# Loop with all the pools and check for expired entries
+		while (my ($pid, $pool) = each(%{$pools})) {
+			# Pool has effectively expired
+			if (defined($pool->{'Expires'}) && $pool->{'Expires'} > 0 && $pool->{'Expires'} < $now) {
+				# There are no members, its safe to remove
+				if (getPoolMembers($pid) == 0) {
+					$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' [%s] has expired, removing",
+							$pool->{'Identifier'},
+							$pid
+					);
+					removePool($pid);
+				}
+			}
+		}
+		# Reset last cleanup time
+		$lastCleanup = $now;
 	}
+
+	# Loop through pool change queue
+	while (my ($pid, $pool) = each(%{$poolChangeQueue})) {
+
+		my $shaperState = getPoolShaperState($pool->{'ID'});
+
+		# Pool is newly added
+		if ($pool->{'Status'} == CFGM_NEW) {
+
+			# If the change is not yet live, we should queue it to go live
+			if ($shaperState == SHAPER_NOTLIVE) {
+				$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' [%s] new and not live, adding to shaper",
+						$pool->{'Identifier'},
+						$pid
+				);
+				$kernel->post('shaper' => 'pool_add' => $pid);
+				# Set pending online
+				setPoolShaperState($pool->{'ID'},SHAPER_PENDING);
+				$pool->{'Status'} = CFGM_ONLINE;
+				# Remove from queue
+				delete($poolChangeQueue->{$pid});
+			} else {
+				$logger->log(LOG_ERR,"[CONFIGMANAGER] Pool '%s' [%s] has UNKNOWN state (CFGM_NEW && !SHAPER_NOTLIVE)");
+			}
+
+		# Pool is online but NOTLIVE
+		} elsif ($pool->{'Status'} == CFGM_ONLINE) {
+
+			# We've transitioned more than likely from offline, any state to online
+			# We don't care if the shaper is pending removal, we going to force re-adding now
+			if ($shaperState != SHAPER_LIVE) {
+				$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' [%s] online and not in live state, re-queue as add",
+						$pool->{'Identifier'},
+						$pid
+				);
+				$pool->{'Status'} = CFGM_NEW;
+			} else {
+				$logger->log(LOG_ERR,"[CONFIGMANAGER] Pool '%s' [%s] has UNKNOWN state (CFGM_ONLINE && SHAPER_LIVE)",
+						$pool->{'Identifier'},
+						$pid
+				);
+			}
+
+
+		# Pool has been modified
+		} elsif ($pool->{'Status'} == CFGM_CHANGED) {
+
+			# If the shaper is live we can go ahead
+			if ($shaperState == SHAPER_LIVE) {
+				$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' [%s] has been modified, sending to shaper",
+						$pool->{'Identifier'},
+						$pid
+				);
+				$kernel->post('shaper' => 'pool_change' => $pid);
+				# Set pending online
+				setPoolShaperState($pool->{'ID'},SHAPER_PENDING);
+				$pool->{'Status'} = CFGM_ONLINE;
+				# Remove from queue
+				delete($poolChangeQueue->{$pid});
+
+			} elsif ($shaperState == SHAPER_NOTLIVE) {
+				$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' [%s] has been modified but not live, re-queue as add",
+						$pool->{'Identifier'},
+						$pid
+				);
+				$pool->{'Status'} = CFGM_NEW;
+
+			} else {
+				$logger->log(LOG_ERR,"[CONFIGMANAGER] Pool '%s' [%s] has UNKNOWN state (CFGM_CHANGED && !SHAPER_LIVE && ".
+						"!SHAPER_NOTLIVE)",
+						$pool->{'Identifier'},
+						$pid
+				);
+			}
+
+
+		# Pool is being removed?
+		} elsif ($pool->{'Status'} == CFGM_OFFLINE) {
+
+			# If the change is live, but should go offline, queue it
+			if ($shaperState == SHAPER_LIVE) {
+
+				if ($now - $pool->{'LastUpdate'} > 30) {
+					# If we still have pool members, we got to abort
+					if (!getPoolMembers($pid)) {
+						$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' [%s] marked offline and stale, removing from shaper",
+								$pool->{'Identifier'},
+								$pid
+						);
+						$kernel->post('shaper' => 'pool_remove' => $pid);
+						setPoolShaperState($pool->{'ID'},SHAPER_PENDING);
+					} else {
+						$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' [%s] marked offline, but still has pool members, ".
+								"aborting remove",
+								$pool->{'Identifier'},
+								$pid
+						);
+						$pool->{'Status'} = CFGM_ONLINE;
+						delete($poolChangeQueue->{$pid});
+					}
+
+				} else {
+					# Try remove all our pool members
+					if (my @poolMembers = getPoolMembers($pid)) {
+						# Loop with members and remove
+						foreach my $pmid (@poolMembers) {
+							my $poolMember = $poolMembers->{$pmid};
+							# Only remove ones online
+							if ($poolMember->{'Status'} == CFGM_ONLINE) {
+								$logger->log(LOG_INFO,"[CONFIGMANAGER] Pool '%s' [%s] marked offline and fresh, removing pool ".
+										"member [%s]",
+										$pool->{'Identifier'},
+										$pid,
+										$pmid
+								);
+								removePoolMember($pmid);
+							}
+						}
+					} else {
+						$logger->log(LOG_INFO,"[CONFIGMANAGER] Pool '%s' [%s] marked offline and fresh, postponing",
+								$pool->{'Identifier'},
+								$pid
+						);
+					}
+				}
+
+			} elsif ($shaperState == SHAPER_NOTLIVE) {
+				$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' [%s] marked offline and is not live, removing",
+						$pool->{'identifier'},
+						$pid
+				);
+				# Remove pool from identifier map
+				delete($poolIdentifierMap->{$pool->{'InterfaceGroupID'}}->{$pool->{'Identifier'}});
+				# Remove pool member mapping
+				delete($poolMemberMap->{$pool->{'ID'}});
+				# Remove from queue
+				delete($poolChangeQueue->{$pid});
+				# Cleanup overrides
+				_override_remove_pool($pool->{'ID'});
+				# Remove pool
+				delete($pools->{$pool->{'ID'}});
+			}
+
+		} else {
+			$logger->log(LOG_ERR,"[CONFIGMANAGER] Pool '%s' [%s] has UNKNOWN state '%s'",
+					$pool->{'Identifier'},
+					$pid,
+					$pool->{'Status'}
+			);
+		}
+	}
+
+	# Loop through pool member change queue
+	while (my ($pmid, $poolMember) = each(%{$poolMemberChangeQueue})) {
+
+		my $pool = $pools->{$poolMember->{'PoolID'}};
+		my $shaperState = getPoolMemberShaperState($poolMember->{'ID'});
+
+		# Pool is newly added
+		if ($poolMember->{'Status'} == CFGM_NEW) {
+
+			# If the change is not yet live, we should queue it to go live
+			if ($shaperState == SHAPER_NOTLIVE) {
+				$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' member '%s' [%s] new and not live, adding to shaper",
+						$pool->{'Identifier'},
+						$poolMember->{'IPAddress'},
+						$pmid
+				);
+				$kernel->post('shaper' => 'poolmember_add' => $pmid);
+				# Set pending online
+				setPoolMemberShaperState($poolMember->{'ID'},SHAPER_PENDING);
+				$poolMember->{'Status'} = CFGM_ONLINE;
+				# Remove from queue
+				delete($poolMemberChangeQueue->{$pmid});
+			} else {
+				$logger->log(LOG_ERR,"[CONFIGMANAGER] Pool '%s' member '%s' [%s] has UNKNOWN state (CFGM_NEW && !SHAPER_NOTLIVE)",
+						$pool->{'Identifier'},
+						$poolMember->{'IPAddress'},
+						$pmid
+				);
+			}
+
+		# Pool member is online but NOTLIVE
+		} elsif ($poolMember->{'Status'} == CFGM_ONLINE) {
+
+			# We've transitioned more than likely from offline, any state to online
+			# We don't care if the shaper is pending removal, we going to force re-adding now
+			if ($shaperState != SHAPER_LIVE) {
+				$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' member '%s' [%s] online and not in live state, re-queue as add",
+						$pool->{'Identifier'},
+						$poolMember->{'IPAddress'},
+						$pmid
+				);
+				$poolMember->{'Status'} = CFGM_NEW;
+			} else {
+				$logger->log(LOG_ERR,"[CONFIGMANAGER] Pool '%s' member '%s' [%s] has UNKNOWN state (CFGM_ONLINE && SHAPER_LIVE)",
+						$pool->{'Identifier'},
+						$poolMember->{'IPAddress'},
+						$pmid
+				);
+			}
+
+
+		# Pool member has been modified
+		} elsif ($poolMember->{'Status'} == CFGM_CHANGED) {
+
+			# If the shaper is live we can go ahead
+			if ($shaperState == SHAPER_LIVE) {
+				$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' member '%s' [%s] has been modified, sending to shaper",
+						$pool->{'Identifier'},
+						$poolMember->{'IPAddress'},
+						$pmid
+				);
+				$kernel->post('shaper' => 'poolmember_change' => $pmid);
+				# Set pending online
+				setPoolMemberShaperState($poolMember->{'ID'},SHAPER_PENDING);
+				$poolMember->{'Status'} = CFGM_ONLINE;
+				# Remove from queue
+				delete($poolMemberChangeQueue->{$pmid});
+
+			} elsif ($shaperState == SHAPER_NOTLIVE) {
+				$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' member '%s' [%s] has been modified but not live, re-queue as ".
+						"add",
+						$pool->{'Identifier'},
+						$poolMember->{'IPAddress'},
+						$pmid
+				);
+				$poolMember->{'Status'} = CFGM_NEW;
+			} else {
+				$logger->log(LOG_ERR,"[CONFIGMANAGER] Pool '%s' member '%s' [%s] has UNKNOWN state (CFGM_CHANGED && ".
+						"!SHAPER_LIVE && !SHAPER_NOTLIVE)",
+						$pool->{'Identifier'},
+						$poolMember->{'IPAddress'},
+						$pmid
+				);
+			}
+
+
+		# Pool is being removed?
+		} elsif ($poolMember->{'Status'} == CFGM_OFFLINE) {
+
+			# If the change is live, but should go offline, queue it
+			if ($shaperState == SHAPER_LIVE) {
+
+				if ($now - $poolMember->{'LastUpdate'} > 10) {
+					$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' member '%s' [%s] marked offline and stale, removing from ".
+							"shaper",
+							$pool->{'Identifier'},
+							$poolMember->{'IPAddress'},
+							$pmid
+					);
+					$kernel->post('shaper' => 'poolmember_remove' => $pmid);
+					setPoolMemberShaperState($poolMember->{'ID'},SHAPER_PENDING);
+				} else {
+					$logger->log(LOG_INFO,"[CONFIGMANAGER] Pool '%s' member '%s' [%s] marked offline and fresh, postponing",
+							$pool->{'Identifier'},
+							$poolMember->{'IPAddress'},
+							$pmid
+					);
+				}
+
+			} elsif ($shaperState == SHAPER_NOTLIVE) {
+				$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' member '%s' [%s] marked offline and is not live, removing",
+						$pool->{'Identifier'},
+						$poolMember->{'IPAddress'},
+						$pmid
+				);
+				# Unlink interface IP address map
+				delete($interfaceIPMap->{$pool->{'InterfaceGroupID'}}->{$poolMember->{'IPAddress'}}->{$poolMember->{'ID'}});
+				# Unlink pool map
+				delete($poolMemberMap->{$pool->{'ID'}}->{$poolMember->{'ID'}});
+				# Remove from queue
+				delete($poolMemberChangeQueue->{$pmid});
+				# We need to re-process the overrides after the member has been removed
+				_override_resolve([$poolMember->{'PoolID'}]);
+				# Remove pool member
+				delete($poolMembers->{$poolMember->{'ID'}});
+			}
+
+		} else {
+			$logger->log(LOG_ERR,"[CONFIGMANAGER] Pool '%s' member '%s' [%s] has UNKNOWN state '%s'",
+					$pool->{'Identifier'},
+					$poolMember->{'IPAddress'},
+					$pmid,
+					$poolMember->{'Status'}
+			);
+		}
+
+	}
+
+	# Reset tick
+	$kernel->delay('_tick' => TICK_PERIOD);
 }
 
-# Process override remove
-sub process_override_remove
-{
-	my ($kernel, $override) = @_[KERNEL, ARG0];
 
-	_process_override_remove($override);
-	_process_override_change_queue($kernel);
-	_resolve_overrides_and_post($kernel);
+# Handle SIGHUP
+sub _session_SIGHUP
+{
+	my ($kernel, $heap, $signal_name) = @_[KERNEL, HEAP, ARG0];
+
+	$logger->log(LOG_WARN,"[CONFIGMANAGER] Got SIGHUP, ignoring for now");
+}
+
+
+# Event for 'pool_add'
+sub _session_pool_add
+{
+	my ($kernel, $poolData) = @_[KERNEL, ARG0];
+
+
+	if (!defined($poolData)) {
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] No pool data provided for 'pool_add' event");
+		return;
+	}
+
+	# Check if we have all the attributes we need
+	my $isInvalid;
+	foreach my $attr (POOL_REQUIRED_ATTRIBUTES) {
+		if (!defined($poolData->{$attr})) {
+			$isInvalid = $attr;
+			last;
+		}
+	}
+	if ($isInvalid) {
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process pool add as there is an attribute missing: '%s'",
+				$isInvalid
+		);
+		return;
+	}
+
+	createPool($poolData);
+}
+
+
+# Event for 'pool_remove'
+sub _session_pool_remove
+{
+	my ($kernel, $pid) = @_[KERNEL, ARG0];
+
+
+	my $pool;
+	if (!defined(getPool($pid))) {
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Invalid pool ID '%s' for 'pool_remove' event",prettyUndef($pid));
+		return;
+	}
+
+	removePool($pid);
+}
+
+
+# Event for 'pool_change'
+sub _session_pool_change
+{
+	my ($kernel, $poolData) = @_[KERNEL, ARG0];
+
+
+	if (!isPoolIDValid($poolData->{'ID'})) {
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Invalid pool ID '%s' for 'pool_change' event",prettyUndef($poolData->{'ID'}));
+		return;
+	}
+
+	changePool($poolData);
+}
+
+
+# Event for 'poolmember_add'
+sub _session_poolmember_add
+{
+	my ($kernel, $poolMemberData) = @_[KERNEL, ARG0];
+
+
+	if (!defined($poolMemberData)) {
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] No pool member data provided for 'poolmember_add' event");
+		return;
+	}
+
+	# Check if we have all the attributes we need
+	my $isInvalid;
+	foreach my $attr (POOLMEMBER_REQUIRED_ATTRIBUTES) {
+		if (!defined($poolMemberData->{$attr})) {
+			$isInvalid = $attr;
+			last;
+		}
+	}
+	if ($isInvalid) {
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process poolmember add as there is an attribute missing: '%s',$isInvalid");
+		return;
+	}
+
+	createPoolMember($poolMemberData);
+}
+
+
+# Event for 'poolmember_remove'
+sub _session_poolmember_remove
+{
+	my ($kernel, $pmid) = @_[KERNEL, ARG0];
+
+
+	if (!isPoolMemberIDValid($pmid)) {
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Invalid pool member ID '%s' for 'poolmember_remove' event",prettyUndef($pmid));
+		return;
+	}
+
+	removePoolMember($pmid);
+}
+
+
+# Event for 'poolmember_change'
+sub _session_poolmember_change
+{
+	my ($kernel, $poolMemberData) = @_[KERNEL, ARG0];
+
+
+	if (!isPoolMemberIDValid($poolMemberData->{'ID'})) {
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Invalid pool member ID '%s' for 'poolmember_change' event",
+				prettyUndef($poolMemberData->{'ID'})
+		);
+		return;
+	}
+
+	changePoolMember($poolMemberData);
+}
+
+
+# Event for 'limit_add'
+sub _session_limit_add
+{
+	my ($kernel, $limitData) = @_[KERNEL, ARG0];
+
+
+	if (!defined($limitData)) {
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] No limit data provided for 'limit_add' event");
+		return;
+	}
+
+	# Check if we have all the attributes we need
+	my $isInvalid;
+	foreach my $attr (LIMIT_REQUIRED_ATTRIBUTES) {
+		if (!defined($limitData->{$attr})) {
+			$isInvalid = $attr;
+			last;
+		}
+	}
+	if ($isInvalid) {
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process limit add as there is an attribute missing: '%s'",$isInvalid);
+		return;
+	}
+
+	createLimit($limitData);
+}
+
+
+# Event for 'override_add'
+sub _session_override_add
+{
+	my ($kernel, $overrideData) = @_[KERNEL, ARG0];
+
+
+	if (!defined($overrideData)) {
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] No override data provided for 'override_add' event");
+		return;
+	}
+
+	# Check that we have at least one match attribute
+	my $isValid = 0;
+	foreach my $item (OVERRIDE_MATCH_ATTRIBUTES) {
+		$isValid++;
+	}
+	if (!$isValid) {
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process override as there is no selection attribute");
+		return;
+	}
+
+	createOverride($overrideData);
+}
+
+
+# Event for 'override_remove'
+sub _session_override_remove
+{
+	my ($kernel, $oid) = @_[KERNEL, ARG0];
+
+
+	if (!isOverrideIDValid($oid)) {
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Invalid override ID '%s' for 'override_remove' event",prettyUndef($oid));
+		return;
+	}
+
+	removeOverride($oid);
+}
+
+
+# Event for 'override_change'
+sub _session_override_change
+{
+	my ($kernel, $overrideData) = @_[KERNEL, ARG0];
+
+
+	if (!isOverrideIDValid($overrideData->{'ID'})) {
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Invalid override ID '%s' for 'override_change' event",
+				prettyUndef($overrideData->{'ID'})
+		);
+		return;
+	}
+
+	changeOverride($overrideData);
 }
 
 
 # Function to check the group ID exists
-sub checkGroupID
+sub isGroupIDValid
 {
 	my $gid = shift;
 
@@ -776,67 +1467,36 @@ sub checkGroupID
 		return $gid;
 	}
 
-	return undef;
-}
-
-
-# Function to check interface group ID
-sub checkInterfaceGroupID
-{
-	my $igid = shift;
-
-
-	if (defined($config->{'interface_groups'}->{$igid})) {
-		return $igid;
-	}
-
-	return undef;
-}
-
-
-# Function to check the match priority ID exists
-sub checkMatchPriorityID
-{
-	my $mpid = shift;
-
-
-	if (defined($config->{'match_priorities'}->{$mpid})) {
-		return $mpid;
-	}
-
-	return undef;
+	return;
 }
 
 
 # Function to check the class ID exists
-sub checkClassID
+sub isClassIDValid
 {
 	my $cid = shift;
 
 
-	if (defined($config->{'classes'}->{$cid})) {
-		return $cid;
+	if (!defined($config->{'classes'}->{$cid})) {
+		return;
 	}
 
-	return undef;
+	return $cid;
 }
 
 
-# Return interface classes
-sub getInterface
+# Function to return if an interface ID is valid
+sub isInterfaceIDValid
 {
-	my $interface = shift;
+	my $iid = shift;
 
-	# If we have this interface return its classes
-	if (defined($config->{'interfaces'}->{$interface})) {
-		my $res = dclone($config->{'interfaces'}->{$interface});
-		# We don't really want to return classes
-		delete($res->{'classes'});
-		# And return it...
-		return $res;
+
+	# Return undef if interface is not valid
+	if (!defined($config->{'interfaces'}->{$iid})) {
+		return;
 	}
 
-	return undef;
+	return $iid;
 }
 
 
@@ -848,17 +1508,36 @@ sub getInterfaces
 
 
 # Return interface classes
-sub getInterfaceClasses
+sub getInterface
 {
-	my $interface = shift;
+	my $iid = shift;
 
 
 	# If we have this interface return its classes
-	if (defined($config->{'interfaces'}->{$interface})) {
-		return dclone($config->{'interfaces'}->{$interface}->{'classes'});
+	if (!isInterfaceIDValid($iid)) {
+		return;
 	}
 
-	return undef;
+	my $res = dclone($config->{'interfaces'}->{$iid});
+	# We don't really want to return classes
+	delete($res->{'classes'});
+	# And return it...
+	return $res;
+}
+
+
+# Return interface traffic classes
+sub getInterfaceTrafficClasses
+{
+	my $iid = shift;
+
+
+	# If we have this interface return its classes
+	if (!isInterfaceIDValid($iid)) {
+		return;
+	}
+
+	return dclone($config->{'interfaces'}->{$iid}->{'classes'});
 }
 
 
@@ -876,15 +1555,15 @@ sub getInterfaceDefaultPool
 # Function to return interface rate
 sub getInterfaceRate
 {
-	my $interface = shift;
+	my $iid = shift;
 
 
-	# If we have this interface return its rate
-	if (defined($config->{'interfaces'}->{$interface})) {
-		return $config->{'interfaces'}->{$interface}->{'rate'};
+	# If we have this interface return its classes
+	if (!isInterfaceIDValid($iid)) {
+		return;
 	}
 
-	return undef;
+	return $config->{'interfaces'}->{$iid}->{'rate'};
 }
 
 
@@ -898,187 +1577,110 @@ sub getInterfaceGroups
 }
 
 
-# Function to get an interface group
-sub getInterfaceGroup
+# Function to check if interface group is valid
+sub isInterfaceGroupIDValid
 {
-	my $interfaceGroup = shift;
+	my $igid = shift;
 
 
-	if (defined($config->{'interface_groups'}->{$interfaceGroup})) {
-		return dclone($config->{'interface_groups'}->{$interfaceGroup});
+	if (!defined($igid) || !defined($config->{'interface_groups'}->{$igid})) {
+		return;
 	}
 
-	return undef;
+	return $igid;
 }
 
 
-# Function to check if interface group is valid
-sub isInterfaceGroupValid
+# Function to get an interface group
+sub getInterfaceGroup
 {
-	my $interfaceGroup = shift;
+	my $igid = shift;
 
 
-	if (defined($interfaceGroup) && defined($config->{'interface_groups'}->{$interfaceGroup})) {
-		return $interfaceGroup;
+	if (!isInterfaceGroupIDValid($igid)) {
+		return;
 	}
 
-	return undef;
+	return dclone($config->{'interface_groups'}->{$igid});
 }
 
 
 # Function to get match priorities
 sub getMatchPriorities
 {
-	my $match_priorities = dclone($config->{'match_priorities'});
-
-
-	return $match_priorities;
+	return dclone($config->{'match_priorities'});
 }
 
 
 # Function to check if interface group is valid
-sub isMatchPriorityValid
+sub isMatchPriorityIDValid
 {
-	my $matchPriority = shift;
+	my $mpid = shift;
 
 
-	if (defined($matchPriority) && defined($config->{'match_priorities'}->{$matchPriority})) {
-		return $matchPriority;
+	# Check all is ok
+	if (!defined($mpid) || !defined($config->{'match_priorities'}->{$mpid})) {
+		return;
 	}
 
-	return undef;
+	return $mpid;
 }
 
 
-# Function to check if the status is ok
-sub checkStatus
+# Function to set a pool attribute
+sub setPoolAttribute
 {
-	my $status = shift;
+	my ($pid,$attr,$value) = @_;
 
 
-	if ($status eq "new" || $status eq "offline" || $status eq "online" || $status eq "conflict" || $status eq "unknown") {
-		return $status
+	# Return if it doesn't exist
+	if (!isPoolIDValid($pid)) {
+		return;
 	}
 
-	return undef;
+	$pools->{$pid}->{'.attributes'}->{$attr} = $value;
+
+	return $value;
 }
 
 
-# Function to return a limit username
-sub getLimitUsername
+# Function to get a pool attribute
+sub getPoolAttribute
 {
-	my $lid = shift;
+	my ($pid,$attr) = @_;
 
 
-	if (defined($limits->{$lid})) {
-		return $limits->{$lid}->{'Username'};
+	# Return if it doesn't exist
+	if (!isPoolIDValid($pid)) {
+		return;
 	}
-	return undef;
-}
-
-
-# Function to return a limit TX interface
-sub getLimitTxInterface
-{
-	my $lid = shift;
-
-
-	if (defined($limits->{$lid})) {
-		return $config->{'interface_groups'}->{$limits->{$lid}->{'InterfaceGroupID'}}->{'txiface'};
-	}
-
-	return undef;
-}
-
-
-# Function to return a limit RX interface
-sub getLimitRxInterface
-{
-	my $lid = shift;
-
-
-	if (defined($limits->{$lid})) {
-		return $config->{'interface_groups'}->{$limits->{$lid}->{'InterfaceGroupID'}}->{'rxiface'};
-	}
-
-	return undef;
-}
-
-
-# Function to return a limit match priority
-sub getLimitMatchPriority
-{
-	my $lid = shift;
-
-
-	if (defined($limits->{$lid})) {
-		# NK: No actual mappping yet
-		return $limits->{$lid}->{'MatchPriorityID'};
-	}
-
-	return undef;
-}
-
-
-# Function to return a limit
-sub getLimit
-{
-	my $lid = shift;
-
-
-	if (defined($limits->{$lid})) {
-		my %limit = %{$limits->{$lid}};
-		return \%limit;
-	}
-
-	return undef;
-}
-
-
-# Function to return a list of limit ID's
-sub getLimits
-{
-	return (keys %{$limits});
-}
-
-
-# Function to set a limit attribute
-sub setLimitAttribute
-{
-	my ($lid,$attr,$value) = @_;
-
-
-	# Only set it if it exists
-	if (defined($lid) && defined($limits->{$lid})) {
-		$limits->{$lid}->{'attributes'}->{$attr} = $value;
-	}
-}
-
-
-# Function to get a limit attribute
-sub getLimitAttribute
-{
-	my ($lid,$attr) = @_;
-
 
 	# Check if attribute exists first
-	if (defined($lid) && defined($limits->{$lid}) && defined($limits->{$lid}->{'attributes'}) && defined($limits->{$lid}->{'attributes'}->{$attr})) {
-		return $limits->{$lid}->{'attributes'}->{$attr};
+	if (!defined($pools->{$pid}->{'.attributes'}) || !defined($pools->{$pid}->{'.attributes'}->{$attr})) {
+		return;
 	}
-	return undef;
+
+	return $pools->{$pid}->{'.attributes'}->{$attr};
 }
 
 
-# Function to remove a limit attribute
-sub removeLimitAttribute
+# Function to remove a pool attribute
+sub removePoolAttribute
 {
-	my ($lid,$attr) = @_;
+	my ($pid,$attr) = @_;
 
+
+	# Return if it doesn't exist
+	if (!isPoolIDValid($pid)) {
+		return;
+	}
 
 	# Check if attribute exists first
-	if (defined($lid) && defined($limits->{$lid}) && defined($limits->{$lid}->{'attributes'}) && defined($limits->{$lid}->{'attributes'}->{$attr})) {
-		delete($limits->{$lid}->{'attributes'}->{$attr});
+	if (!defined($pools->{$pid}->{'.attributes'}) || !defined($pools->{$pid}->{'.attributes'}->{$attr})) {
+		return;
 	}
+
+	return delete($pools->{$pid}->{'.attributes'}->{$attr});
 }
 
 
@@ -1087,47 +1689,1027 @@ sub getOverride
 {
 	my $oid = shift;
 
-	if (defined($oid) && defined($overrides->{$oid})) {
-		my %override = %{$overrides->{$oid}};
-		return \%override;
+
+	if (!isOverrideIDValid($oid)) {
+		return;
 	}
 
-	return undef;
+	my $override = dclone($overrides->{$oid});
+
+	return $override;
 }
 
 
-# Function to return a list of override ID's
+## Function to return a list of override ID's
 sub getOverrides
 {
 	return (keys %{$overrides});
 }
 
 
-# Function to set shaper state on a limit
-sub setShaperState
+# Function to create a pool
+sub createPool
 {
-	my ($lid,$state) = @_;
+	my $poolData = shift;
 
 
-	if (defined($lid) && defined($limits->{$lid})) {
-		$limits->{$lid}->{'_shaper.state'} = $state;
+	# Check if we have all the attributes we need
+	my $isInvalid;
+	foreach my $attr (POOL_REQUIRED_ATTRIBUTES) {
+		if (!defined($poolData->{$attr})) {
+			$isInvalid = $attr;
+			last;
+		}
+	}
+	if ($isInvalid) {
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process pool add as there is an attribute missing: '%s'",$isInvalid);
+		return;
 	}
 
-	return undef;
+	my $pool;
+
+	my $now = time();
+
+	# Now check if the identifier is valid
+	if (!defined($pool->{'Identifier'} = $poolData->{'Identifier'})) {
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process pool add as Identifier is invalid");
+		return;
+	}
+	# Check interface group ID is OK
+	if (!defined($pool->{'InterfaceGroupID'} = isInterfaceGroupIDValid($poolData->{'InterfaceGroupID'}))) {
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process pool add for '%s' as the InterfaceGroupID is invalid",
+				$pool->{'Identifier'}
+		);
+		return;
+	}
+	# If we already have this identifier added, return it as the pool
+	if (defined(my $pool = $poolIdentifierMap->{$pool->{'InterfaceGroupID'}}->{$pool->{'Identifier'}})) {
+		return $pool->{'ID'};
+	}
+	# Check class is OK
+	if (!defined($pool->{'ClassID'} = isClassIDValid($poolData->{'ClassID'}))) {
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process pool add for '%s' as the ClassID is invalid",
+				$pool->{'Identifier'}
+		);
+		return;
+	}
+	# Make sure things are not attached to the default pool
+	if (defined($config->{'default_pool'}) && $pool->{'ClassID'} eq $config->{'default_pool'}) {
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process pool add for '%s' as the ClassID is the 'default_pool' ClassID",
+				$pool->{'Identifier'}
+		);
+		return;
+	}
+	# Check traffic limits
+	if (!isNumber($pool->{'TrafficLimitTx'} = $poolData->{'TrafficLimitTx'})) {
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process pool add for '%s' as the TrafficLimitTx is invalid",
+				$pool->{'Identifier'}
+		);
+		return;
+	}
+	if (!isNumber($pool->{'TrafficLimitRx'} = $poolData->{'TrafficLimitRx'})) {
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process pool add for '%s' as the TrafficLimitRx is invalid",
+				$pool->{'Identifier'}
+		);
+		return;
+	}
+	# If we don't have burst limits, improvize
+	if (!defined($pool->{'TrafficLimitTxBurst'} = $poolData->{'TrafficLimitTxBurst'})) {
+		$pool->{'TrafficLimitTxBurst'} = $pool->{'TrafficLimitTx'};
+		$pool->{'TrafficLimitTx'} = int($pool->{'TrafficLimitTxBurst'}/4);
+	}
+	if (!defined($pool->{'TrafficLimitRxBurst'} = $poolData->{'TrafficLimitRxBurst'})) {
+		$pool->{'TrafficLimitRxBurst'} = $pool->{'TrafficLimitRx'};
+		$pool->{'TrafficLimitRx'} = int($pool->{'TrafficLimitRxBurst'}/4);
+	}
+	# Set source
+	$pool->{'Source'} = $poolData->{'Source'};
+	# Set when this entry was created
+	$pool->{'Created'} = defined($poolData->{'Created'}) ? $poolData->{'Created'} : $now;
+	$pool->{'LastUpdate'} = $now;
+	# Set when this entry expires
+	$pool->{'Expires'} = defined($poolData->{'Expires'}) ? int($poolData->{'Expires'}) : 0;
+	# Check status is OK
+	$pool->{'Status'} = CFGM_NEW;
+	# Set friendly name and notes
+	$pool->{'FriendlyName'} = $poolData->{'FriendlyName'};
+	# Set notes
+	$pool->{'Notes'} = $poolData->{'Notes'};
+
+	# Assign pool ID
+	$pool->{'ID'} = $poolIDCounter++;
+
+	# Add pool
+	$pools->{$pool->{'ID'}} = $pool;
+
+	# Link pool identifier map
+	$poolIdentifierMap->{$pool->{'InterfaceGroupID'}}->{$pool->{'Identifier'}} = $pool;
+	# Blank our pool member mapping
+	$poolMemberMap->{$pool->{'ID'}} = { };
+
+	setPoolShaperState($pool->{'ID'},SHAPER_NOTLIVE);
+
+	# Pool needs updating
+	$poolChangeQueue->{$pool->{'ID'}} = $pool;
+
+	# Resolve overrides
+	_override_resolve([$pool->{'ID'}]);
+
+	# Bump up changes
+	$stateChanged++;
+
+	return $pool->{'ID'};
 }
 
 
-# Function to get shaper state on a limit
-sub getShaperState
+# Function to remove a pool
+sub removePool
 {
-	my $lid = shift;
+	my $pid = shift;
 
 
-	if (defined($lid) && defined($limits->{$lid})) {
-		return $limits->{$lid}->{'_shaper.state'};
+	# Check pool exists first
+	if (!isPoolIDValid($pid)) {
+		return;
 	}
 
-	return undef;
+	my $pool = $pools->{$pid};
+
+	# Check if pool is not already offlining
+	if ($pool->{'Status'} == CFGM_OFFLINE) {
+		return;
+	}
+
+	my $now = time();
+
+	# Set status to offline so its caught by our garbage collector
+	$pool->{'Status'} = CFGM_OFFLINE;
+
+	# Updated pool's last updated timestamp
+	$pool->{'LastUpdate'} = $now;
+
+	# Pool needs updating
+	$poolChangeQueue->{$pool->{'ID'}} = $pool;
+
+	# Bump up changes
+	$stateChanged++;
+
+	return;
+}
+
+
+# Function to change a pool
+sub changePool
+{
+	my $poolData = shift;
+
+
+	# Check pool exists first
+	if (!isPoolIDValid($poolData->{'ID'})) {
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process pool change as there is no 'ID' attribute");
+		return;
+	}
+
+	my $pool = $pools->{$poolData->{'ID'}};
+
+	my $now = time();
+
+	my $changes = getHashChanges($pool,$poolData,[POOL_CHANGE_ATTRIBUTES]);
+	# Make changes...
+	foreach my $item (keys %{$changes}) {
+		$pool->{$item} = $changes->{$item};
+	}
+
+	# Set pool to being updated
+	$pool->{'Status'} = CFGM_CHANGED;
+	# Pool was just updated, so update our timestamp
+	$pool->{'LastUpdate'} = $now;
+
+	# Pool needs updating
+	$poolChangeQueue->{$pool->{'ID'}} = $pool;
+
+	# Bump up changes
+	$stateChanged++;
+
+	# Return what was changed
+	return dclone($changes);
+}
+
+
+# Function to return a pool
+sub getPool
+{
+	my $pid = shift;
+
+
+	if (!isPoolIDValid($pid)) {
+		return;
+	}
+
+	my $pool = dclone($pools->{$pid});
+
+	# Remove attributes?
+	delete($pool->{'.attributes'});
+	delete($pool->{'.applied_attributes'});
+
+	return $pool;
+}
+
+
+# Function to get a pool member by its identifier
+sub getPoolByIdentifer
+{
+	my ($interfaceGroupID,$identifier) = @_;
+
+
+	# Make sure both params are defined or we get warnings
+	if (!defined($interfaceGroupID) || !defined($identifier)) {
+		return;
+	}
+
+	# Maybe it doesn't exist?
+	if (!defined($poolIdentifierMap->{$interfaceGroupID}) || !defined($poolIdentifierMap->{$interfaceGroupID}->{$identifier})) {
+		return;
+	}
+
+	return dclone($poolIdentifierMap->{$interfaceGroupID}->{$identifier});
+}
+
+
+# Function to return a list of pool ID's
+sub getPools
+{
+	return (keys %{$pools});
+}
+
+
+# Function to return a pool TX interface
+sub getPoolTxInterface
+{
+	my $pid = shift;
+
+
+	# Check pool exists first
+	if (!isPoolIDValid($pid)) {
+		return;
+	}
+
+	return $config->{'interface_groups'}->{$pools->{$pid}->{'InterfaceGroupID'}}->{'txiface'};
+}
+
+
+# Function to return a pool RX interface
+sub getPoolRxInterface
+{
+	my $pid = shift;
+
+
+	# Check pool exists first
+	if (!isPoolIDValid($pid)) {
+		return;
+	}
+
+	return $config->{'interface_groups'}->{$pools->{$pid}->{'InterfaceGroupID'}}->{'rxiface'};
+}
+
+
+# Function to return a pool traffic class ID
+sub getPoolTrafficClassID
+{
+	my $pid = shift;
+
+
+	# Check pool exists first
+	if (!isPoolIDValid($pid)) {
+		return;
+	}
+
+	return $pools->{$pid}->{'ClassID'};
+}
+
+
+# Function to set pools shaper state
+sub setPoolShaperState
+{
+	my ($pid,$state) = @_;
+
+
+	# Check pool exists first
+	if (!isPoolIDValid($pid)) {
+		return;
+	}
+
+	$pools->{$pid}->{'.shaper_state'} = $state;
+
+	return $state;
+}
+
+
+# Function to get shaper state for a pool
+sub getPoolShaperState
+{
+	my $pid = shift;
+
+
+	# Check pool exists first
+	if (!isPoolIDValid($pid)) {
+		return;
+	}
+
+	return $pools->{$pid}->{'.shaper_state'};
+}
+
+
+# Function to check the pool ID exists
+sub isPoolIDValid
+{
+	my $pid = shift;
+
+
+	if (!defined($pid) || !defined($pools->{$pid})) {
+		return;
+	}
+
+	return $pid;
+}
+
+
+# Function to return if a pool is ready for any kind of modification
+sub isPoolReady
+{
+	my $pid = shift;
+
+
+	# Get state and check pool exists all in one
+	my $state;
+	if (!defined($state = getPoolShaperState($pid))) {
+		return;
+	}
+
+	return ($pools->{$pid}->{'Status'} == CFGM_ONLINE && $state == SHAPER_LIVE);
+}
+
+
+# Function to return a pool with any items changed as per overrides
+sub getEffectivePool
+{
+	my $pid = shift;
+
+
+	my $pool;
+	if (!defined($pool = getPool($pid))) {
+		return;
+	}
+
+	# If we have applied overrides, check out what changes there may be
+	if (defined(my $appliedOverrides = $pools->{$pid}->{'.applied_overrides'})) {
+		my $overrideSet;
+
+		# Loop with overrides in ascending fashion, least matches to most
+		foreach my $oid ( sort { $appliedOverrides->{$a} <=> $appliedOverrides->{$b} } keys %{$appliedOverrides}) {
+			my $override = $overrides->{$oid};
+
+			# Loop with attributes and create our override set
+			foreach my $attr (OVERRIDE_CHANGESET_ATTRIBUTES) {
+				# Set override set attribute if the override has defined it
+				if (defined($override->{$attr}) && $override->{$attr} ne "") {
+					$overrideSet->{$attr} = $override->{$attr};
+				}
+			}
+		}
+
+		# Set overrides on pool
+		if (defined($overrideSet)) {
+			foreach my $attr (keys %{$overrideSet}) {
+				$pool->{$attr} = $overrideSet->{$attr};
+			}
+		}
+	}
+
+	return $pool;
+}
+
+
+# Function to create a pool member
+sub	createPoolMember
+{
+	my $poolMemberData = shift;
+
+
+	# Check if we have all the attributes we need
+	my $isInvalid;
+	foreach my $attr (POOLMEMBER_REQUIRED_ATTRIBUTES) {
+		if (!defined($poolMemberData->{$attr})) {
+			$isInvalid = $attr;
+			last;
+		}
+	}
+	if ($isInvalid) {
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process pool member add as there is an attribute missing: '%s'",$isInvalid);
+		return;
+	}
+
+	my $poolMember;
+
+	my $now = time();
+
+	# Check if IP address is defined
+	if (!defined(isIP($poolMember->{'IPAddress'} = $poolMemberData->{'IPAddress'}))) {
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process pool member add as the IPAddress is invalid");
+		return;
+	}
+	# Now check if Username its valid
+	if (!defined(isUsername($poolMember->{'Username'} = $poolMemberData->{'Username'}))) {
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process pool member add as Username is invalid");
+		return;
+	}
+
+	# Check pool ID is OK
+	if (!defined($poolMember->{'PoolID'} = isPoolIDValid($poolMemberData->{'PoolID'}))) {
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process pool member add for '%s' as the PoolID is invalid",
+				$poolMemberData->{'Username'}
+		);
+		return;
+	}
+
+	# Grab pool
+	my $pool = $pools->{$poolMember->{'PoolID'}};
+
+	# Check match priority ID is OK
+	if (!defined($poolMember->{'MatchPriorityID'} = isMatchPriorityIDValid($poolMemberData->{'MatchPriorityID'}))) {
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process pool member add for '%s' as the MatchPriorityID is invalid",
+				$poolMemberData->{'Username'}
+		);
+		return;
+	}
+	# Check group ID is OK
+	if (!defined($poolMember->{'GroupID'} = isGroupIDValid($poolMemberData->{'GroupID'}))) {
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process pool member add for '%s' as the GroupID is invalid",
+				$poolMemberData->{'Username'}
+		);
+		return;
+	}
+	# Set source
+	$poolMember->{'Source'} = $poolMemberData->{'Source'};
+	# Set when this entry was created
+	$poolMember->{'Created'} = defined($poolMemberData->{'Created'}) ? $poolMemberData->{'Created'} : $now;
+	$poolMember->{'LastUpdate'} = $now;
+	# Set when this entry expires
+	$poolMember->{'Expires'} = defined($poolMemberData->{'Expires'}) ? int($poolMemberData->{'Expires'}) : 0;
+	# Check status is OK
+	$poolMember->{'Status'} = CFGM_NEW;
+	# Set friendly name and notes
+	$poolMember->{'FriendlyName'} = $poolMemberData->{'FriendlyName'};
+	# Set notes
+	$poolMember->{'Notes'} = $poolMemberData->{'Notes'};
+
+	# Create pool member ID
+	$poolMember->{'ID'} = $poolMemberIDCounter++;
+
+	# Add pool member
+	$poolMembers->{$poolMember->{'ID'}} = $poolMember;
+
+	# Link interface IP address map
+	$interfaceIPMap->{$pool->{'InterfaceGroupID'}}->{$poolMember->{'IPAddress'}}->{$poolMember->{'ID'}} = $poolMember;
+	# Link pool map
+	$poolMemberMap->{$pool->{'ID'}}->{$poolMember->{'ID'}} = $poolMember;
+
+	# Updated pool's last updated timestamp
+	$pool->{'LastUpdate'} = $now;
+	# Make sure pool is online and not offlining
+	if ($pool->{'Status'} == CFGM_OFFLINE) {
+		$pool->{'Status'} = CFGM_ONLINE;
+	}
+
+	setPoolMemberShaperState($poolMember->{'ID'},SHAPER_NOTLIVE);
+
+	# Pool member needs updating
+	$poolMemberChangeQueue->{$poolMember->{'ID'}} = $poolMember;
+
+	# Resolve overrides, there may of been no pool members, now there is one and we may be able to apply an override
+	_override_resolve([$pool->{'ID'}]);
+
+	# Bump up changes
+	$stateChanged++;
+
+	return $poolMember->{'ID'};
+}
+
+
+# Function to remove pool member, this function is actually just going to flag it offline
+# the offline pool members will be caught by cleanup and removed, we do this because we
+# need the pool member setup in the removal functions, we cannot remove it first, and we
+# cannot allow plugins to remove internal data structures either.
+sub removePoolMember
+{
+	my $pmid = shift;
+
+
+	# Check pool member exists first
+	if (!isPoolMemberIDValid($pmid)) {
+		return;
+	}
+
+	my $poolMember = $poolMembers->{$pmid};
+
+	# Check if pool member is not already offlining
+	if ($poolMember->{'Status'} == CFGM_OFFLINE) {
+		return;
+	}
+
+	my $now = time();
+
+	# Grab pool
+	my $pool = $pools->{$poolMember->{'PoolID'}};
+
+	# Updated pool's last updated timestamp
+	$pool->{'LastUpdate'} = $now;
+
+	# Set status to offline so its caught by our garbage collector
+	$poolMember->{'Status'} = CFGM_OFFLINE;
+
+	# Update pool members last updated timestamp
+	$poolMember->{'LastUpdate'} = $now;
+
+	# Pool member needs updating
+	$poolMemberChangeQueue->{$poolMember->{'ID'}} = $poolMember;
+
+	# Bump up changes
+	$stateChanged++;
+
+	return;
+}
+
+
+# Function to change a pool member
+sub changePoolMember
+{
+	my $poolMemberData = shift;
+
+
+	# Check pool member exists first
+	if (!isPoolMemberIDValid($poolMemberData->{'ID'})) {
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process pool change as there is no 'ID' attribute");
+		return;
+	}
+
+	my $poolMember = $poolMembers->{$poolMemberData->{'ID'}};
+	my $pool = $pools->{$poolMember->{'PoolID'}};
+
+	my $now = time();
+
+	my $changes = getHashChanges($poolMember,$poolMemberData,[POOLMEMBER_CHANGE_ATTRIBUTES]);
+
+	# Make changes...
+	foreach my $item (keys %{$changes}) {
+		$poolMember->{$item} = $changes->{$item};
+	}
+
+	# Pool member isn't really updated, so we just set the last updated timestamp
+	$poolMember->{'LastUpdate'} = $now;
+	# Pool was just updated, so update our timestamp
+	$pool->{'LastUpdate'} = $now;
+
+	# Bump up changes
+	$stateChanged++;
+
+	# Return what was changed
+	return dclone($changes);
+}
+
+
+# Function to return a list of pool ID's
+sub getPoolMembers
+{
+	my $pid = shift;
+
+
+	# Check pool exists first
+	if (!isPoolIDValid($pid)) {
+		return;
+	}
+
+	# Check our member map is not undefined
+	if (!defined($poolMemberMap->{$pid})) {
+		return;
+	}
+
+	return keys %{$poolMemberMap->{$pid}};
+}
+
+
+# Function to return a pool member
+sub getPoolMember
+{
+	my $pmid = shift;
+
+
+	# Check pool member exists first
+	if (!isPoolMemberIDValid($pmid)) {
+		return;
+	}
+
+	my $poolMember = dclone($poolMembers->{$pmid});
+
+	# Remove attributes?
+	delete($poolMember->{'.attributes'});
+
+	return $poolMember;
+}
+
+
+# Function to return pool member ID's with a certain IP address
+sub getPoolMembersByIP
+{
+	my ($interfaceGroupID,$ipAddress) = @_;
+
+
+	# Make sure both params are defined or we get warnings
+	if (!defined($interfaceGroupID) || !defined($ipAddress)) {
+		return;
+	}
+
+	# Maybe it doesn't exist?
+	if (!defined($interfaceIPMap->{$interfaceGroupID}) || !defined($interfaceIPMap->{$interfaceGroupID}->{$ipAddress})) {
+		return;
+	}
+
+	return keys %{$interfaceIPMap->{$interfaceGroupID}->{$ipAddress}};
+}
+
+
+# Function to check the pool member ID exists
+sub isPoolMemberIDValid
+{
+	my $pmid = shift;
+
+
+	if (!defined($pmid) || !defined($poolMembers->{$pmid})) {
+		return;
+	}
+
+	return $pmid;
+}
+
+
+# Function to return if a pool member is ready for any kind of modification
+sub isPoolMemberReady
+{
+	my $pmid = shift;
+
+
+	# Check pool exists first
+	if (!isPoolMemberIDValid($pmid)) {
+		return;
+	}
+
+	return ($poolMembers->{$pmid}->{'Status'} == CFGM_ONLINE && getPoolMemberShaperState($pmid) == SHAPER_LIVE);
+}
+
+
+# Function to return a pool member match priority
+sub getPoolMemberMatchPriority
+{
+	my $pmid = shift;
+
+
+	# Check pool member exists first
+	if (!isPoolMemberIDValid($pmid)) {
+		return;
+	}
+
+	# NK: No actual mappping yet, we just return the ID
+	return $poolMembers->{$pmid}->{'MatchPriorityID'};
+}
+
+
+# Function to set a pool member attribute
+sub setPoolMemberAttribute
+{
+	my ($pmid,$attr,$value) = @_;
+
+
+	# Check pool member exists first
+	if (!isPoolMemberIDValid($pmid)) {
+		return;
+	}
+
+	$poolMembers->{$pmid}->{'.attributes'}->{$attr} = $value;
+
+	return $value;
+}
+
+
+# Function to set pool member shaper state
+sub setPoolMemberShaperState
+{
+	my ($pmid,$state) = @_;
+
+
+	# Check pool member exists first
+	if (!isPoolMemberIDValid($pmid)) {
+		return;
+	}
+
+	$poolMembers->{$pmid}->{'.shaper_state'} = $state;
+
+	return $state;
+}
+
+
+# Function to get shaper state for a pool
+sub getPoolMemberShaperState
+{
+	my $pmid = shift;
+
+
+	# Check pool member exists first
+	if (!isPoolMemberIDValid($pmid)) {
+		return;
+	}
+
+	return $poolMembers->{$pmid}->{'.shaper_state'};
+}
+
+
+# Function to get a pool member attribute
+sub getPoolMemberAttribute
+{
+	my ($pmid,$attr) = @_;
+
+
+	# Check pool member exists first
+	if (!isPoolMemberIDValid($pmid)) {
+		return;
+	}
+
+	# Check if attribute exists first
+	if (!defined($poolMembers->{$pmid}->{'.attributes'}) || !defined($poolMembers->{$pmid}->{'.attributes'}->{$attr})) {
+		return;
+	}
+
+	return $poolMembers->{$pmid}->{'.attributes'}->{$attr};
+}
+
+
+# Function to remove a pool member attribute
+sub removePoolMemberAttribute
+{
+	my ($pmid,$attr) = @_;
+
+
+	# Check pool member exists first
+	if (!isPoolMemberIDValid($pmid)) {
+		return;
+	}
+
+	# Check if attribute exists first
+	if (!defined($poolMembers->{$pmid}->{'.attributes'}) || !defined($poolMembers->{$pmid}->{'.attributes'}->{$attr})) {
+		return;
+	}
+
+	return delete($poolMembers->{$pmid}->{'.attributes'}->{$attr});
+}
+
+
+# Create a limit, which is the combination of a pool and a pool member
+sub createLimit
+{
+	my $limitData = shift;
+
+
+	# Check if we have all the attributes we need
+	my $isInvalid;
+	foreach my $attr (LIMIT_REQUIRED_ATTRIBUTES) {
+		if (!defined($limitData->{$attr})) {
+			$isInvalid = $attr;
+			last;
+		}
+	}
+	if ($isInvalid) {
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process limit add as there is an attribute missing: '%s'",$isInvalid);
+		return;
+	}
+
+	# Check if IP address is defined
+	if (!defined(isIP($limitData->{'IPAddress'} = $limitData->{'IPAddress'}))) {
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process limit add as the IP address is invalid");
+		return;
+	}
+
+	my $poolIdentifier = $limitData->{'Username'};
+	my $poolData = {
+		'FriendlyName' => $limitData->{'IPAddress'},
+		'Identifier' => $poolIdentifier,
+		'InterfaceGroupID' => $limitData->{'InterfaceGroupID'},
+		'ClassID' => $limitData->{'ClassID'},
+		'TrafficLimitTx' => $limitData->{'TrafficLimitTx'},
+		'TrafficLimitTxBurst' => $limitData->{'TrafficLimitTxBurst'},
+		'TrafficLimitRx' => $limitData->{'TrafficLimitRx'},
+		'TrafficLimitRxBurst' => $limitData->{'TrafficLimitRxBurst'},
+		'Expires' => $limitData->{'Expires'},
+		'Notes' => $limitData->{'Notes'},
+		'Status' => $limitData->{'Status'},
+		'Source' => $limitData->{'Source'}
+	};
+
+	# If we didn't succeed just exit
+	my $poolID;
+	if (!defined($poolID = createPool($poolData))) {
+		return;
+	}
+
+	my $poolMemberData = {
+		'FriendlyName' => $limitData->{'FriendlyName'},
+		'Username' => $limitData->{'Username'},
+		'IPAddress' => $limitData->{'IPAddress'},
+		'InterfaceGroupID' => $limitData->{'InterfaceGroupID'},
+		'MatchPriorityID' => $limitData->{'MatchPriorityID'},
+		'PoolID' => $poolID,
+		'GroupID' => $limitData->{'GroupID'},
+		'Expires' => $limitData->{'Expires'},
+		'Notes' => $limitData->{'Notes'},
+		'Status' => $limitData->{'Status'},
+		'Source' => $limitData->{'Source'}
+	};
+
+	my $poolMemberID;
+	if (!defined($poolMemberID = createPoolMember($poolMemberData))) {
+		return;
+	}
+
+	return ($poolMemberID,$poolID);
+}
+
+
+# Function to create a override
+sub createOverride
+{
+	my $overrideData = shift;
+
+
+	# Check that we have at least one match attribute
+	my $isValid = 0;
+	foreach my $item (OVERRIDE_MATCH_ATTRIBUTES) {
+		$isValid++;
+	}
+	if (!$isValid) {
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process override as there is no selection attribute");
+		return;
+	}
+
+	my $override;
+
+	my $now = time();
+
+	# Pull in attributes
+	foreach my $item (OVERRIDE_ATTRIBUTES) {
+		$override->{$item} = $overrideData->{$item};
+	}
+
+	# Check group is OK
+	if (defined($override->{'GroupID'}) && !isGroupIDValid($override->{'GroupID'})) {
+		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process override for user '%s', IP '%s', GroupID '%s' as the GroupID is ".
+				"invalid",
+				prettyUndef($override->{'Username'}),
+				prettyUndef($override->{'IPAddress'}),
+				prettyUndef($override->{'GroupID'})
+		);
+		return;
+	}
+
+	# Check class is OK
+	if (defined($override->{'ClassID'}) && !isTrafficClassIDValid($override->{'ClassID'})) {
+		$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Cannot process override for user '%s', IP '%s', GroupID '%s' as the ClassID is ".
+				"invalid",
+				prettyUndef($override->{'Username'}),
+				prettyUndef($override->{'IPAddress'}),
+				prettyUndef($override->{'GroupID'})
+		);
+		return;
+	}
+
+	# Set source
+	$override->{'Source'} = $overrideData->{'Source'};
+	# Set when this entry was created
+	$override->{'Created'} = defined($overrideData->{'Created'}) ? $overrideData->{'Created'} : $now;
+	$override->{'LastUpdate'} = $now;
+	# Set when this entry expires
+	$override->{'Expires'} = defined($overrideData->{'Expires'}) ? int($overrideData->{'Expires'}) : 0;
+	# Check status is OK
+	$override->{'Status'} = CFGM_NEW;
+	# Set friendly name and notes
+	$override->{'FriendlyName'} = $overrideData->{'FriendlyName'};
+	# Set notes
+	$override->{'Notes'} = $overrideData->{'Notes'};
+
+	# Create pool member ID
+	$override->{'ID'} = $overrideIDCounter++;
+
+	# Add override
+	$overrides->{$override->{'ID'}} = $override;
+
+	# Resolve overrides
+	_override_resolve(undef,[$override->{'ID'}]);
+
+	# Bump up changes
+	$stateChanged++;
+
+	return $override->{'ID'};
+}
+
+
+# Function to remove an override
+sub removeOverride
+{
+	my $oid = shift;
+
+
+	# Check override exists first
+	if (!isOverrideIDValid($oid)) {
+		return;
+	}
+
+	my $override = $overrides->{$oid};
+
+	# Remove override from pools that have it and trigger a change
+	if (defined($override->{'.applied_pools'})) {
+		foreach my $pid (keys %{$override->{'.applied_pools'}}) {
+			my $pool = $pools->{$pid};
+
+			# Remove overrides from the pool
+			delete($pool->{'.applied_overrides'}->{$override->{'ID'}});
+
+			# If the pool is online and live, trigger a change
+			if ($pool->{'Status'} == CFGM_ONLINE && getPoolShaperState($pid) == SHAPER_LIVE) {
+				$poolChangeQueue->{$pool->{'ID'}} = $pool;
+				$pool->{'Status'} = CFGM_CHANGED;
+			}
+		}
+	}
+
+	# Remove override
+	delete($overrides->{$override->{'ID'}});
+
+	# Bump up changes
+	$stateChanged++;
+
+	return;
+}
+
+
+# Function to change an override
+sub changeOverride
+{
+	my $overrideData = shift;
+
+
+	# Check override exists first
+	if (!isOverrideIDValid($overrideData->{'ID'})) {
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process override change as there is no 'ID' attribute");
+		return;
+	}
+
+	my $override = $overrides->{$overrideData->{'ID'}};
+
+	my $now = time();
+
+	my $changes = getHashChanges($override,$overrideData,[OVERRIDE_CHANGE_ATTRIBUTES]);
+	# Make changes...
+	foreach my $item (keys %{$changes}) {
+		$override->{$item} = $changes->{$item};
+	}
+
+	# Set status to updated
+	$override->{'Status'} = CFGM_CHANGED;
+	# Set timestamp
+	$override->{'LastUpdate'} = $now;
+
+	# Resolve overrides to see if any attributes changed, we only do this if it already matches
+	# We do NOT support changing match attributes
+	if (defined($override->{'.applied_pools'}) && (my @pids = keys %{$override->{'.applied_pools'}}) > 0) {
+		_override_resolve([@pids],[$override->{'ID'}]);
+	}
+
+	# Bump up changes
+	$stateChanged++;
+
+	# Return what was changed
+	return dclone($changes);
+}
+
+
+# Function to check the override ID exists
+sub isOverrideIDValid
+{
+	my $oid = shift;
+
+
+	if (!defined($oid) || !defined($overrides->{$oid})) {
+		return;
+	}
+
+	return $oid;
 }
 
 
@@ -1146,749 +2728,209 @@ sub getTrafficClasses
 }
 
 
+# Function to get all traffic classes
+sub getAllTrafficClasses
+{
+	my $classes = dclone($config->{'classes'});
+
+	return $classes;
+}
+
+
 # Function to get class name
 sub getTrafficClassName
 {
-	my $class = shift;
+	my $classID = shift;
 
 
-	if (defined($class) && defined($config->{'classes'}->{$class})) {
-		return $config->{'classes'}->{$class};
+	if (!isTrafficClassIDValid($classID)) {
+		return;
 	}
 
-	return undef;
+	return $config->{'classes'}->{$classID};
 }
 
 
 # Function to check if traffic class is valid
-sub isTrafficClassValid
+sub isTrafficClassIDValid
 {
-	my $class = shift;
+	my $classID = shift;
 
 
-	if (defined($class) && defined($config->{'classes'}->{$class})) {
-		return $class;
+	if (!defined($classID) || !defined($config->{'classes'}->{$classID})) {
+		return;
 	}
 
-	return undef;
+	return $classID;
 }
 
 
 # Function to return the traffic priority based on a traffic class
-sub getTrafficPriority
+sub getTrafficClassPriority
 {
-	my $class = shift;
+	my $classID = shift;
 
 
-	# NK: Short circuit, our ClassID = Priority
-	if (defined($class) && defined($config->{'classes'}->{$class})) {
-		return $class;
+	# Check it exists first
+	if (!isTrafficClassIDValid($classID)) {
+		return;
 	}
 
-	return undef;
+	# NK: Short circuit, our ClassID = Priority
+	return $classID;
 }
-
-
-# Handle SIGHUP
-sub handle_SIGHUP
-{
-	my ($kernel, $heap, $signal_name) = @_[KERNEL, HEAP, ARG0];
-
-	$logger->log(LOG_WARN,"[CONFIGMANAGER] Got SIGHUP, ignoring for now");
-}
-
 
 
 #
 # Internal functions
 #
 
-# Function to compute the changes between two limits
-sub _getAppliedLimitChangeset
+
+# Resolve all overrides or those linked to a pid or oid
+# We take 2 optional argument, which is a single override and a single pool to process
+sub _override_resolve
 {
-	my ($orig,$new) = @_;
+	my ($pids,$oids) = @_;
 
 
-	my $res;
-
-	# Loop through what can change
-	foreach my $item (LIMIT_CHANGESET_ATTRIBUTES) {
-		# If new item is defined, and we didn't have a value before, or the new value is different
-		if (defined($new->{$item}) && (!defined($orig->{$item}) || $orig->{$item} ne $new->{$item})) {
-			# If so record it & make the change
-			$res->{$item} = $orig->{$item} = $new->{$item};
+	# Hack to intercept and create a single element hash if we get ID's above
+	my $poolHash;
+	if (defined($pids)) {
+		foreach my $pid (@{$pids}) {
+			$poolHash->{$pid} = $pools->{$pid};
 		}
-	}
-
-	# If we have an override changeset to calculate, lets do it!
-	if (defined(my $overrideNew = $orig->{'override'})) {
-
-		# If there is currently a live override
-		if (defined(my $overrideLive = $orig->{'_override.live'})) {
-
-			# Loop through everything
-			foreach my $item (LIMIT_CHANGESET_ATTRIBUTES) {
-				# If we have a new override defined
-				if (defined($overrideNew->{$item})) {
-					# Check if it differs
-			   	   if ($overrideLive->{$item} ne $overrideNew->{$item}) {
-					   $res->{$item} = $overrideLive->{$item} = $overrideNew->{$item};
-				   }
-
-				# We don't have a new override, but we had one before
-				} elsif (defined($overrideLive->{$item})) {
-					# If it differs to the main item, then add it to the change list
-					if ($overrideLive->{$item} ne $orig->{$item}) {
-						$res->{$item} = $orig->{$item};
-					}
-
-					# Its no longer live so remove it
-					delete($overrideLive->{$item});
-				}
-			}
-
-		# If there was nothing being overridden and is now...
-		} else {
-			# Loop and add
-			foreach my $item (keys %{$overrideNew}) {
-				# If they differ change it
-				if ($orig->{$item} ne $overrideNew->{$item}) {
-					$res->{$item} = $overrideLive->{$item} = $overrideNew->{$item};
-				}
-			}
-			$orig->{'_override.live'} = $overrideLive;
-		}
-
-
-	# If there is no new override...
 	} else {
-		# Only if there was indeed one before...
-		if (defined(my $overrideLive = $orig->{'_override.live'})) {
-			# Make sure we set all the values back
-			foreach my $item (keys %{$overrideLive}) {
-				$res->{$item} = $orig->{$item};
-			}
-			# Blow the override away
-			delete($orig->{'_override.live'});
+		$poolHash = $pools;
+	}
+	my $overrideHash;
+	if (defined($oids)) {
+		foreach my $oid (@{$oids}) {
+			$overrideHash->{$oid} = $overrides->{$oid};
 		}
+	} else {
+		$overrideHash = $overrides;
 	}
 
-
-	return $res;
-}
-
-
-# This is the real function
-sub _process_limit_change
-{
-	my $limit = shift;
-
-
-	# Check if we have all the attributes we need
-	my $isInvalid;
-	foreach my $attr (LIMIT_REQUIRED_ATTRIBUTES) {
-		if (!defined($limit->{$attr})) {
-			$isInvalid = $attr;
-			last;
-		}
-	}
-	if ($isInvalid) {
-		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process limit change as thre is an attribute missing: '$isInvalid'");
-		return;
-	}
-
-	# We start off blank so we only pull in whats supported
-	my $limitChange;
-	if (!defined($limitChange->{'Username'} = $limit->{'Username'})) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process limit change as username is invalid.");
-		return;
-	}
-	$limitChange->{'Username'} = $limit->{'Username'};
-	$limitChange->{'IP'} = $limit->{'IP'};
-	# Check group is OK
-	if (!defined($limitChange->{'GroupID'} = checkGroupID($limit->{'GroupID'}))) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process limit change for '%s' as the GroupID is invalid.",$limit->{'Username'});
-		return;
-	}
-	# Check interface group ID is OK
-	if (!defined($limitChange->{'InterfaceGroupID'} = checkInterfaceGroupID($limit->{'InterfaceGroupID'}))) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process limit change for '%s' as the InterfaceGroupID is invalid.",$limit->{'Username'});
-		return;
-	}
-	# Check match priority is OK
-	if (!defined($limitChange->{'MatchPriorityID'} = checkMatchPriorityID($limit->{'MatchPriorityID'}))) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process limit change for '%s' as the MatchPriorityID is invalid.",$limit->{'Username'});
-		return;
-	}
-	# Check class is OK
-	if (!defined($limitChange->{'ClassID'} = checkClassID($limit->{'ClassID'}))) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process limit change for '%s' as the ClassID is invalid.",$limit->{'Username'});
-		return;
-	}
-	# Make sure things are not attached to the default pool
-	if (defined($config->{'default_pool'}) && $limitChange->{'ClassID'} eq $config->{'default_pool'}) {
-		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process limit for '%s' as the ClassID is the 'default_pool' ClassID.",$limit->{'Username'});
-		return;
-	}
-
-	$limitChange->{'TrafficLimitTx'} = $limit->{'TrafficLimitTx'};
-	$limitChange->{'TrafficLimitRx'} = $limit->{'TrafficLimitRx'};
-	# Take base limits if we don't have any burst values set
-	$limitChange->{'TrafficLimitTxBurst'} = $limit->{'TrafficLimitTxBurst'};
-	$limitChange->{'TrafficLimitRxBurst'} = $limit->{'TrafficLimitRxBurst'};
-
-	# If we don't have burst limits, set them to the traffic limit, and reset the limit to 25%
-	if (!defined($limitChange->{'TrafficLimitTxBurst'})) {
-		$limitChange->{'TrafficLimitTxBurst'} = $limitChange->{'TrafficLimitTx'};
-		$limitChange->{'TrafficLimitTx'} = int($limitChange->{'TrafficLimitTxBurst'}/4);
-	}
-	if (!defined($limitChange->{'TrafficLimitRxBurst'})) {
-		$limitChange->{'TrafficLimitRxBurst'} = $limitChange->{'TrafficLimitRx'};
-		$limitChange->{'TrafficLimitRx'} = int($limitChange->{'TrafficLimitRxBurst'}/4);
-	}
-
-	# Set when this entry expires
-	$limitChange->{'Expires'} = defined($limit->{'Expires'}) ? int($limit->{'Expires'}) : 0;
-
-	# Set friendly name and notes
-	$limitChange->{'FriendlyName'} = $limit->{'FriendlyName'};
-	$limitChange->{'Notes'} = $limit->{'Notes'};
-
-	# Set when this entry was created
-	$limitChange->{'Created'} = defined($limit->{'Created'}) ? $limit->{'Created'} : time();
-
-	# Check status is OK
-	if (!($limitChange->{'Status'} = checkStatus($limit->{'Status'}))) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process user change for '%s' as the Status is invalid.",$limit->{'Username'});
-		return;
-	}
-
-	$limitChange->{'Source'} = $limit->{'Source'};
-
-	# Create a unique limit identifier
-	my $limitID = sprintf('%s/%s',$limit->{'Username'},$limit->{'IP'});
-	# If we've not seen it
-	my $lid;
-	if (!defined($lid = $limitIDMap->{$limitID})) {
-		# Give it the next limit ID in the list
-		$limitIDMap->{$limitID} = $lid = ++$limitIDCounter;
-	}
-
-	# Set the user ID before we post to the change queue
-	$limitChange->{'ID'} = $lid;
-	$limitChange->{'LastUpdate'} = time();
-	# Push change to change queue
-	$limitChangeQueue->{$lid} = $limitChange;
-}
-
-
-# Process actual limit removal
-sub _process_limit_remove
-{
-	my ($kernel,$limit) = @_;
-
-	my $lid = $limit->{'ID'};
-
-
-	# If the entry is not live, remove it
-	if ($limit->{'_shaper.state'} == SHAPER_NOTLIVE || $limit->{'_shaper.state'} == SHAPER_PENDING) {
-		# Remove from system
-		delete($limits->{$lid});
-		# Set this UID as no longer using this IP
-		# NK: If we try remove it before the limit is actually removed we could get a reconnection causing this value
-		#     to be totally gone, which means we not tracking this limit using this IP anymore, not easily solved!!
-		delete($limitIPMap->{$limit->{'InterfaceGroupID'}}->{$limit->{'IP'}}->{$lid});
-		# Check if we can delete the IP too
-		if (keys %{$limitIPMap->{$limit->{'InterfaceGroupID'}}->{$limit->{'IP'}}} == 0) {
-			delete($limitIPMap->{$limit->{'InterfaceGroupID'}}->{$limit->{'IP'}});
-		}
-
-		# Remove from change queue
-		delete($limitChangeQueue->{$lid});
-
-	# If the entry is live, schedule shaper removal
-	} elsif ($limit->{'_shaper.state'} == SHAPER_LIVE) {
-		# Build a removal...
-		my $rlimit = {
-			'Username' => $limit->{'Username'},
-			'IP' => $limit->{'IP'},
-			'Status' => 'offline',
-			'LastUpdate' => time(),
+	# Loop with all pools, keep a list of pid's updated
+	my $matchList;
+	while ((my $pid, my $pool) = each(%{$poolHash})) {
+		# Build a candidate from the pool
+		my $candidate = {
+			'PoolIdentifier' => $pool->{'Identifier'},
 		};
-		# Queue removal
-		$limitChangeQueue->{$lid} = $rlimit;
 
-		# Post removal to shaper
-		$kernel->post('shaper' => 'remove' => $lid);
-	}
-}
+		# If we only have 1 member in the pool, add its username, IP and group
+		if ((my ($pmid) = getPoolMembers($pid)) == 1) {
+			my $poolMember = getPoolMember($pmid);
+			$candidate->{'Username'} = $poolMember->{'Username'};
+			$candidate->{'IPAddress'} = $poolMember->{'IPAddress'};
+			$candidate->{'GroupID'} = $poolMember->{'GroupID'};
+		}
+		# Loop with all overrides and generate a match list
+		while ((my $oid, my $override) = each(%{$overrideHash})) {
 
+			my $numMatches = 0;
+			my $numMismatches = 0;
 
-# This is the real process_override_change function
-sub _process_override_change
-{
-	my $override = shift;
+			# Loop with the attributes and check for a full match
+			foreach my $attr (OVERRIDE_MATCH_ATTRIBUTES) {
 
-
-	# Pull in mandatory items and check if the result is valid
-	my $overrideChange;
-	my $isValid = 0;
-	foreach my $item (OVERRIDE_MATCH_ATTRIBUTES) {
-		$overrideChange->{$item} = $override->{$item};
-		$isValid++;
-	}
-	# Make sure we have at least 1
-	if (!$isValid) {
-		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process override as there is no selection attribute");
-		return;
-	}
-
-	# Pull in attributes that can be changed
-	foreach my $item (OVERRIDE_CHANGESET_ATTRIBUTES) {
-		$overrideChange->{$item} = $override->{$item};
-	}
-
-	# Check group is OK
-	if (defined($overrideChange->{'GroupID'}) && !checkGroupID($overrideChange->{'GroupID'})) {
-		$logger->log(LOG_DEBUG,'[CONFIGMANAGER] Cannot process override for "User: %s, IP: %s, GroupID: %s" as the GroupID is invalid.',
-			prettyUndef($overrideChange->{'Username'}),prettyUndef($overrideChange->{'IP'}),prettyUndef($overrideChange->{'GroupID'})
-		);
-		return;
-	}
-
-	# Check class is OK
-	if (defined($overrideChange->{'ClassID'}) && !checkClassID($overrideChange->{'ClassID'})) {
-		$logger->log(LOG_DEBUG,'[CONFIGMANAGER] Cannot process override for "User: %s, IP: %s, GroupID: %s" as the ClassID is invalid.',
-			prettyUndef($overrideChange->{'Username'}),prettyUndef($overrideChange->{'IP'}),prettyUndef($overrideChange->{'GroupID'})
-		);
-		return;
-	}
-
-	# Set when this entry expires
-	$overrideChange->{'Expires'} = defined($override->{'Expires'}) ? int($override->{'Expires'}) : 0;
-
-	# Set friendly name and notes
-	$overrideChange->{'FriendlyName'} = $override->{'FriendlyName'};
-	$overrideChange->{'Notes'} = $override->{'Notes'};
-
-	# Set when this entry was created
-	$overrideChange->{'Created'} = defined($override->{'Created'}) ? $override->{'Created'} : time();
-
-	$overrideChange->{'LastUpdate'} = time();
-
-	# Create a unique override identifier, FriendlyName is unique
-	my $overrideID = $override->{'FriendlyName'};
-	# If we've not seen it
-	my $oid;
-	if (!defined($oid = $overrideIDMap->{$overrideID})) {
-		# Give it the next override ID in the list
-		$overrideIDMap->{$overrideID} = $oid = ++$overrideIDCounter;
-	}
-	$overrideChange->{'ID'} = $oid;
-
-	$overrideChangeQueue->{$oid} = $overrideChange;
-}
-
-
-# Process actual override removal
-sub _process_override_remove
-{
-	my $override = shift;
-	my $oid = $override->{'ID'};
-
-
-	# Remove from system
-	delete($overrides->{$oid});
-	# Remove from change queue
-	delete($overrideChangeQueue->{$oid});
-	# Remove from map
-	delete($overrideMap->{$override->{'GroupID'}}->{$override->{'Username'}}->{$override->{'IP'}});
-	if (keys %{$overrideMap->{$override->{'GroupID'}}->{$override->{'Username'}}} < 1) {
-		delete($overrideMap->{$override->{'GroupID'}}->{$override->{'Username'}});
-	}
-	if (keys %{$overrideMap->{$override->{'GroupID'}}} < 1) {
-		delete($overrideMap->{$override->{'GroupID'}});
-	}
-}
-
-
-# Do the actual limit queue processing
-sub _process_limit_change_queue
-{
-	my $kernel = shift;
-
-
-	# Now
-	my $now = time();
-
-	# Loop with changes in queue
-	foreach my $lid (keys %{$limitChangeQueue}) {
-		# Changes for limit
-		# Minimum required info is:
-		# - Username
-		# - IP
-		# - Status
-		# - LastUpdate
-		my $climit = $limitChangeQueue->{$lid};
-
-		#
-		# LIMIT IN LIST
-		#
-		if (defined(my $glimit = $limits->{$lid})) {
-			my $updateShaper = 0;
-
-			# This is a new limit notification
-			if ($climit->{'Status'} eq "new") {
-				$logger->log(LOG_INFO,"[CONFIGMANAGER] Limit '$climit->{'Username'}' [$lid], limit already live but new state provided?");
-				$updateShaper = 1;
-
-				# Remove from change queue
-				delete($limitChangeQueue->{$lid});
-
-			# Online or "ping" status notification
-			} elsif ($climit->{'Status'} eq "online") {
-				$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Limit '$climit->{'Username'}' [$lid], limit still online");
-				$updateShaper = 1;
-
-				# Remove from change queue
-				delete($limitChangeQueue->{$lid});
-
-			# Offline notification, this we going to treat specially
-			} elsif ($climit->{'Status'} eq "offline") {
-
-				# We first check if this update was received some time ago, and if it exceeds our expire time
-				# We don't want to immediately remove a limit, only for him to come back on a few seconds later, the cost in exec()'s
-				# would be pretty high
-				if ($now - $climit->{'LastUpdate'} > TIMEOUT_EXPIRE_OFFLINE) {
-
-					# Remove entry if no longer live
-					if ($glimit->{'_shaper.state'} == SHAPER_NOTLIVE) {
-						$logger->log(LOG_INFO,"[CONFIGMANAGER] Limit '$climit->{'Username'}' [$lid] offline and removed from shaper");
-
-						_process_limit_remove($kernel,$glimit);
-
-						# Next record, we don't want to do any updates below
-						next;
-
-					# Push to shaper
-					} elsif ($glimit->{'_shaper.state'} == SHAPER_LIVE) {
-						$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Limit '$climit->{'Username'}' [$lid] offline, queue remove from shaper");
-
-						_process_limit_remove($kernel,$glimit);
-
+				# If this attribute in the override is set, then lets check it
+				if (defined($override->{$attr}) && $override->{$attr} ne "") {
+					# Check for match or mismatch
+					if (defined($candidate->{$attr}) && $candidate->{$attr} eq $override->{$attr}) {
+						$numMatches++;
 					} else {
-						$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Limit '$climit->{'Username'}' [$lid], limit in list, but offline now and".
-								" expired, still live, waiting for shaper");
+						$numMismatches++;
 					}
 				}
 			}
 
-			# Update the limit data
-			$glimit->{'Status'} = $climit->{'Status'};
-			$glimit->{'LastUpdate'} = $climit->{'LastUpdate'};
-
-			# Set these if they exist
-			if (defined($climit->{'Expires'})) {
-				$glimit->{'Expires'} = $climit->{'Expires'};
-			}
-			if (defined($climit->{'FriendlyName'})) {
-				$glimit->{'FriendlyName'} = $climit->{'FriendlyName'};
-			}
-			if (defined($climit->{'Notes'})) {
-				$glimit->{'Notes'} = $climit->{'Notes'};
-			}
-
-			# If the group changed, re-apply the overrides
-			# Note: This MUST be done here BEFORE the changeset, so we post the shaper changes after the overrides take effect
-			if (defined($climit->{'GroupID'}) && $climit->{'GroupID'} != $glimit->{'GroupID'}) {
-				_resolve_overrides($lid);
-				$updateShaper = 1;
-			}
-			# If we need to post a shaper update, its time to calculate the changeset
-			if ($updateShaper) {
-				# Generate a changeset
-				if (my $changeset = _getAppliedLimitChangeset($glimit,$climit)) {
-					# Post it
-					$kernel->post('shaper' => 'change' => $lid => $changeset);
-				}
-			}
-
-
-		# Limit is not in the global list, must be an addition?
-		} else {
-			# We take new and online notifications the same way here if the limit is not in our global limit list already
-		   if (($climit->{'Status'} eq "new" || $climit->{'Status'} eq "online")) {
-				$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Processing new limit '$climit->{'Username'}' [$lid]");
-
-				my $updateShaper = 0;
-
-				# Initialize the IP map if the interface group ID hash is undefined
-				if (!defined($limitIPMap->{$climit->{'InterfaceGroupID'}})) {
-					$limitIPMap->{$climit->{'InterfaceGroupID'}} = { };
-				}
-
-				# We first going to look for IP conflicts...
-				my @ipLimits = keys %{$limitIPMap->{$climit->{'InterfaceGroupID'}}->{$climit->{'IP'}}};
-				if (
-					# If there is already an entry and its not us ...
-					( @ipLimits == 1 && !defined($limitIPMap->{$climit->{'InterfaceGroupID'}}->{$climit->{'IP'}}->{$lid}) )
-					# Or if there is more than 1 entry...
-					|| @ipLimits > 1
-				) {
-					# We not going to post this to the shaper, but we are going to override the status
-					$climit->{'Status'} = 'conflict';
-					$climit->{'_shaper.state'} = SHAPER_NOTLIVE;
-					# Give a bit of info
-					my @conflictUsernames;
-					foreach my $lid (@ipLimits) {
-						push(@conflictUsernames,$limits->{$lid}->{'Username'});
-					}
-					# Output log line
-					$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process limit '".$climit->{'Username'}."' IP '$climit->{'IP'}' conflicts with limits '".
-							join(',',@conflictUsernames)."'.");
-
-					# We cannot trust shaping when there is more than 1 limit on the IP, so we going to remove all limits with this
-					# IP from the shaper below...
-					foreach my $lid2 (@ipLimits) {
-						# Check if the limit has been setup already (all but the limit we busy with, as its setup below)
-						if (defined($limitIPMap->{$climit->{'InterfaceGroupID'}}->{$climit->{'IP'}}->{$lid2})) {
-							my $glimit2 = $limits->{$lid2};
-
-							# If the limit is active or pending on the shaper, remove it
-							if ($glimit2->{'_shaper.state'} == SHAPER_LIVE || $glimit2->{'_shaper.state'} == SHAPER_PENDING) {
-								$logger->log(LOG_WARN,"[CONFIGMANAGER] Removing conflicted limit '".$glimit2->{'Username'}."' [$lid2] from shaper'");
-								# Post removal to shaper, these are already in the shaper, so this is why we do it here and not after the overrides below
-								$kernel->post('shaper' => 'remove' => $lid2);
-								# Update that we're offline directly to global limit table
-								$glimit2->{'Status'} = 'conflict';
-							}
-						}
-					}
-
-				# All looks good, no conflicts, we're set to add this limit!
-				} else {
-					# Post to the limit to the shaper
-					$climit->{'_shaper.state'} = SHAPER_PENDING;
-					$updateShaper = 1;
-				}
-
-				# Set this UID as using this IP
-				$limitIPMap->{$climit->{'InterfaceGroupID'}}->{$climit->{'IP'}}->{$lid} = 1;
-
-				# This is now live
-				$limits->{$lid} = $climit;
-
-				# Resolve this limit's overrides, this works on the GLOBAL $limits!!
-				_resolve_overrides($lid);
-
-				# Just to keep things in the right order
-				if ($updateShaper) {
-					# We need a hack to blank the current shaping items so we can generate an initial changeset below
-					# dlimit - all attrs,  climit - our own limit, with attrs removed
-					my $dlimit; %{$dlimit} = %{$climit};
-					foreach my $item (LIMIT_CHANGESET_ATTRIBUTES) {
-						delete($climit->{$item});
-					}
-					my $changeset = _getAppliedLimitChangeset($climit,$dlimit);
-					$kernel->post('shaper' => 'add' => $lid => $changeset);
-				}
-
-			# Limit is not in our list and this is an unknown state we're trasitioning to
+			# Setup the match list with what was matched
+			if ($numMatches && !$numMismatches) {
+				$matchList->{$pid}->{$oid} = $numMatches;
 			} else {
-				$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Ignoring limit '$climit->{'Username'}' [$lid] state '$climit->{'Status'}', not in our".
-						" global list");
-			}
-
-			# Remove from change queue
-			delete($limitChangeQueue->{$lid});
-		}
-
-		# Well, we changed something...
-		$stateChanged++;
-	}
-
-
-}
-
-
-# Process cleanup of limits
-sub _process_limit_cleanup
-{
-	my $kernel = shift;
-
-
-	my $now = time();
-
-	# Loop with limits and check for expired entries
-	while ((my $lid, my $glimit) = each(%{$limits})) {
-		# Check for expired limits
-		if ($glimit->{'Expires'} && $glimit->{'Expires'} < $now) {
-			$logger->log(LOG_INFO,"[CONFIGMANAGER] Limit '$glimit->{'Username'}' has expired, marking offline");
-			# Looks like this limit has expired?
-			my $climit = {
-				'Username' => $glimit->{'Username'},
-				'IP' => $glimit->{'IP'},
-				'Status' => 'offline',
-				'LastUpdate' => $glimit->{'LastUpdate'},
-			};
-			# Add to change queue
-			$limitChangeQueue->{$lid} = $climit;
-		}
-	}
-}
-
-
-# Do the actual override queue processing
-# This function returns 1 if it made a change, 0 if not
-sub _process_override_change_queue
-{
-	my $kernel = shift;
-
-
-	# Now
-	my $now = time();
-
-	# Overrides changed
-	my $overridesChanged = 0;
-
-	# Loop with override change queue
-	foreach my $oid (keys %{$overrideChangeQueue}) {
-		my $coverride = $overrideChangeQueue->{$oid};
-
-		# Blank attributes not specified
-		foreach my $attr (OVERRIDE_MATCH_ATTRIBUTES) {
-			if (!defined($coverride->{$attr})) {
-				$coverride->{$attr} = '';
+				$matchList->{$pid}->{$oid} = undef;
 			}
 		}
-
-		# This is now live
-		$overrides->{$oid} = $coverride;
-		$overrideMap->{$coverride->{'GroupID'}}->{$coverride->{'Username'}}->{$coverride->{'IP'}} = $coverride;
-
-		# Remove from change queue
-		delete($overrideChangeQueue->{$oid});
-
-		$overridesChanged = 1;
-
-		# Something changed...
-		$stateChanged++;
 	}
 
-	return $overridesChanged;
-}
+	# Loop with the match list
+	foreach my $pid (keys %{$matchList}) {
+		my $pool = $pools->{$pid};
+		# Original Effective pool
+		my $oePool = getEffectivePool($pid);
 
+		# Loop with overrides for this pool
+		foreach my $oid (keys %{$matchList->{$pid}}) {
+			my $override = $overrides->{$oid};
 
-# Process cleanup of overrides
-# This function returns 1 if it made a change, 0 if not
-sub _process_override_cleanup
-{
-	my $overridesChanged = 0;
+			# If we have a match, record it in pools & overrides
+			if (defined($matchList->{$pid}->{$oid})) {
 
+				# Setup trakcing of what is applied to what
+				$overrides->{$oid}->{'.applied_pools'}->{$pid} = $matchList->{$pid}->{$oid};
+				$pools->{$pid}->{'.applied_overrides'}->{$oid} = $matchList->{$pid}->{$oid};
 
-	my $now = time();
+				$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Override '%s' [%s] applied to pool '%s' [%s]",
+						$override->{'FriendlyName'},
+						$override->{'ID'},
+						$pool->{'Identifier'},
+						$pool->{'ID'}
+				);
 
-	# Check for expired overides
-	while ((undef, my $goverride) = each(%{$overrides})) {
-		# Check for expired overrides
-		if ($goverride->{'Expires'} && $goverride->{'Expires'} < $now) {
-			$logger->log(LOG_INFO,"[CONFIGMANAGER] Override 'Username: %s, IP: %s' has expired, removing",
-				$goverride->{'Username'},
-				$goverride->{'IP'},
-			);
+			# We didn't match, but we may of matched before?
+			} else {
+				# There was an override before, so something changed now that there is none
+				if (defined($pools->{$pid}->{'.applied_overrides'}->{$oid})) {
+					# Remove overrides
+					delete($pools->{$pid}->{'.applied_overrides'}->{$oid});
+					delete($overrides->{$oid}->{'.applied_pools'}->{$pid});
 
-			# Remove the override
-			_process_override_remove($goverride);
+					$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Override '%s' no longer applies to pool '%s' [%s]",
+							$override->{'ID'},
+							$pool->{'Identifier'},
+							$pool->{'ID'}
+					);
+				}
+			}
+		}
+		# New Effective pool
+		my $nePool = getEffectivePool($pid);
 
-			$overridesChanged = 1;
+		# Get changes between effective pool states
+		my $poolChanges = getHashChanges($oePool,$nePool,[OVERRIDE_CHANGESET_ATTRIBUTES]);
+
+		# If there were pool changes, trigger a pool update
+		if (keys %{$poolChanges} > 0) {
+			# If the pool is currently online and live, trigger a change
+			if ($pool->{'Status'} == CFGM_ONLINE && getPoolShaperState($pid) == SHAPER_LIVE) {
+				$pool->{'Status'} = CFGM_CHANGED;
+				$poolChangeQueue->{$pool->{'ID'}} = $pool;
+			}
 		}
 	}
-
-	return $overridesChanged;
 }
 
 
-
-# This function calls _resolve_overrides() plus posts events to the shaper
-sub _resolve_overrides_and_post
+# Remove pool override information
+sub _override_remove_pool
 {
-	my ($kernel,$lid) = @_;
+	my $pid = shift;
 
 
-	# Check if any items actually were changed
-	my @changed;
-	if (!(@changed = _resolve_overrides())) {
+	if (!isPoolIDValid($pid)) {
 		return;
 	}
 
-	# If so generate a changeset, with no limit change (resolves overrides internally) and post it
-	foreach my $lid (@changed) {
-		# Get our changeset, with no limit applied to it
-		if (my $changeset = _getAppliedLimitChangeset($limits->{$lid},{})) {
-			# Post to shaper
-			$kernel->post('shaper' => 'change' => $lid => $changeset);
+	my $pool = $pools->{$pid};
+
+	# Remove pool from overrides if there are any
+	if (defined($pool->{'.applied_overrides'})) {
+		foreach my $oid (keys %{$pool->{'.applied_overrides'}}) {
+			delete($overrides->{$oid}->{'.applied_pools'}->{$pool->{'ID'}});
 		}
 	}
-}
-
-
-# Resolve all overrides and post limit changes if any match
-# We take 1 optional argument, which is a single limit to process
-sub _resolve_overrides
-{
-	my $lid = shift;
-
-
-	# Hack to intercept and create a single element hash
-	my $limitHash;
-	if (defined($lid)) {
-		$limitHash->{$lid} = $limits->{$lid};
-	} else {
-		$limitHash = $limits;
-	}
-
-	# Loop with all limits, keep a list of lid's updated
-	my @overridden;
-	while ((my $lid, my $limit) = each(%{$limitHash})) {
-		my $overrideResult;
-
-		# Loop with the attributes in matching order
-		foreach my $attrSet (OVERRIDE_MATCH_CRITERIA) {
-			# Start with a blank match
-			my $criteria = { 'GroupID' => '', 'Username' => '', 'IP' => '' };
-
-			# Build match from user
-			foreach my $attr (@{$attrSet}) {
-				if ($attr ne '') {
-					$criteria->{$attr} = $limit->{$attr};
-				}
-			}
-
-			# Check for match
-			if (
-					defined($overrideMap->{$criteria->{'GroupID'}}) && defined($overrideMap->{$criteria->{'GroupID'}}->{$criteria->{'Username'}}) &&
-					defined(my $moverride = $overrideMap->{$criteria->{'GroupID'}}->{$criteria->{'Username'}}->{$criteria->{'IP'}})
-			) {
-				# Apply attributes to override result
-				foreach my $attr (OVERRIDE_CHANGESET_ATTRIBUTES) {
-					# Merge in attribute if the matched override has it set
-					if (defined($moverride->{$attr})) {
-						$overrideResult->{$attr} = $moverride->{$attr};
-					}
-				}
-			}
-		}
-
-		# if we have an override result, it means we matched something
-		# If we don't have an overrideResult, and we had one, it means something changed too
-		if (defined($overrideResult) || defined($limit->{'override'})) {
-			push(@overridden,$lid);
-		}
-
-		$limit->{'override'} = $overrideResult;
-	}
-
-	return @overridden;
 }
 
 
@@ -1909,13 +2951,20 @@ sub _load_statefile
 	# Pull in a hash for our statefile
 	my %stateHash;
 	if (! tie %stateHash, 'Config::IniFiles', ( -file => $config->{'statefile'} )) {
-		my $reason = $1 || "Config file blank?";
-		$logger->log(LOG_ERR,"[CONFIGMANAGER] Failed to open statefile '".$config->{'statefile'}."': $reason");
-		# NK: Breaks load on blank file
+		# Check if we got errors, if we did use them for our reason
+		my @errors = @Config::IniFiles::errors;
+		my $reason = $1 || join('; ',@errors) || "Config file blank?";
+
+		$logger->log(LOG_ERR,"[CONFIGMANAGER] Failed to open statefile '%s': %s",$config->{'statefile'},$reason);
+
 		# Set it to undef so we don't overwrite it...
-		#$config->{'statefile'} = undef;
+		if (@errors) {
+			$config->{'statefile'} = undef;
+		}
+
 		return;
 	}
+
 	# Grab the object handle
 	my $state = tied( %stateHash );
 
@@ -1923,40 +2972,60 @@ sub _load_statefile
 	foreach my $section ($state->GroupMembers('override')) {
 		my $override = $stateHash{$section};
 
-		# Our user override
+		# Loop with the persistent attributes and create our hash
 		my $coverride;
 		foreach my $attr (OVERRIDE_PERSISTENT_ATTRIBUTES) {
 			if (defined($override->{$attr})) {
+				# If its an array, join all the items
+				if (ref($override->{$attr}) eq "ARRAY") {
+					$override->{$attr} = join("\n",@{$override->{$attr}});
+				}
 				$coverride->{$attr} = $override->{$attr};
 			}
 		}
 
 		# Proces this override
-		_process_override_change($coverride);
+		createOverride($coverride);
 	}
 
-	# Loop with persistent limits
-	foreach my $section ($state->GroupMembers('persist')) {
-		my $user = $stateHash{$section};
+	# Loop with pools
+	foreach my $section ($state->GroupMembers('pool')) {
+		my $pool = $stateHash{$section};
 
-		# User to push through to process change
-		my $cuser;
-		foreach my $attr (LIMIT_PERSISTENT_ATTRIBUTES) {
-			if (defined($user->{$attr})) {
-				$cuser->{$attr} = $user->{$attr};
+		# Loop with the attributes to create the hash
+		my $cpool;
+		foreach my $attr (POOL_PERSISTENT_ATTRIBUTES) {
+			if (defined($pool->{$attr})) {
+				# If its an array, join all the items
+				if (ref($pool->{$attr}) eq "ARRAY") {
+					$pool->{$attr} = join("\n",@{$pool->{$attr}});
+				}
+				$cpool->{$attr} = $pool->{$attr};
 			}
 		}
-		# This is a new entry
-		$cuser->{'Status'} = 'new';
 
-		# Check username & IP are defined
-		if (!defined($cuser->{'Username'}) || !defined($cuser->{'IP'})) {
-			$logger->log(LOG_WARN,"[CONFIGMANAGER] Failed to load persistent user with no username or IP '$section'");
-			next;
+		# Process this pool
+		createPool($cpool);
+	}
+
+	# Loop with pool members
+	foreach my $section ($state->GroupMembers('pool_member')) {
+		my $poolMember = $stateHash{$section};
+
+		# Loop with the attributes to create the hash
+		my $cpoolMember;
+		foreach my $attr (POOLMEMBER_PERSISTENT_ATTRIBUTES) {
+			if (defined($poolMember->{$attr})) {
+				# If its an array, join all the items
+				if (ref($poolMember->{$attr}) eq "ARRAY") {
+					$poolMember->{$attr} = join("\n",@{$poolMember->{$attr}});
+				}
+				$cpoolMember->{$attr} = $poolMember->{$attr};
+			}
 		}
 
-		# Process this user
-		_process_limit_change($cuser);
+		# Process this pool member
+		createPoolMember($cpoolMember);
 	}
 }
 
@@ -1978,8 +3047,8 @@ sub _write_statefile
 	}
 
 	# Only write out if we actually have limits & overrides, else we may of crashed?
-	if (keys %{$limits} < 1 && keys %{$overrides} < 1) {
-		$logger->log(LOG_WARN,"[CONFIGMANAGER] Not writing state file as there are no active limits or overrides");
+	if (!(keys %{$pools}) && !(keys %{$overrides})) {
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Not writing state file as there are no active pools or overrides");
 		return;
 	}
 
@@ -1990,46 +3059,65 @@ sub _write_statefile
 	# Create new state file object
 	my $state = new Config::IniFiles();
 
-	# Loop with persistent limits, these are limits with expires = 0
-	while ((undef, my $limit) = each(%{$limits})) {
-		# Skip over dynamic entries, we only want persistent ones unless we doing a full write
-		next if (!$fullWrite && $limit->{'Source'} eq "plugin.radius");
-
-		# Pull in the section name
-		my $section = "persist " . $limit->{'Username'};
-
-		# Add a new section for this user
-		$state->AddSection($section);
-		# Items we want for persistent entries
-		foreach my $pItem (LIMIT_PERSISTENT_ATTRIBUTES) {
-			# Set items up
-			if (defined(my $value = $limit->{$pItem})) {
-				$state->newval($section,$pItem,$value);
-			}
-		}
-	}
-
 	# Loop with overrides
-	foreach my $oid (keys %{$overrides}) {
-		# Pull in the section name
+	while ((my $oid, my $override) = each(%{$overrides})) {
+		# Create a section name
 		my $section = "override " . $oid;
 
-		# Add a new section for this user
+		# Add a section for this override
 		$state->AddSection($section);
-		# Items we want for override entries
-		foreach my $pItem (OVERRIDE_PERSISTENT_ATTRIBUTES) {
+		# Attributes we want to save for this override
+		foreach my $attr (OVERRIDE_PERSISTENT_ATTRIBUTES) {
 			# Set items up
-			if (defined(my $value = $overrides->{$oid}->{$pItem})) {
-				$state->newval($section,$pItem,$value);
+			if (defined(my $value = $overrides->{$oid}->{$attr})) {
+				$state->newval($section,$attr,$value);
 			}
 		}
 
+	}
+
+	# Loop with pools
+	while ((my $pid, my $pool) = each(%{$pools})) {
+		# Skip over dynamic entries, we only want persistent ones unless we doing a full write
+		next if (!$fullWrite && $pool->{'Source'} eq "plugin.radius");
+
+		# Create a section name
+		my $section = "pool " . $pid;
+
+		# Add a section for this pool
+		$state->AddSection($section);
+		# Persistent attributes we want
+		foreach my $attr (POOL_PERSISTENT_ATTRIBUTES) {
+			# Set items up
+			if (defined(my $value = $pool->{$attr})) {
+				$state->newval($section,$attr,$value);
+			}
+		}
+
+		# Save pool members too
+		foreach my $pmid (keys %{$poolMemberMap->{$pid}}) {
+			# Create a section name for the pool member
+			$section = "pool_member " . $pmid;
+
+			# Add a new section for this pool member
+			$state->AddSection($section);
+
+			my $poolMember = $poolMembers->{$pmid};
+
+			# Items we want for persistent entries
+			foreach my $attr (POOLMEMBER_PERSISTENT_ATTRIBUTES) {
+				# Set items up
+				if (defined(my $value = $poolMember->{$attr})) {
+					$state->newval($section,$attr,$value);
+				}
+			}
+		}
 	}
 
 	# Check for an error
 	my $newFilename = $config->{'statefile'}.".new";
 	if (!defined($state->WriteConfig($newFilename))) {
-		$logger->log(LOG_ERR,"[CONFIGMANAGER] Failed to write temporary statefile '$newFilename': $!");
+		$logger->log(LOG_ERR,"[CONFIGMANAGER] Failed to write temporary statefile '%s': %s",$newFilename,$!);
 		return;
 	}
 
@@ -2038,13 +3126,13 @@ sub _write_statefile
 	if (-f $config->{'statefile'}) {
 		# Check if we could rename/move
 		if (!rename($config->{'statefile'},$bakFilename)) {
-			$logger->log(LOG_ERR,"[CONFIGMANAGER] Failed to rename '%s' to '$bakFilename': $!",$config->{'statefile'});
+			$logger->log(LOG_ERR,"[CONFIGMANAGER] Failed to rename '%s' to '%s': %s",$config->{'statefile'},$bakFilename,$!);
 			return;
 		}
 	}
 	# Move the new filename in place
 	if (!rename($newFilename,$config->{'statefile'})) {
-		$logger->log(LOG_ERR,"[CONFIGMANAGER] Failed to rename '$newFilename' to '%s': $!",$config->{'statefile'});
+		$logger->log(LOG_ERR,"[CONFIGMANAGER] Failed to rename '%s' to '%s': %s",$newFilename,$config->{'statefile'},$!);
 		return;
 	}
 
