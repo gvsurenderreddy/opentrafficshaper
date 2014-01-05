@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 # Main OpenTrafficShaper program
-# Copyright (C) 2007-2013, AllWorldIT
-# 
+# Copyright (C) 2007-2014, AllWorldIT
+#
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
@@ -76,7 +76,7 @@ exit;
 # Function to display banner
 sub displayBanner
 {
-	$logger->log(LOG_NOTICE,"[MAIN] OpenTrafficShaper v".VERSION." - Copyright (c) 2007-2013, AllWorldIT");
+	$logger->log(LOG_NOTICE,"[MAIN] OpenTrafficShaper v%s - Copyright (c) 2007-2014, AllWorldIT",VERSION);
 }
 
 
@@ -232,7 +232,7 @@ sub init
 		plugin_register($pluginName,0);
 	}
 
-	$logger->log(LOG_INFO,"[MAIN] Plugins initialized.");
+	$logger->log(LOG_INFO,"[MAIN] Plugins initialized");
 }
 
 # Function to start things up
@@ -266,7 +266,7 @@ sub daemonize {
 	open STDOUT, '> /dev/null'
 			or die "Can't open stdout log: $!";
 
-	defined(my $pid = fork) 
+	defined(my $pid = fork)
 			or die "Can't fork: $!";
 
 	exit if $pid;
@@ -277,7 +277,7 @@ sub daemonize {
 			print(FH $$);
 			close(FH);
 		} else {
-			$logger->log(LOG_WARN,"[MAIN] Unable to write PID to '".$globals->{'config'}->{'pid_file'}."': $!");
+			$logger->log(LOG_WARN,"[MAIN] Unable to write PID to '%s': %s",$globals->{'config'}->{'pid_file'},$!);
 		}
 	}
 
