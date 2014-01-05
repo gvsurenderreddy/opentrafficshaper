@@ -1,6 +1,6 @@
 # OpenTrafficShaper Plugin Handler
-# Copyright (C) 2007-2013, AllWorldIT
-# 
+# Copyright (C) 2007-2014, AllWorldIT
+#
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
@@ -65,9 +65,9 @@ sub plugin_register
 	# System plugins are in the top dir
 	my $package;
 	if ($systemPlugin) {
-		$package = "opentrafficshaper::plugins::${packageName}";
+		$package = sprintf("opentrafficshaper::plugins::%s",$packageName);
 	} else {
-		$package = "opentrafficshaper::plugins::${packageName}::${pluginName}";
+		$package = sprintf("opentrafficshaper::plugins::%s::%s",$packageName,$pluginName);
 	}
 
 	# Core configuration manager
@@ -79,12 +79,12 @@ sub plugin_register
 		if ($@ || (defined($res) && $res != 0)) {
 			# Check if the error is critical or not
 			if ($systemPlugin) {
-				$logger->log(LOG_ERR,"[PLUGINS] Error loading plugin '$pluginName', things WILL BREAK! ($@)");
+				$logger->log(LOG_ERR,"[PLUGINS] Error loading plugin '%s', things WILL BREAK! (%s)",$pluginName,$@);
 			} else {
-				$logger->log(LOG_WARN,"[PLUGINS] Error loading plugin '$pluginName' ($@)");
+				$logger->log(LOG_WARN,"[PLUGINS] Error loading plugin '%s' (%s)",$pluginName,$@);
 			}
 		} else {
-			$logger->log(LOG_DEBUG,"[PLUGINS] Plugin '$pluginName' loaded.");
+			$logger->log(LOG_DEBUG,"[PLUGINS] Plugin '%s' loaded.",$pluginName);
 		}
 	}
 }
@@ -99,10 +99,10 @@ sub init
 }
 
 
-
 #
 # Internal functions
 #
+
 
 # Register plugin info
 sub _plugin_register {
@@ -113,7 +113,7 @@ sub _plugin_register {
 
 	# If no info, return
 	if (!defined($pluginInfo)) {
-		$logger->log(LOG_WARN,"[MAIN] Plugin info not found for plugin => $pluginName");
+		$logger->log(LOG_WARN,"[MAIN] Plugin info not found for plugin => %s",$pluginName);
 		return -1;
 	}
 
@@ -125,7 +125,11 @@ sub _plugin_register {
 			my $found = isPluginLoaded($require);
 			# If still not found ERR out
 			if (!$found) {
-				$logger->log(LOG_ERR,"[MAIN] Dependency '$require' for plugin '$pluginName' NOT MET. Make sure its loaded before '$pluginName'");
+				$logger->log(LOG_ERR,"[MAIN] Dependency '%s' for plugin '%s' NOT MET. Make sure its loaded before '%s'",
+						$require,
+						$pluginName,
+						$pluginName
+				);
 				last;
 			}
 		}
@@ -139,11 +143,13 @@ sub _plugin_register {
 			$pluginInfo->{'Plugin'} = $pluginName;
 			$globals->{'plugins'}->{$pluginName} = $pluginInfo;
 		} else {
-			$logger->log(LOG_ERR,"[MAIN] Intialization of plugin failed => $pluginName");
+			$logger->log(LOG_ERR,"[MAIN] Intialization of plugin failed => %s",$pluginName);
 		}
 	}
 
 	return 0;
 }
 
+
 1;
+# vim: ts=4
