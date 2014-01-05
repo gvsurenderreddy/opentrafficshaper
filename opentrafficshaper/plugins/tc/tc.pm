@@ -1,5 +1,5 @@
 # OpenTrafficShaper Linux tc traffic shaping
-# Copyright (C) 2007-2013, AllWorldIT
+# Copyright (C) 2007-2014, AllWorldIT
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -29,15 +29,31 @@ use opentrafficshaper::logger;
 use opentrafficshaper::utils;
 
 use opentrafficshaper::plugins::configmanager qw(
-		getLimit getLimitAttribute setLimitAttribute removeLimitAttribute
-		getLimitTxInterface getLimitRxInterface getLimitMatchPriority
+		getPool
+		getPoolAttribute
+		setPoolAttribute
+		removePoolAttribute
+		getPoolTxInterface
+		getPoolRxInterface
+		getPoolShaperState
+		setPoolShaperState
 
-		getTrafficPriority
+		getEffectivePool
 
-		getShaperState setShaperState
-		getInterfaces getInterfaceRate getInterfaceClasses getInterfaceDefaultPool
+		getPoolMember
+		setPoolMemberAttribute
+		getPoolMemberAttribute
+		removePoolMemberAttribute
+		getPoolMemberMatchPriority
+		setPoolMemberShaperState
+		getPoolMemberShaperState
 
-		isTrafficClassValid
+		getTrafficClassPriority
+
+		getInterfaces
+		getInterfaceRate
+		getInterfaceTrafficClasses
+		getInterfaceDefaultPool
 );
 
 
@@ -51,24 +67,17 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 );
 
 use constant {
-	VERSION => '0.0.2',
+	VERSION => '0.1.2',
 
 	# 5% of a link can be used for very high priority traffic
 	PROTO_RATE_LIMIT => 5,
-	PROTO_RATE_BURST_MIN => 16,  # With a minimum burst of 8KiB
-	PROTO_RATE_BURST_MAXM => 1.5,  # Multiplier for burst min to get to burst max
+	PROTO_RATE_BURST_MIN => 16, # With a minimum burst of 8KiB
+	PROTO_RATE_BURST_MAXM => 1.5, # Multiplier for burst min to get to burst max
 
 	# High priority traffic gets the first 20% of the bandidth to itself
 	PRIO_RATE_LIMIT => 20,
-	PRIO_RATE_BURST_MIN => 32,  # With a minimum burst of 40KiB
-	PRIO_RATE_BURST_MAXM => 1.5,  # Multiplier for burst min to get to burst max
-
-	TC_CLASS_BASE => 10,
-	TC_CLASS_LIMIT_BASE => 100,
-
-	TC_PRIO_BASE => 10,
-
-	TC_FILTER_LIMIT_BASE => 100,
+	PRIO_RATE_BURST_MIN => 32, # With a minimum burst of 40KiB
+	PRIO_RATE_BURST_MAXM => 1.5, # Multiplier for burst min to get to burst max
 
 	TC_ROOT_CLASS => 1,
 };
@@ -112,16 +121,16 @@ sub plugin_init
 	# Setup our environment
 	$logger = $globals->{'logger'};
 
-	$logger->log(LOG_NOTICE,"[TC] OpenTrafficShaper tc Integration v".VERSION." - Copyright (c) 2013, AllWorldIT");
+	$logger->log(LOG_NOTICE,"[TC] OpenTrafficShaper tc Integration v%s - Copyright (c) 2007-2014, AllWorldIT",VERSION);
 
 
 	# Grab some of our config we need
 	if (defined(my $proto = $globals->{'file.config'}->{'plugin.tc'}->{'protocol'})) {
-		$logger->log(LOG_INFO,"[TC] Set protocol to '$proto'");
+		$logger->log(LOG_INFO,"[TC] Set protocol to '%s'",$proto);
 		$config->{'ip_protocol'} = $proto;
 	}
 	if (defined(my $offset = $globals->{'file.config'}->{'plugin.tc'}->{'iphdr_offset'})) {
-		$logger->log(LOG_INFO,"[TC] Set IP header offset to '$offset'");
+		$logger->log(LOG_INFO,"[TC] Set IP header offset to '%s'",$offset);
 		$config->{'iphdr_offset'} = $offset;
 	}
 
@@ -131,7 +140,7 @@ sub plugin_init
 	# Loop with the configured interfaces and initialize them
 	foreach my $interface (@{getInterfaces()})	{
 		# Initialize interface
-		$logger->log(LOG_INFO,"[TC] Queuing tasks to initialize '$interface'");
+		$logger->log(LOG_INFO,"[TC] Queuing tasks to initialize '%s'",$interface);
 		_tc_iface_init($changeSet,$interface);
 	}
 	_task_add_to_queue($changeSet);
@@ -140,33 +149,37 @@ sub plugin_init
 	# This session is our main session, its alias is "shaper"
 	POE::Session->create(
 		inline_states => {
-			_start => \&session_start,
-			_stop => \&session_stop,
+			_start => \&_session_start,
+			_stop => \&_session_stop,
 
-			add => \&do_add,
-			change => \&do_change,
-			remove => \&do_remove,
+			pool_add => \&_session_pool_add,
+			pool_remove => \&_session_pool_remove,
+			pool_change => \&_session_pool_change,
+
+			poolmember_add => \&_session_poolmember_add,
+			poolmember_remove => \&_session_poolmember_remove,
 		}
 	);
 
 	# This is our session for communicating directly with tc, its alias is _tc
 	POE::Session->create(
 		inline_states => {
-			_start => \&task_session_start,
+			_start => \&_task_session_start,
 			_stop => sub { },
+			# Signals
+			_SIGCHLD => \&_task_SIGCHLD,
+			_SIGINT => \&_task_SIGINT,
 
 			# Public'ish
-			queue => \&task_add,
+			queue => \&_task_queue,
+
 			# Internal
-			task_child_stdout => \&task_child_stdout,
-			task_child_stderr => \&task_child_stderr,
-			task_child_stdin => \&task_child_stdin,
-			task_child_close => \&task_child_close,
-			task_child_error => \&task_child_error,
-			task_run_next => \&task_run_next,
-			# Signals
-			handle_SIGCHLD => \&task_handle_SIGCHLD,
-			handle_SIGINT => \&task_handle_SIGINT,
+			_task_child_stdout => \&_task_child_stdout,
+			_task_child_stderr => \&_task_child_stderr,
+			_task_child_stdin => \&_task_child_stdin,
+			_task_child_close => \&_task_child_close,
+			_task_child_error => \&_task_child_error,
+			_task_run_next => \&_task_run_next,
 		}
 	);
 
@@ -182,7 +195,7 @@ sub plugin_start
 
 
 # Initialize this plugins main POE session
-sub session_start
+sub _session_start
 {
 	my ($kernel,$heap) = @_[KERNEL,HEAP];
 
@@ -195,7 +208,7 @@ sub session_start
 
 
 # Initialize this plugins main POE session
-sub session_stop
+sub _session_stop
 {
 	my ($kernel,$heap) = @_[KERNEL,HEAP];
 
@@ -215,287 +228,467 @@ sub session_stop
 }
 
 
-# Add event for tc
-sub do_add
+# Event handler for adding a pool
+sub _session_pool_add
 {
-	my ($kernel,$heap,$lid,$changes) = @_[KERNEL, HEAP, ARG0, ARG1];
+	my ($kernel,$heap,$pid) = @_[KERNEL, HEAP, ARG0];
+
+
+	# Grab pool
+	my $pool;
+	if (!defined($pool = getPool($pid))) {
+		$logger->log(LOG_ERR,"[TC] Shaper 'remove' event with non existing pool '%s'",$pid);
+		return;
+	}
+
+	$logger->log(LOG_INFO,"[TC] Add pool '%s' to interface group '%s' [%s]",
+			$pool->{'Identifier'},
+			$pool->{'InterfaceGroupID'},
+			$pool->{'ID'}
+	);
+
+	# Grab our effective pool
+	my $effectivePool = getEffectivePool($pool->{'ID'});
 
 	my $changeSet = TC::ChangeSet->new();
 
+	# Grab some things we need from the main pool
+	my $txInterface = getPoolTxInterface($pool->{'ID'});
+	my $rxInterface = getPoolRxInterface($pool->{'ID'});
+	# Grab effective config
+	my $classID = $effectivePool->{'ClassID'};
+	my $trafficLimitTx = $effectivePool->{'TrafficLimitTx'};
+	my $trafficLimitTxBurst = $effectivePool->{'TrafficLimitTxBurst'};
+	my $trafficLimitRx = $effectivePool->{'TrafficLimitRx'};
+	my $trafficLimitRxBurst = $effectivePool->{'TrafficLimitRxBurst'};
+	my $trafficPriority = getTrafficClassPriority($effectivePool->{'ClassID'});
 
-	# Pull in limit
-	my $limit;
-	if (!defined($limit = getLimit($lid))) {
-		$logger->log(LOG_ERR,"[TC] Shaper 'add' event with non existing limit '$lid'");
+	# Get the Tx traffic classes TC class
+	my $tcClass_TxTrafficClass = _getTcClassFromTrafficClassID($txInterface,$classID);
+	# Generate our pools Tx TC class
+	my $tcClass_TxPool = _reserveTcClassByPoolID($txInterface,$pool->{'ID'});
+	# Add the main Tx TC class for this pool
+	_tc_class_add($changeSet,$txInterface,TC_ROOT_CLASS,$tcClass_TxTrafficClass,$tcClass_TxPool,$trafficLimitTx,
+			$trafficLimitTxBurst,$trafficPriority
+	);
+	# Add Tx TC optimizations
+	_tc_class_optimize($changeSet,$txInterface,$tcClass_TxPool,$trafficLimitTx);
+	# Set Tx TC class
+	setPoolAttribute($pool->{'ID'},'tc.txclass',$tcClass_TxPool);
+
+	# Get the Rx traffic classes TC class
+	my $tcClass_RxTrafficClass = _getTcClassFromTrafficClassID($rxInterface,$classID);
+	# Generate our pools Rx TC class
+	my $tcClass_RxPool = _reserveTcClassByPoolID($rxInterface,$pool->{'ID'});
+	# Add the main Rx TC class for this pool
+	_tc_class_add($changeSet,$rxInterface,TC_ROOT_CLASS,$tcClass_RxTrafficClass,$tcClass_RxPool,$trafficLimitRx,
+			$trafficLimitRxBurst,$trafficPriority
+	);
+	# Add Rx TC optimizations
+	_tc_class_optimize($changeSet,$rxInterface,$tcClass_RxPool,$trafficLimitRx);
+	# Set Rx TC
+	setPoolAttribute($pool->{'ID'},'tc.rxclass',$tcClass_RxPool);
+
+	# Post changeset
+	$kernel->post("_tc" => "queue" => $changeSet);
+
+	# Set current live values
+	setPoolAttribute($pool->{'ID'},'shaper.live.ClassID',$classID);
+	setPoolAttribute($pool->{'ID'},'shaper.live.TrafficLimitTx',$trafficLimitTx);
+	setPoolAttribute($pool->{'ID'},'shaper.live.TrafficLimitTxBurst',$trafficLimitTxBurst);
+	setPoolAttribute($pool->{'ID'},'shaper.live.TrafficLimitRx',$trafficLimitRx);
+	setPoolAttribute($pool->{'ID'},'shaper.live.TrafficLimitRxBurst',$trafficLimitRxBurst);
+
+	# Mark as live
+	setPoolShaperState($pool->{'ID'},SHAPER_LIVE);
+}
+
+
+# Event handler for removing a pool
+sub _session_pool_remove
+{
+	my ($kernel, $pid) = @_[KERNEL, ARG0];
+
+
+	my $changeSet = TC::ChangeSet->new();
+
+	# Pull in pool
+	my $pool;
+	if (!defined($pool = getPool($pid))) {
+		$logger->log(LOG_ERR,"[TC] Shaper 'remove' event with non existing pool '%s'",$pid);
 		return;
 	}
-	$logger->log(LOG_INFO,"[TC] Add '$limit->{'Username'}' [$lid]");
+
+	# Make sure its not NOTLIVE
+	if (getPoolShaperState($pid) == SHAPER_NOTLIVE) {
+		$logger->log(LOG_WARN,"[TC] Ignoring remove for pool '%s' [%s]",
+				$pool->{'Identifier'},
+				$pool->{'ID'}
+		);
+		return;
+	}
+
+	$logger->log(LOG_INFO,"[TC] Removing pool '%s' [%s]",
+			$pool->{'Identifier'},
+			$pool->{'ID'}
+	);
+
+	# Grab our interfaces
+	my $txInterface = getPoolTxInterface($pool->{'ID'});
+	my $rxInterface = getPoolRxInterface($pool->{'ID'});
+	# Grab the traffic class from the pool
+	my $txPoolTcClass = getPoolAttribute($pool->{'ID'},'tc.txclass');
+	my $rxPoolTcClass = getPoolAttribute($pool->{'ID'},'tc.rxclass');
+
+	# Grab current class ID
+	my $classID = getPoolAttribute($pool->{'ID'},'shaper.live.ClassID');
+	# Grab our minor classes
+	my $txTrafficClassTcClass = _getTcClassFromTrafficClassID($txInterface,$classID);
+	my $rxTrafficClassTcClass = _getTcClassFromTrafficClassID($rxInterface,$classID);
+
+	# Clear up the class
+	$changeSet->add([
+			'/sbin/tc','class','del',
+				'dev',$txInterface,
+				'parent',"1:$txTrafficClassTcClass",
+				'classid',"1:$txPoolTcClass",
+	]);
+	$changeSet->add([
+			'/sbin/tc','class','del',
+				'dev',$rxInterface,
+				'parent',"1:$rxTrafficClassTcClass",
+				'classid',"1:$rxPoolTcClass",
+	]);
+
+	# And recycle the classs
+	_disposePoolTcClass($txInterface,$txPoolTcClass);
+	_disposePoolTcClass($rxInterface,$rxPoolTcClass);
+
+	_disposePrioTcClass($txInterface,$txPoolTcClass);
+	_disposePrioTcClass($rxInterface,$rxPoolTcClass);
+
+	# Post changeset
+	$kernel->post("_tc" => "queue" => $changeSet);
+
+	# Mark as not live
+	setPoolShaperState($pool->{'ID'},SHAPER_NOTLIVE);
+
+	# Cleanup attributes
+	removePoolAttribute($pool->{'ID'},'tc.txclass');
+	removePoolAttribute($pool->{'ID'},'tc.rxclass');
+
+	removePoolAttribute($pool->{'ID'},'shaper.live.ClassID');
+	removePoolAttribute($pool->{'ID'},'shaper.live.TrafficLimitTx');
+	removePoolAttribute($pool->{'ID'},'shaper.live.TrafficLimitTxBurst');
+	removePoolAttribute($pool->{'ID'},'shaper.live.TrafficLimitRx');
+	removePoolAttribute($pool->{'ID'},'shaper.live.TrafficLimitRxBurst');
+}
+
+
+## Event handler for changing a pool
+sub _session_pool_change
+{
+	my ($kernel, $pid) = @_[KERNEL, ARG0, ARG1];
+
+
+	# Grab pool
+	my $pool = getPool($pid);
+
+	$logger->log(LOG_INFO,"[TC] Processing changes for '%s' [%s]",$pool->{'Identifier'},$pool->{'ID'});
+
+	# Grab our effective pool
+	my $effectivePool = getEffectivePool($pool->{'ID'});
+
+	# Grab our interfaces
+	my $txInterface = getPoolTxInterface($pool->{'ID'});
+	my $rxInterface = getPoolRxInterface($pool->{'ID'});
+	# Grab the traffic class from the pool
+	my $txPoolTcClass = getPoolAttribute($pool->{'ID'},'tc.txclass');
+	my $rxPoolTcClass = getPoolAttribute($pool->{'ID'},'tc.rxclass');
+
+	# Grab effective config
+	my $classID = $effectivePool->{'ClassID'};
+	my $trafficLimitTx = $effectivePool->{'TrafficLimitTx'};
+	my $trafficLimitTxBurst = $effectivePool->{'TrafficLimitTxBurst'};
+	my $trafficLimitRx = $effectivePool->{'TrafficLimitRx'};
+	my $trafficLimitRxBurst = $effectivePool->{'TrafficLimitRxBurst'};
+	my $trafficPriority = getTrafficClassPriority($classID);
+
+	# Grab our minor classes
+	my $txTrafficClassTcClass = _getTcClassFromTrafficClassID($txInterface,$classID);
+	my $rxTrafficClassTcClass = _getTcClassFromTrafficClassID($rxInterface,$classID);
+
+	# Generate changeset
+	my $changeSet = TC::ChangeSet->new();
+
+	_tc_class_change($changeSet,$txInterface,TC_ROOT_CLASS,$txTrafficClassTcClass,$txPoolTcClass,$trafficLimitTx,
+			$trafficLimitTxBurst,$trafficPriority);
+	_tc_class_change($changeSet,$rxInterface,TC_ROOT_CLASS,$rxTrafficClassTcClass,$rxPoolTcClass,$trafficLimitRx,
+			$trafficLimitRxBurst,$trafficPriority);
+
+	# Post changeset
+	$kernel->post("_tc" => "queue" => $changeSet);
+
+	setPoolAttribute($pool->{'ID'},'shaper.live.ClassID',$classID);
+	setPoolAttribute($pool->{'ID'},'shaper.live.TrafficLimitTx',$trafficLimitTx);
+	setPoolAttribute($pool->{'ID'},'shaper.live.TrafficLimitTxBurst',$trafficLimitTxBurst);
+	setPoolAttribute($pool->{'ID'},'shaper.live.TrafficLimitRx',$trafficLimitRx);
+	setPoolAttribute($pool->{'ID'},'shaper.live.TrafficLimitRxBurst',$trafficLimitRxBurst);
+	# Mark as live
+	setPoolShaperState($pool->{'ID'},SHAPER_LIVE);
+}
+
+
+# Event handler for adding a pool member
+sub _session_poolmember_add
+{
+	my ($kernel,$heap,$pmid) = @_[KERNEL, HEAP, ARG0];
+
+
+	# Grab pool
+	my $poolMember;
+	if (!defined($poolMember = getPoolMember($pmid))) {
+		$logger->log(LOG_ERR,"[TC] Shaper 'add' event with non existing pool member '%s'",$pmid);
+		return;
+	}
+
+	$logger->log(LOG_INFO,"[TC] Add pool member '%s' to pool '%s' [%s]",
+			$poolMember->{'IPAddress'},
+			$poolMember->{'PoolID'},
+			$poolMember->{'ID'}
+	);
+
+	my $changeSet = TC::ChangeSet->new();
 
 	# Filter levels for the IP components
-	my @components = split(/\./,$limit->{'IP'});
+	my @components = split(/\./,$poolMember->{'IPAddress'});
 	my $ip1 = $components[0];
 	my $ip2 = $components[1];
 	my $ip3 = $components[2];
 	my $ip4 = $components[3];
+
+	my $pool;
+	if (!defined($pool = getPool($poolMember->{'PoolID'}))) {
+		$logger->log(LOG_ERR,"[TC] Shaper 'poolmember_add' event with invalid PoolID");
+		return;
+	}
+
 	# Grab some variables we going to need below
-	my $txInterface = getLimitTxInterface($lid);
-	my $rxInterface = getLimitRxInterface($lid);
-	my $matchPriority = getLimitMatchPriority($lid);
-	my $trafficPriority = getTrafficPriority($limit->{'ClassID'});
+	my $txInterface = getPoolTxInterface($pool->{'ID'});
+	my $rxInterface = getPoolRxInterface($pool->{'ID'});
+	my $trafficPriority = getTrafficClassPriority($pool->{'ClassID'});
+	my $matchPriority = getPoolMemberMatchPriority($pool->{'ID'});
 
 	# Check if we have a entry for the /8, if not we must create our 2nd level hash table and link it
 	if (!defined($tcFilterMappings->{$txInterface}->{'dst'}->{$matchPriority}->{$ip1})) {
 		# Grab filter ID's for 2nd level
-		my $txFilterID = _reserveTcFilter($txInterface,$matchPriority,$lid);
+		my $filterID = _reserveTcFilter($txInterface,$matchPriority,$pool->{'ID'});
 		# Track our mapping
-		$tcFilterMappings->{$txInterface}->{'dst'}->{$matchPriority}->{$ip1}->{'id'} = $txFilterID;
-		$logger->log(LOG_DEBUG,"[TC] Linking 2nd level TX hash table to '$txFilterID' to '$ip1.0.0.0/8', priority '$matchPriority'");
-		_tc_filter_add_dstlink($changeSet,$txInterface,TC_ROOT_CLASS,$matchPriority,$txFilterID,$config->{'ip_protocol'},800,"","$ip1.0.0.0/8","00ff0000");
+		$tcFilterMappings->{$txInterface}->{'dst'}->{$matchPriority}->{$ip1}->{'id'} = $filterID;
+		$logger->log(LOG_DEBUG,"[TC] Linking 2nd level TX hash table to '%s' to '%s.0.0.0/8', priority '%s'",
+				$filterID,
+				$ip1,
+				$matchPriority
+		);
+		_tc_filter_add_dstlink($changeSet,$txInterface,TC_ROOT_CLASS,$matchPriority,$filterID,$config->{'ip_protocol'},800,"",
+				"$ip1.0.0.0/8","00ff0000");
 	}
 	if (!defined($tcFilterMappings->{$rxInterface}->{'src'}->{$matchPriority}->{$ip1})) {
 		# Grab filter ID's for 2nd level
-		my $rxFilterID = _reserveTcFilter($rxInterface,$matchPriority,$lid);
+		my $filterID = _reserveTcFilter($rxInterface,$matchPriority,$pool->{'ID'});
 		# Track our mapping
-		$tcFilterMappings->{$rxInterface}->{'src'}->{$matchPriority}->{$ip1}->{'id'} = $rxFilterID;
-		$logger->log(LOG_DEBUG,"[TC] Linking 2nd level RX hash table to '$rxFilterID' to '$ip1.0.0.0/8', priority '$matchPriority'");
-		_tc_filter_add_srclink($changeSet,$rxInterface,TC_ROOT_CLASS,$matchPriority,$rxFilterID,$config->{'ip_protocol'},800,"","$ip1.0.0.0/8","00ff0000");
+		$tcFilterMappings->{$rxInterface}->{'src'}->{$matchPriority}->{$ip1}->{'id'} = $filterID;
+		$logger->log(LOG_DEBUG,"[TC] Linking 2nd level RX hash table to '%s' to '%s.0.0.0/8', priority '%s'",
+				$filterID,
+				$ip1,
+				$matchPriority
+		);
+		_tc_filter_add_srclink($changeSet,$rxInterface,TC_ROOT_CLASS,$matchPriority,$filterID,$config->{'ip_protocol'},800,"",
+				"$ip1.0.0.0/8","00ff0000");
 	}
 
 	# Check if we have our /16 hash entry, if not we must create the 3rd level hash table
 	if (!defined($tcFilterMappings->{$txInterface}->{'dst'}->{$matchPriority}->{$ip1}->{$ip2})) {
 		# Grab filter ID's for 3rd level
-		my $txFilterID = _reserveTcFilter($txInterface,$matchPriority,$lid);
+		my $filterID = _reserveTcFilter($txInterface,$matchPriority,$pool->{'ID'});
 		# Track our mapping
-		$tcFilterMappings->{$txInterface}->{'dst'}->{$matchPriority}->{$ip1}->{$ip2}->{'id'} = $txFilterID;
+		$tcFilterMappings->{$txInterface}->{'dst'}->{$matchPriority}->{$ip1}->{$ip2}->{'id'} = $filterID;
 		# Grab some hash table ID's we need
-		my $txIP1HtHex = $tcFilterMappings->{$txInterface}->{'dst'}->{$matchPriority}->{$ip1}->{'id'};
+		my $ip1HtHex = $tcFilterMappings->{$txInterface}->{'dst'}->{$matchPriority}->{$ip1}->{'id'};
 		# And hex our IP component
 		my $ip2Hex = toHex($ip2);
-		$logger->log(LOG_DEBUG,"[TC] Linking 3rd level TX hash table to '$txFilterID' to '$ip1.$ip2.0.0/16', priority '$matchPriority'");
-		_tc_filter_add_dstlink($changeSet,$txInterface,TC_ROOT_CLASS,$matchPriority,$txFilterID,$config->{'ip_protocol'},$txIP1HtHex,$ip2Hex,"$ip1.$ip2.0.0/16","0000ff00");
+		$logger->log(LOG_DEBUG,"[TC] Linking 3rd level TX hash table to '%s' to '%s.%s.0.0/16', priority '%s'",
+				$filterID,
+				$ip1,
+				$ip2,
+				$matchPriority
+		);
+		_tc_filter_add_dstlink($changeSet,$txInterface,TC_ROOT_CLASS,$matchPriority,$filterID,$config->{'ip_protocol'},$ip1HtHex,
+				$ip2Hex,"$ip1.$ip2.0.0/16","0000ff00");
 	}
 	if (!defined($tcFilterMappings->{$rxInterface}->{'src'}->{$matchPriority}->{$ip1}->{$ip2})) {
 		# Grab filter ID's for 3rd level
-		my $rxFilterID = _reserveTcFilter($rxInterface,$matchPriority,$lid);
+		my $filterID = _reserveTcFilter($rxInterface,$matchPriority,$pool->{'ID'});
 		# Track our mapping
-		$tcFilterMappings->{$rxInterface}->{'src'}->{$matchPriority}->{$ip1}->{$ip2}->{'id'} = $rxFilterID;
+		$tcFilterMappings->{$rxInterface}->{'src'}->{$matchPriority}->{$ip1}->{$ip2}->{'id'} = $filterID;
 		# Grab some hash table ID's we need
-		my $rxIP1HtHex = $tcFilterMappings->{$rxInterface}->{'src'}->{$matchPriority}->{$ip1}->{'id'};
+		my $ip1HtHex = $tcFilterMappings->{$rxInterface}->{'src'}->{$matchPriority}->{$ip1}->{'id'};
 		# And hex our IP component
 		my $ip2Hex = toHex($ip2);
-		$logger->log(LOG_DEBUG,"[TC] Linking 3rd level RX hash table to '$rxFilterID' to '$ip1.$ip2.0.0/16', priority '$matchPriority'");
-		_tc_filter_add_srclink($changeSet,$rxInterface,TC_ROOT_CLASS,$matchPriority,$rxFilterID,$config->{'ip_protocol'},$rxIP1HtHex,$ip2Hex,"$ip1.$ip2.0.0/16","0000ff00");
+		$logger->log(LOG_DEBUG,"[TC] Linking 3rd level RX hash table to '%s' to '%s.%s.0.0/16', priority '%s'",
+				$filterID,
+				$ip1,
+				$ip2,
+				$matchPriority
+		);
+		_tc_filter_add_srclink($changeSet,$rxInterface,TC_ROOT_CLASS,$matchPriority,$filterID,$config->{'ip_protocol'},$ip1HtHex,
+				$ip2Hex,"$ip1.$ip2.0.0/16","0000ff00");
 	}
 
 	# Check if we have our /24 hash entry, if not we must create the 4th level hash table
 	if (!defined($tcFilterMappings->{$txInterface}->{'dst'}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3})) {
 		# Grab filter ID's for 4th level
-		my $txFilterID = _reserveTcFilter($txInterface,$matchPriority,$lid);
+		my $filterID = _reserveTcFilter($txInterface,$matchPriority,$pool->{'ID'});
 		# Track our mapping
-		$tcFilterMappings->{$txInterface}->{'dst'}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3}->{'id'} = $txFilterID;
+		$tcFilterMappings->{$txInterface}->{'dst'}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3}->{'id'} = $filterID;
 		# Grab some hash table ID's we need
-		my $txIP2HtHex = $tcFilterMappings->{$txInterface}->{'dst'}->{$matchPriority}->{$ip1}->{$ip2}->{'id'};
+		my $ip2HtHex = $tcFilterMappings->{$txInterface}->{'dst'}->{$matchPriority}->{$ip1}->{$ip2}->{'id'};
 		# And hex our IP component
 		my $ip3Hex = toHex($ip3);
-		$logger->log(LOG_DEBUG,"[TC] Linking 4th level TX hash table to '$txFilterID' to '$ip1.$ip2.$ip3.0/24', priority '$matchPriority'");
-		_tc_filter_add_dstlink($changeSet,$txInterface,TC_ROOT_CLASS,$matchPriority,$txFilterID,$config->{'ip_protocol'},$txIP2HtHex,$ip3Hex,"$ip1.$ip2.$ip3.0/24","000000ff");
+		$logger->log(LOG_DEBUG,"[TC] Linking 4th level TX hash table to '%s' to '%s.%s.%s.0/24', priority '%s'",
+				$filterID,
+				$ip1,
+				$ip2,
+				$ip3,
+				$matchPriority
+		);
+		_tc_filter_add_dstlink($changeSet,$txInterface,TC_ROOT_CLASS,$matchPriority,$filterID,$config->{'ip_protocol'},$ip2HtHex,
+				$ip3Hex,"$ip1.$ip2.$ip3.0/24","000000ff");
 	}
 	if (!defined($tcFilterMappings->{$rxInterface}->{'src'}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3})) {
 		# Grab filter ID's for 4th level
-		my $rxFilterID = _reserveTcFilter($rxInterface,$matchPriority,$lid);
+		my $filterID = _reserveTcFilter($rxInterface,$matchPriority,$pool->{'ID'});
 		# Track our mapping
-		$tcFilterMappings->{$rxInterface}->{'src'}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3}->{'id'} = $rxFilterID;
+		$tcFilterMappings->{$rxInterface}->{'src'}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3}->{'id'} = $filterID;
 		# Grab some hash table ID's we need
-		my $rxIP2HtHex = $tcFilterMappings->{$rxInterface}->{'src'}->{$matchPriority}->{$ip1}->{$ip2}->{'id'};
+		my $ip2HtHex = $tcFilterMappings->{$rxInterface}->{'src'}->{$matchPriority}->{$ip1}->{$ip2}->{'id'};
 		# And hex our IP component
 		my $ip3Hex = toHex($ip3);
-		$logger->log(LOG_DEBUG,"[TC] Linking 4th level RX hash table to '$rxFilterID' to '$ip1.$ip2.$ip3.0/24', priority '$matchPriority'");
-		_tc_filter_add_srclink($changeSet,$rxInterface,TC_ROOT_CLASS,$matchPriority,$rxFilterID,$config->{'ip_protocol'},$rxIP2HtHex,$ip3Hex,"$ip1.$ip2.$ip3.0/24","000000ff");
+		$logger->log(LOG_DEBUG,"[TC] Linking 4th level RX hash table to '%s' to '%s.%s.%s.0/24', priority '%s'",
+				$filterID,
+				$ip1,
+				$ip2,
+				$ip3,
+				$matchPriority
+		);
+		_tc_filter_add_srclink($changeSet,$rxInterface,TC_ROOT_CLASS,$matchPriority,$filterID,$config->{'ip_protocol'},$ip2HtHex,
+				$ip3Hex,"$ip1.$ip2.$ip3.0/24","000000ff");
 	}
+
+	#
+	# For sake of simplicity and so things loook all nice and similar, we going to do these 2 blocks in { }
+	#
 
 	# Only if we have TX limits setup process them
-	if (defined($changes->{'TrafficLimitTx'})) {
-		# Generate our limit TC class
-		my $txLimitTcClass = _reserveTcClassByLimitID($txInterface,$lid);
-		# Get traffic class TC class
-		my $classID = $changes->{'ClassID'};
-		my $txTrafficClassTcClass = _getTcClassFromClassID($txInterface,$classID);
+	{
+		# Get the TX class
+		my $tcClass_trafficClass = getPoolAttribute($pool->{'ID'},'tc.txclass');
 		# Grab some hash table ID's we need
-		my $txIP3HtHex = $tcFilterMappings->{$txInterface}->{'dst'}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3}->{'id'};
+		my $ip3HtHex = $tcFilterMappings->{$txInterface}->{'dst'}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3}->{'id'};
 		# And hex our IP component
 		my $ip4Hex = toHex($ip4);
-		$logger->log(LOG_DEBUG,"[TC] Linking TX IP '$limit->{'IP'}' to class '$txTrafficClassTcClass' at hash endpoint '$txIP3HtHex:$ip4Hex'");
-		# Add shaping classes
-		_tc_class_add($changeSet,$txInterface,TC_ROOT_CLASS,$txTrafficClassTcClass,$txLimitTcClass,$changes->{'TrafficLimitTx'},$changes->{'TrafficLimitTxBurst'},$trafficPriority);
-		# Link filter to traffic flow (class)
-		_tc_filter_add_flowlink($changeSet,$txInterface,TC_ROOT_CLASS,$trafficPriority,$config->{'ip_protocol'},$txIP3HtHex,$ip4Hex,"dst",16,$limit->{'IP'},$txLimitTcClass);
-		# Add optimizations
-		_tc_class_optimize($changeSet,$txInterface,$txLimitTcClass,$changes->{'TrafficLimitTx'});
-		# Save limit tc class ID
-		setLimitAttribute($lid,'tc.txclass',$txLimitTcClass);
-		setLimitAttribute($lid,'tc.txfilter',"${txIP3HtHex}:${ip4Hex}:1");
-		# Set current live values
-		setLimitAttribute($lid,'tc.live.TrafficLimitTx',$changes->{'TrafficLimitTx'});
-		setLimitAttribute($lid,'tc.live.TrafficLimitTxBurst',$changes->{'TrafficLimitTxBurst'});
-	}
+		$logger->log(LOG_DEBUG,"[TC] Linking pool member IP '%s' to class '%s' at hash endpoint '%s:%s'",
+				$poolMember->{'IPAddress'},
+				$tcClass_trafficClass,
+				$ip3HtHex,
+				$ip4Hex
+		);
 
+		# Link filter to traffic flow (class)
+		_tc_filter_add_flowlink($changeSet,$txInterface,TC_ROOT_CLASS,$trafficPriority,$config->{'ip_protocol'},$ip3HtHex,$ip4Hex,
+				"dst",16,$poolMember->{'IPAddress'},$tcClass_trafficClass);
+
+		# Save pool member filter ID
+		setPoolMemberAttribute($poolMember->{'ID'},'tc.txfilter',"${ip3HtHex}:${ip4Hex}:1");
+	}
 	# Only if we have RX limits setup process them
-	if (defined($changes->{'TrafficLimitRx'})) {
+	{
 		# Generate our limit TC class
-		my $rxLimitTcClass = _reserveTcClassByLimitID($rxInterface,$lid);
-		# Get traffic class TC class
-		my $classID = $changes->{'ClassID'};
-		my $rxTrafficClassTcClass = _getTcClassFromClassID($rxInterface,$classID);
+		my $tcClass_trafficClass = getPoolAttribute($pool->{'ID'},'tc.rxclass');
 		# Grab some hash table ID's we need
-		my $rxIP3HtHex = $tcFilterMappings->{$rxInterface}->{'src'}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3}->{'id'};
+		my $ip3HtHex = $tcFilterMappings->{$rxInterface}->{'src'}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3}->{'id'};
 		# And hex our IP component
 		my $ip4Hex = toHex($ip4);
-		$logger->log(LOG_DEBUG,"[TC] Linking RX IP '$limit->{'IP'}' to class '$rxTrafficClassTcClass' at hash endpoint '$rxIP3HtHex:$ip4Hex'");
-		# Add shaping classes
-		_tc_class_add($changeSet,$rxInterface,TC_ROOT_CLASS,$rxTrafficClassTcClass,$rxLimitTcClass,$changes->{'TrafficLimitRx'},$changes->{'TrafficLimitRxBurst'},$trafficPriority);
+		$logger->log(LOG_DEBUG,"[TC] Linking RX IP '%s' to class '%s' at hash endpoint '%s:%s'",
+				$poolMember->{'IPAddress'},
+				$tcClass_trafficClass,
+				$ip3HtHex,
+				$ip4Hex
+		);
+
 		# Link filter to traffic flow (class)
-		_tc_filter_add_flowlink($changeSet,$rxInterface,TC_ROOT_CLASS,$trafficPriority,$config->{'ip_protocol'},$rxIP3HtHex,$ip4Hex,"src",12,$limit->{'IP'},$rxLimitTcClass);
-		# Add optimizations
-		_tc_class_optimize($changeSet,$rxInterface,$rxLimitTcClass,$changes->{'TrafficLimitRx'});
-		# Save limit tc class ID
-		setLimitAttribute($lid,'tc.rxclass',$rxLimitTcClass);
-		setLimitAttribute($lid,'tc.rxfilter',"${rxIP3HtHex}:${ip4Hex}:1");
-		# Set current live values
-		setLimitAttribute($lid,'tc.live.TrafficLimitRx',$changes->{'TrafficLimitRx'});
-		setLimitAttribute($lid,'tc.live.TrafficLimitRxBurst',$changes->{'TrafficLimitRxBurst'});
-	}
+		_tc_filter_add_flowlink($changeSet,$rxInterface,TC_ROOT_CLASS,$trafficPriority,$config->{'ip_protocol'},$ip3HtHex,$ip4Hex,
+				"src",12,$poolMember->{'IPAddress'},$tcClass_trafficClass);
 
-	setLimitAttribute($lid,'tc.live.ClassID',$changes->{'ClassID'});
+		# Save pool member filter ID
+		setPoolMemberAttribute($poolMember->{'ID'},'tc.rxfilter',"${ip3HtHex}:${ip4Hex}:1");
+	}
 
 	# Post changeset
 	$kernel->post("_tc" => "queue" => $changeSet);
 
-	# Mark as live
-	setShaperState($lid,SHAPER_LIVE);
+	# Mark pool member as live
+	setPoolMemberShaperState($poolMember->{'ID'},SHAPER_LIVE);
 }
 
 
-# Change event for tc
-sub do_change
+# Event handler for removing a pool member
+sub _session_poolmember_remove
 {
-	my ($kernel, $lid, $changes) = @_[KERNEL, ARG0, ARG1];
+	my ($kernel, $pmid) = @_[KERNEL, ARG0];
 
 
-
-	# Pull in limit
-	my $limit;
-	if (!defined($limit = getLimit($lid))) {
-		$logger->log(LOG_ERR,"[TC] Shaper 'change' event with non existing limit '$lid'");
+	# Pull in pool member
+	my $poolMember;
+	if (!defined($poolMember = getPoolMember($pmid))) {
+		$logger->log(LOG_ERR,"[TC] Shaper 'remove' event with non existing pool member '%s'",$pmid);
 		return;
 	}
 
-	# Check if we don't have a changeset
-	if (!defined($changes)) {
-		$logger->log(LOG_WARN,"[TC] Shaper got a undefined changeset to process for '$lid'");
+	# Grab the pool members associated pool
+	my $pool = getPool($poolMember->{'PoolID'});
+
+	# Make sure its not NOTLIVE
+	if (getPoolMemberShaperState($pmid) == SHAPER_NOTLIVE) {
+		$logger->log(LOG_WARN,"[TC] Ignoring remove for pool member '%s' with IP '%s' [%s] from pool '%s'",
+				$poolMember->{'Username'},
+				$poolMember->{'IPAddress'},
+				$poolMember->{'ID'},
+				$pool->{'Identifier'}
+		);
 		return;
 	}
 
-	$logger->log(LOG_INFO,"[TC] Processing changes for '$limit->{'Username'}' [$lid]");
-
-	# Pull in values we need
-	my $classID = getLimitAttribute($lid,'tc.live.ClassID');
-	if (defined($changes->{'ClassID'}) && $changes->{'ClassID'} ne $classID) {
-		$classID = $changes->{'ClassID'};
-		setLimitAttribute($lid,'tc.live.ClassID',$classID);
-	}
-
-	my $trafficLimitTx;
-	my $trafficLimitTxBurst;
-	if (defined($changes->{'TrafficLimitTx'})) {
-		$trafficLimitTx = $changes->{'TrafficLimitTx'};
-		setLimitAttribute($lid,'tc.live.TrafficLimitTx',$trafficLimitTx);
-	} else {
-		$trafficLimitTx = getLimitAttribute($lid,'tc.live.TrafficLimitTx');
-	}
-	if (defined($changes->{'TrafficLimitTxBurst'})) {
-		$trafficLimitTxBurst = $changes->{'TrafficLimitTxBurst'};
-		setLimitAttribute($lid,'tc.live.TrafficLimitTxBurst',$trafficLimitTxBurst);
-	} else {
-		$trafficLimitTxBurst = getLimitAttribute($lid,'tc.live.TrafficLimitTxBurst');
-	}
-
-	my $trafficLimitRx;
-	my $trafficLimitRxBurst;
-	if (defined($changes->{'TrafficLimitRx'})) {
-		$trafficLimitRx = $changes->{'TrafficLimitRx'};
-		setLimitAttribute($lid,'tc.live.TrafficLimitRx',$trafficLimitRx);
-	} else {
-		$trafficLimitRx = getLimitAttribute($lid,'tc.live.TrafficLimitRx');
-	}
-	if (defined($changes->{'TrafficLimitRxBurst'})) {
-		$trafficLimitRxBurst = $changes->{'TrafficLimitRxBurst'};
-		setLimitAttribute($lid,'tc.live.TrafficLimitRxBurst',$trafficLimitRxBurst);
-	} else {
-		$trafficLimitRxBurst = getLimitAttribute($lid,'tc.live.TrafficLimitRxBurst');
-	}
+	$logger->log(LOG_INFO,"[TC] Removing pool member '%s' with IP '%s' [%s] from pool '%s'",
+			$poolMember->{'Username'},
+			$poolMember->{'IPAddress'},
+			$poolMember->{'ID'},
+			$pool->{'Identifier'}
+	);
 
 	# Grab our interfaces
-	my $txInterface = getLimitTxInterface($lid);
-	my $rxInterface = getLimitRxInterface($lid);
-	# Grab our classes
-	my $txLimitTcClass = getLimitAttribute($lid,'tc.txclass');
-	my $rxLimitTcClass = getLimitAttribute($lid,'tc.rxclass');
-	# Grab our minor classes
-	my $txTrafficClassTcClass = _getTcClassFromClassID($txInterface,$classID);
-	my $rxTrafficClassTcClass = _getTcClassFromClassID($rxInterface,$classID);
-	# Grab traffic priority
-	my $trafficPriority = getTrafficPriority($classID);
-
-	# Generate changeset
-	my $changeSet = TC::ChangeSet->new();
-	_tc_class_change($changeSet,$txInterface,TC_ROOT_CLASS,$txTrafficClassTcClass,$txLimitTcClass,$trafficLimitTx,$trafficLimitTxBurst,$trafficPriority);
-	_tc_class_change($changeSet,$rxInterface,TC_ROOT_CLASS,$rxTrafficClassTcClass,$rxLimitTcClass,$trafficLimitRx,$trafficLimitRxBurst,$trafficPriority);
-
-	# Post changeset
-	$kernel->post("_tc" => "queue" => $changeSet);
-}
-
-
-# Remove event for tc
-sub do_remove
-{
-	my ($kernel, $lid) = @_[KERNEL, ARG0];
-
-	my $changeSet = TC::ChangeSet->new();
-
-
-	# Pull in limit
-	my $limit;
-	if (!defined($limit = getLimit($lid))) {
-		$logger->log(LOG_ERR,"[TC] Shaper 'change' event with non existing limit '$lid'");
-		return;
-	}
-
-	# Make sure its being shaped at present, it could be we have multiple removes queued?
-	if (getShaperState($lid) == SHAPER_NOTLIVE) {
-		$logger->log(LOG_INFO,"[TC] Ignoring duplicate remove for '$limit->{'Username'}' [$lid]");
-		return;
-	}
-
-	$logger->log(LOG_INFO,"[TC] Remove '$limit->{'Username'}' [$lid]");
-
-	# Grab our interfaces
-	my $txInterface = getLimitTxInterface($lid);
-	my $rxInterface = getLimitRxInterface($lid);
-	# Grab varaibles we need to make this happen
-	my $txLimitTcClass = getLimitAttribute($lid,'tc.txclass');
-	my $rxLimitTcClass = getLimitAttribute($lid,'tc.rxclass');
-	# Grab our filters
-	my $txFilter = getLimitAttribute($lid,'tc.txfilter');
-	my $rxFilter = getLimitAttribute($lid,'tc.rxfilter');
+	my $txInterface = getPoolTxInterface($pool->{'ID'});
+	my $rxInterface = getPoolRxInterface($pool->{'ID'});
+	# Grab the filter ID's from the pool member which is linked to the traffic class
+	my $txFilter = getPoolMemberAttribute($poolMember->{'ID'},'tc.txfilter');
+	my $rxFilter = getPoolMemberAttribute($poolMember->{'ID'},'tc.rxfilter');
 
 	# Grab current class ID
-	my $classID = getLimitAttribute($lid,'tc.live.ClassID');
-	my $trafficPriority = getTrafficPriority($classID);
-	# Grab our minor classes
-	my $txTrafficClassTcClass = _getTcClassFromClassID($txInterface,$classID);
-	my $rxTrafficClassTcClass = _getTcClassFromClassID($rxInterface,$classID);
+	my $classID = getPoolAttribute($pool->{'ID'},'shaper.live.ClassID');
+	my $trafficPriority = getTrafficClassPriority($classID);
 
+
+	my $changeSet = TC::ChangeSet->new();
 
 	# Clear up the filter
 	$changeSet->add([
@@ -516,98 +709,67 @@ sub do_remove
 				'protocol',$config->{'ip_protocol'},
 				'u32',
 	]);
-	# Clear up the class
-	$changeSet->add([
-			'/sbin/tc','class','del',
-				'dev',$txInterface,
-				'parent',"1:$txTrafficClassTcClass",
-				'classid',"1:$txLimitTcClass",
-	]);
-	$changeSet->add([
-			'/sbin/tc','class','del',
-				'dev',$rxInterface,
-				'parent',"1:$rxTrafficClassTcClass",
-				'classid',"1:$rxLimitTcClass",
-	]);
-
-	# And recycle the classs
-	_disposeLimitTcClass($txInterface,$txLimitTcClass);
-	_disposeLimitTcClass($rxInterface,$rxLimitTcClass);
-
-	_disposePrioTcClass($txInterface,$txLimitTcClass);
-	_disposePrioTcClass($rxInterface,$rxLimitTcClass);
 
 	# Post changeset
 	$kernel->post("_tc" => "queue" => $changeSet);
 
 	# Mark as not live
-	setShaperState($lid,SHAPER_NOTLIVE);
+	setPoolMemberShaperState($poolMember->{'ID'},SHAPER_NOTLIVE);
 
 	# Cleanup attributes
-	removeLimitAttribute($lid,'tc.txclass');
-	removeLimitAttribute($lid,'tc.rxclass');
-	removeLimitAttribute($lid,'tc.txfilter');
-	removeLimitAttribute($lid,'tc.rxfilter');
+	removePoolMemberAttribute($poolMember->{'ID'},'tc.txfilter');
+	removePoolMemberAttribute($poolMember->{'ID'},'tc.rxfilter');
 }
 
 
-# Grab limit ID from TC class
-sub getLIDFromTcLimitClass
-{
-	my ($interface,$tcLimitClass) = @_;
-
-	return __getRefByMinorTcClass($interface,TC_ROOT_CLASS,$tcLimitClass);
-}
-
-
-# Function to return if this is linked to a system class or limit class
-sub isTcLimitClass
+# Grab pool ID from TC class
+sub getPIDFromTcClass
 {
 	my ($interface,$majorTcClass,$minorTcClass) = @_;
 
 
-	# Return the class ID if found
-	if (my $ref = __getRefByMinorTcClass($interface,$majorTcClass,$minorTcClass)) {
-		if (!($ref =~ /^_class_/)) {
-			return $minorTcClass;
-		}
+	# Return the pool ID if found
+	my $ref = __getRefByMinorTcClass($interface,$majorTcClass,$minorTcClass);
+	if (!defined($ref) || substr($ref,0,13) ne "_pool_class_:") {
+		return undef;
 	}
 
-	return undef;
+	return substr($ref,13);
 }
 
 
-# Function to return the traffic class ID if its valid
-sub isTcTrafficClassValid
+# Function to return if this is linked to a pool's class
+sub isPoolTcClass
 {
 	my ($interface,$majorTcClass,$minorTcClass) = @_;
 
 
-	# Return the class ID if found
-	if (__getRefByMinorTcClass($interface,$majorTcClass,$minorTcClass)) {
-		return $minorTcClass;
+	my $pid = getPIDFromTcClass($interface,$majorTcClass,$minorTcClass);
+	if (!defined($pid)) {
+		return undef;
 	}
 
-	return undef;
+	return $minorTcClass;
 }
 
-# Return the ClassID from a TC limit class
+
+# Return the ClassID from a TC class
 # This is similar to isTcTrafficClassValid() but returns the ref, not the minor class
-sub getCIDFromTcLimitClass
+sub getCIDFromTcClass
 {
 	my ($interface,$majorTcClass,$minorTcClass) = @_;
 
 
 	# Grab ref
 	my $ref = __getRefByMinorTcClass($interface,$majorTcClass,$minorTcClass);
-	# Chop off _class: and return if we did
-	if (defined($ref) && $ref =~ s/^_class_://) {
-		return $ref;
+	# If we're not a traffic class, just return
+	if (substr($ref,0,16) ne "_traffic_class_:") {
+		return undef;
 	}
 
-	return undef;
+	# Else return the part after the above tag
+	return substr($ref,16);
 }
-
 
 
 #
@@ -624,7 +786,7 @@ sub _tc_iface_init
 	# Grab our interface rate
 	my $rate = getInterfaceRate($interface);
 	# Grab interface class configuration
-	my $classes = getInterfaceClasses($interface);
+	my $trafficClasses = getInterfaceTrafficClasses($interface);
 
 
 	# Clear the qdisc from the interface
@@ -634,20 +796,20 @@ sub _tc_iface_init
 				'root',
 	]);
 
-	# Create our parent classes
-	foreach my $classID (sort {$a <=> $b} keys %{$classes}) {
+	# Reserve our parent TC classes
+	foreach my $classID (sort {$a <=> $b} keys %{$trafficClasses}) {
 		# We don't really need the result, we just need the class created
-		_reserveTcClassByClassID($interface,$classID);
+		_reserveTcClassByTrafficClassID($interface,$classID);
 	}
 
 	# Do we have a default pool? if so we must direct traffic there
 	my @qdiscOpts = ( );
 	my $defaultPool = getInterfaceDefaultPool($interface);
-	my $defaultPoolClass;
+	my $defaultPoolTcClass;
 	if (defined($defaultPool)) {
 		# Push unclassified traffic to this class
-		$defaultPoolClass = _getTcClassFromClassID($interface,$defaultPool);
-		push(@qdiscOpts,'default',$defaultPoolClass);
+		$defaultPoolTcClass = _getTcClassFromTrafficClassID($interface,$defaultPool);
+		push(@qdiscOpts,'default',$defaultPoolTcClass);
 	}
 
 	# Add root qdisc
@@ -672,17 +834,17 @@ sub _tc_iface_init
 	]);
 
 	# Setup the classes
-	while ((my $classID, my $class) = each(%{$classes})) {
-		my $trafficClassTcClass = _getTcClassFromClassID($interface,$classID);
+	while ((my $classID, my $class) = each(%{$trafficClasses})) {
+		my $tcClass = _getTcClassFromTrafficClassID($interface,$classID);
 
-		my $trafficPriority = getTrafficPriority($classID);
+		my $trafficPriority = getTrafficClassPriority($classID);
 
 		# Add class
 		$changeSet->add([
 				'/sbin/tc','class','add',
 					'dev',$interface,
 					'parent','1:1',
-					'classid',"1:$trafficClassTcClass",
+					'classid',"1:$tcClass",
 					'htb',
 						'rate',"$class->{'cir'}kbit",
 						'ceil',"$class->{'limit'}kbit",
@@ -694,7 +856,7 @@ sub _tc_iface_init
 	# Process our default pool traffic optimizations
 	if (defined($defaultPool)) {
 		# If we have a rate for this iface, then use it
-		_tc_class_optimize($changeSet,$interface,$defaultPoolClass,$classes->{$defaultPool}->{'limit'});
+		_tc_class_optimize($changeSet,$interface,$defaultPoolTcClass,$trafficClasses->{$defaultPool}->{'limit'});
 
 		# Make the queue size big enough
 		my $queueSize = ($rate * 1024) / 8;
@@ -706,7 +868,7 @@ sub _tc_iface_init
 		my $redBurst = int( ($redMin+$redMax) / (2*$redAvPkt));
 		my $redLimit = $queueSize;
 
-		my $prioTcClass = _getPrioTcClass($interface,$defaultPoolClass);
+		my $prioTcClass = _getPrioTcClass($interface,$defaultPoolTcClass);
 
 		# Priority band
 		my $prioBand = 1;
@@ -714,7 +876,7 @@ sub _tc_iface_init
 				'/sbin/tc','qdisc','add',
 					'dev',$interface,
 					'parent',"$prioTcClass:".toHex($prioBand),
-					'handle',_reserveMajorTcClass($interface,"_default_pool_:$defaultPoolClass=>$prioBand").":",
+					'handle',_reserveMajorTcClass($interface,"_default_pool_:$defaultPoolTcClass=>$prioBand").":",
 					'bfifo',
 						'limit',$queueSize,
 		]);
@@ -724,7 +886,7 @@ sub _tc_iface_init
 				'/sbin/tc','qdisc','add',
 					'dev',$interface,
 					'parent',"$prioTcClass:".toHex($prioBand),
-					'handle',_reserveMajorTcClass($interface,"_default_pool_:$defaultPoolClass=>$prioBand").":",
+					'handle',_reserveMajorTcClass($interface,"_default_pool_:$defaultPoolTcClass=>$prioBand").":",
 # TODO: NK - try enable the below
 #					'estimator','1sec','4sec', # Quick monitoring, every 1s with 4s constraint
 					'red',
@@ -748,7 +910,7 @@ sub _tc_iface_init
 				'/sbin/tc','qdisc','add',
 					'dev',$interface,
 					'parent',"$prioTcClass:".toHex($prioBand),
-					'handle',_reserveMajorTcClass($interface,"_default_pool_:$defaultPoolClass=>$prioBand").":",
+					'handle',_reserveMajorTcClass($interface,"_default_pool_:$defaultPoolTcClass=>$prioBand").":",
 					'red',
 						'min',$redMin,
 						'max',$redMax,
@@ -767,7 +929,7 @@ sub _tc_iface_init
 # XXX: This probably needs working on
 sub _tc_class_optimize
 {
-	my ($changeSet,$interface,$limitTcClass,$rate) = @_;
+	my ($changeSet,$interface,$poolTcClass,$rate) = @_;
 
 
 	# Rate for things like ICMP , ACK, SYN ... etc
@@ -779,7 +941,7 @@ sub _tc_class_optimize
 	$rateBand2 = PRIO_RATE_BURST_MIN if ($rateBand2 < PRIO_RATE_BURST_MIN);
 	my $rateBand2Burst = ($rateBand2 / 8) * PRIO_RATE_BURST_MAXM;
 
-	my $prioTcClass = _reserveMajorTcClassByPrioClass($interface,$limitTcClass);
+	my $prioTcClass = _reserveMajorTcClassByPrioClass($interface,$poolTcClass);
 
 	#
 	# DEFINE 3 PRIO BANDS
@@ -789,7 +951,7 @@ sub _tc_class_optimize
 	$changeSet->add([
 			'/sbin/tc','qdisc','add',
 				'dev',$interface,
-				'parent',"1:$limitTcClass",
+				'parent',"1:$poolTcClass",
 				'handle',"$prioTcClass:",
 				'prio',
 					'bands','3',
@@ -1130,6 +1292,7 @@ sub _tc_filter_add_dstlink
 {
 	my ($changeSet,$interface,$parentID,$priority,$filterID,$protocol,$htHex,$ipHex,$cidr,$mask) = @_;
 
+
 	# Add hash table
 	_tc_filter_hash_add($changeSet,$interface,$parentID,$priority,$filterID,$config->{'ip_protocol'});
 	# Add filter to it
@@ -1142,6 +1305,7 @@ sub _tc_filter_add_srclink
 {
 	my ($changeSet,$interface,$parentID,$priority,$filterID,$protocol,$htHex,$ipHex,$cidr,$mask) = @_;
 
+
 	# Add hash table
 	_tc_filter_hash_add($changeSet,$interface,$parentID,$priority,$filterID,$config->{'ip_protocol'});
 	# Add filter to it
@@ -1152,7 +1316,7 @@ sub _tc_filter_add_srclink
 # Function to easily add a hash table
 sub _tc_filter_add_flowlink
 {
-	my ($changeSet,$interface,$parentID,$priority,$protocol,$htHex,$ipHex,$type,$offset,$ip,$limitTcClass) = @_;
+	my ($changeSet,$interface,$parentID,$priority,$protocol,$htHex,$ipHex,$type,$offset,$ip,$poolTcClass) = @_;
 
 
 	# Link hash table
@@ -1169,7 +1333,7 @@ sub _tc_filter_add_flowlink
 						'match','ip',$type,$ip,
 							'at',$offset+$config->{'iphdr_offset'},
 					# Link to our flow
-					'flowid',"1:$limitTcClass",
+					'flowid',"1:$poolTcClass",
 	]);
 }
 
@@ -1178,6 +1342,7 @@ sub _tc_filter_add_flowlink
 sub _tc_filter_hash_add
 {
 	my ($changeSet,$interface,$parentID,$priority,$filterID,$protocol) = @_;
+
 
 	# Create second level hash table for $ip1
 	$changeSet->add([
@@ -1197,6 +1362,7 @@ sub _tc_filter_hash_add
 sub _tc_filter_add
 {
 	my ($changeSet,$interface,$parentID,$priority,$filterID,$protocol,$htHex,$ipHex,$type,$offset,$cidr,$mask) = @_;
+
 
 	# Link hash table
 	$changeSet->add([
@@ -1221,7 +1387,8 @@ sub _tc_filter_add
 # Function to add a TC class
 sub _tc_class_add
 {
-		my ($changeSet,$interface,$majorTcClass,$trafficClassTcClass,$limitTcClass,$rate,$ceil,$trafficPriority) = @_;
+		my ($changeSet,$interface,$majorTcClass,$trafficClassTcClass,$poolTcClass,$rate,$ceil,$trafficPriority) = @_;
+
 
 		# Set burst to a sane value
 		my $burst = int($ceil / 8 / 5);
@@ -1231,7 +1398,7 @@ sub _tc_class_add
 				'/sbin/tc','class','add',
 					'dev',$interface,
 					'parent',"$majorTcClass:$trafficClassTcClass",
-					'classid',"$majorTcClass:$limitTcClass",
+					'classid',"$majorTcClass:$poolTcClass",
 					'htb',
 						'rate', "${rate}kbit",
 						'ceil', "${ceil}kbit",
@@ -1244,7 +1411,7 @@ sub _tc_class_add
 # Function to change a TC class
 sub _tc_class_change
 {
-		my ($changeSet,$interface,$majorTcClass,$trafficClassTcClass,$limitTcClass,$rate,$ceil,$trafficPriority) = @_;
+		my ($changeSet,$interface,$majorTcClass,$trafficClassTcClass,$poolTcClass,$rate,$ceil,$trafficPriority) = @_;
 
 
 		# Set burst to a sane value
@@ -1255,7 +1422,7 @@ sub _tc_class_change
 				'/sbin/tc','class','change',
 					'dev',$interface,
 					'parent',"$majorTcClass:$trafficClassTcClass",
-					'classid',"$majorTcClass:$limitTcClass",
+					'classid',"$majorTcClass:$poolTcClass",
 					'htb',
 						'rate', "${rate}kbit",
 						'ceil', "${ceil}kbit",
@@ -1265,21 +1432,21 @@ sub _tc_class_change
 }
 
 
-# Get a limit class TC class
-sub _reserveTcClassByLimitID
+# Get a pool TC class from pool ID
+sub _reserveTcClassByPoolID
 {
-	my ($interface,$lid) = @_;
+	my ($interface,$pid) = @_;
 
-	return __reserveMinorTcClass($interface,TC_ROOT_CLASS,$lid);
+	return __reserveMinorTcClass($interface,TC_ROOT_CLASS,"_pool_class_:$pid");
 }
 
 
 # Get a traffic class TC class
-sub _reserveTcClassByClassID
+sub _reserveTcClassByTrafficClassID
 {
 	my ($interface,$classID) = @_;
 
-	return __reserveMinorTcClass($interface,TC_ROOT_CLASS,"_class_:$classID");
+	return __reserveMinorTcClass($interface,TC_ROOT_CLASS,"_traffic_class_:$classID");
 }
 
 
@@ -1289,16 +1456,16 @@ sub _reserveMajorTcClassByPrioClass
 {
 	my ($interface,$classID) = @_;
 
-	return _reserveMajorTcClass($interface,"_prioclass_:$classID");
+	return _reserveMajorTcClass($interface,"_priority_class_:$classID");
 }
 
 
-# Return TC class using class
-sub _getTcClassFromClassID
+# Return TC class from a traffic class ID
+sub _getTcClassFromTrafficClassID
 {
 	my ($interface,$classID) = @_;
 
-	return __getMinorTcClassByRef($interface,TC_ROOT_CLASS,"_class_:$classID");
+	return __getMinorTcClassByRef($interface,TC_ROOT_CLASS,"_traffic_class_:$classID");
 }
 
 
@@ -1308,16 +1475,16 @@ sub _getPrioTcClass
 {
 	my ($interface,$tcClass) = @_;
 
-	return __getMajorTcClassByRef($interface,"_prioclass_:$tcClass");
+	return __getMajorTcClassByRef($interface,"_priority_class_:$tcClass");
 }
 
 
 # Function to dispose of a TC class
-sub _disposeLimitTcClass
+sub _disposePoolTcClass
 {
 	my ($interface,$tcClass) = @_;
 
-	return __disposeMinorTcClass($interface,TC_ROOT_CLASS,$tcClass);
+	return __disposeMinorTcClass($interface,TC_ROOT_CLASS,"_pool_class_:$tcClass");
 }
 
 
@@ -1329,13 +1496,13 @@ sub _disposePrioTcClass
 
 
 	# If we can grab the major class dipose of it
-	if (my $majorTcClass = _getPrioTcClass($interface,$tcClass)) {
-		return __disposeMajorTcClass($interface,$majorTcClass);
+	my $majorTcClass = _getPrioTcClass($interface,$tcClass);
+	if (!defined($majorTcClass)) {
+		return undef;
 	}
 
-	return undef;
+	return __disposeMajorTcClass($interface,$majorTcClass);
 }
-
 
 
 # Function to get next available TC class
@@ -1410,11 +1577,11 @@ sub __getMinorTcClassByRef
 	my ($interface,$majorTcClass,$ref) = @_;
 
 
-	if (defined($tcClasses->{$interface}) && defined($tcClasses->{$interface}->{$majorTcClass})) {
-		return $tcClasses->{$interface}->{$majorTcClass}->{'reverse'}->{$ref};
+	if (!defined($tcClasses->{$interface}) || !defined($tcClasses->{$interface}->{$majorTcClass})) {
+		return undef;
 	}
 
-	return undef;
+	return $tcClasses->{$interface}->{$majorTcClass}->{'reverse'}->{$ref};
 }
 
 
@@ -1424,11 +1591,11 @@ sub __getMajorTcClassByRef
 	my ($interface,$ref) = @_;
 
 
-	if (defined($tcClasses->{$interface})) {
-		return $tcClasses->{$interface}->{'reverse'}->{$ref};
+	if (!defined($tcClasses->{$interface})) {
+		return undef;
 	}
 
-	return undef;
+	return $tcClasses->{$interface}->{'reverse'}->{$ref};
 }
 
 
@@ -1438,11 +1605,11 @@ sub __getRefByMinorTcClass
 	my ($interface,$majorTcClass,$minorTcClass) = @_;
 
 
-	if (defined($tcClasses->{$interface}) && defined($tcClasses->{$interface}->{$majorTcClass})) {
-		return $tcClasses->{$interface}->{$majorTcClass}->{'track'}->{$minorTcClass};
+	if (!defined($tcClasses->{$interface}) || !defined($tcClasses->{$interface}->{$majorTcClass})) {
+		return undef;
 	}
 
-	return undef;
+	return $tcClasses->{$interface}->{$majorTcClass}->{'track'}->{$minorTcClass};
 }
 
 
@@ -1496,8 +1663,8 @@ sub _reserveTcFilter
 	# Generate new number
 	if (!$filterID) {
 		$filterID = keys %{$tcFilters->{$interface}->{'track'}};
-		# Bump ID up
-		$filterID += TC_FILTER_LIMIT_BASE;
+		# Bump ID
+		$filterID += 2; # Skip 0 and 1
 		# We cannot use ID 800, its internal
 		$filterID = 801 if ($filterID == 800);
 		# Hex it
@@ -1527,7 +1694,7 @@ sub _disposeTcFilter
 #
 
 # Initialize our tc session
-sub task_session_start
+sub _task_session_start
 {
 	my $kernel = $_[KERNEL];
 
@@ -1535,10 +1702,10 @@ sub task_session_start
 	$kernel->alias_set("_tc");
 
 	# Setup handing of console INT
-	$kernel->sig('INT', 'handle_SIGINT');
+	$kernel->sig("INT", "_SIGINT");
 
 	# Fire things up, we trigger this to process the task queue generated during init
-	$kernel->yield("task_run_next");
+	$kernel->yield("_task_run_next");
 }
 
 
@@ -1559,7 +1726,7 @@ sub _task_add_to_queue
 		$numChanges++;
 	}
 
-	$logger->log(LOG_DEBUG,"[TC] TASK: Queued $numChanges changes");
+	$logger->log(LOG_DEBUG,"[TC] TASK: Queued %s changes",$numChanges);
 }
 
 
@@ -1575,7 +1742,7 @@ sub _task_put_next
 		delete($heap->{'idle_tasks'}->{$task->ID});
 
 		$task->put($cmdStr);
-		$logger->log(LOG_DEBUG,"[TC] TASK/".$task->ID.": Starting '$cmdStr' as ".$task->ID." with PID ".$task->PID);
+		$logger->log(LOG_DEBUG,"[TC] TASK/%s: Starting '%s' as %s with PID %s",$task->ID,$cmdStr,$task->ID,$task->PID);
 
 	# If there is no commands in the queue, set it to idle
 	} else {
@@ -1585,8 +1752,8 @@ sub _task_put_next
 }
 
 
-# Run a task
-sub task_add
+# Queue a task
+sub _task_queue
 {
 	my ($kernel,$heap,$changeSet) = @_[KERNEL,HEAP,ARG0];
 
@@ -1596,13 +1763,13 @@ sub task_add
 
 	# Trigger a run if list is not empty
 	if (@taskQueue) {
-		$kernel->yield("task_run_next");
+		$kernel->yield("_task_run_next");
 	}
 }
 
 
 # Run next task
-sub task_run_next
+sub _task_run_next
 {
 	my ($kernel,$heap) = @_[KERNEL,HEAP];
 
@@ -1626,14 +1793,13 @@ sub task_run_next
 		my $task = POE::Wheel::Run->new(
 			Program => [ '/sbin/tc', '-force', '-batch' ],
 			Conduit => 'pipe',
-#			Program => [ '/root/tc.sh' ],
 			StdioFilter => POE::Filter::Line->new( Literal => "\n" ),
 			StderrFilter => POE::Filter::Line->new( Literal => "\n" ),
-			StdoutEvent => 'task_child_stdout',
-			StderrEvent => 'task_child_stderr',
-			CloseEvent => 'task_child_close',
-			StdinEvent => 'task_child_stdin',
-			ErrorEvent => 'task_child_error',
+			StdoutEvent => '_task_child_stdout',
+			StderrEvent => '_task_child_stderr',
+			CloseEvent => '_task_child_close',
+			StdinEvent => '_task_child_stdin',
+			ErrorEvent => '_task_child_error',
 		) or $logger->log(LOG_ERR,"[TC] TASK: Unable to start task");
 
 		# Set task ID
@@ -1641,7 +1807,7 @@ sub task_run_next
 
 
 		# Intercept SIGCHLD
-		$kernel->sig_child($task->PID, "handle_SIGCHLD");
+		$kernel->sig_child($task->PID, "_SIGCHLD");
 
 		# Wheel events include the wheel's ID.
 		$heap->{'task_by_wid'}->{$task_id} = $task;
@@ -1654,32 +1820,38 @@ sub task_run_next
 
 
 # Child writes to STDOUT
-sub task_child_stdout
+sub _task_child_stdout
 {
 	my ($kernel,$heap,$stdout,$task_id) = @_[KERNEL,HEAP,ARG0,ARG1];
+
+
 	my $task = $heap->{'task_by_wid'}->{$task_id};
 
-	$logger->log(LOG_INFO,"[TC] TASK/$task_id: STDOUT => ".$stdout);
+	$logger->log(LOG_INFO,"[TC] TASK/%s: STDOUT => %s",$task_id,$stdout);
 }
 
 
 # Child writes to STDERR
-sub task_child_stderr
+sub _task_child_stderr
 {
 	my ($kernel,$heap,$stdout,$task_id) = @_[KERNEL,HEAP,ARG0,ARG1];
+
+
 	my $task = $heap->{'task_by_wid'}->{$task_id};
 
-	$logger->log(LOG_WARN,"[TC] TASK/$task_id: STDERR => ".$stdout);
+	$logger->log(LOG_WARN,"[TC] TASK/%s: STDOUT => %s",$task_id,$stdout);
 }
 
 
 # Child flushed to STDIN
-sub task_child_stdin
+sub _task_child_stdin
 {
 	my ($kernel,$heap,$task_id) = @_[KERNEL,HEAP,ARG0];
+
+
 	my $task = $heap->{'task_by_wid'}->{$task_id};
 
-	$logger->log(LOG_DEBUG,"[TC] TASK/$task_id is READY");
+	$logger->log(LOG_DEBUG,"[TC] TASK/%s is READY",$task_id);
 	# And shove another queued command its direction
 	_task_put_next($heap,$task);
 }
@@ -1687,18 +1859,20 @@ sub task_child_stdin
 
 
 # Child closed its handles, it won't communicate with us, so remove it
-sub task_child_close
+sub _task_child_close
 {
 	my ($kernel,$heap,$task_id) = @_[KERNEL,HEAP,ARG0];
+
+
 	my $task = $heap->{'task_by_wid'}->{$task_id};
 
 	# May have been reaped by task_sigchld()
 	if (!defined($task)) {
-		$logger->log(LOG_DEBUG,"[TC] TASK/$task_id: Closed dead child");
+		$logger->log(LOG_DEBUG,"[TC] TASK/%s: Closed dead child",$task_id);
 		return;
 	}
 
-	$logger->log(LOG_DEBUG,"[TC] TASK/$task_id: Closed PID ".$task->PID);
+	$logger->log(LOG_DEBUG,"[TC] TASK/%s: Closed PID %s",$task_id,$task->PID);
 
 	# Remove other references
 	delete($heap->{'task_by_wid'}->{$task_id});
@@ -1707,22 +1881,24 @@ sub task_child_close
 
 	# Start next one, if there is a next one
 	if (@taskQueue) {
-		$kernel->yield("task_run_next");
+		$kernel->yield("_task_run_next");
 	}
 }
 
 
 # Child got an error event, lets remove it too
-sub task_child_error
+sub _task_child_error
 {
 	my ($kernel,$heap,$operation,$errnum,$errstr,$task_id) = @_[KERNEL,HEAP,ARG0..ARG3];
+
+
 	my $task = $heap->{'task_by_wid'}->{$task_id};
 
 	if ($operation eq "read" && !$errnum) {
 		$errstr = "Remote end closed"
 	}
 
-	$logger->log(LOG_ERR,"[TC] Task $task_id generated $operation error $errnum: '$errstr'");
+	$logger->log(LOG_ERR,"[TC] Task %s generated %s error %s: '%s'",$task_id,$operation,$errnum,$errstr);
 
 	# If there is no task, return
 	return if (!defined($task));
@@ -1734,19 +1910,20 @@ sub task_child_error
 
 	# Start next one, if there is a next one
 	if (@taskQueue) {
-		$kernel->yield("task_run_next");
+		$kernel->yield("_task_run_next");
 	}
 }
 
 
 # Reap the dead child
-sub task_handle_SIGCHLD
+sub _task_SIGCHLD
 {
 	my ($kernel,$heap,$pid,$status) = @_[KERNEL,HEAP,ARG1,ARG2];
+
+
 	my $task = $heap->{'task_by_pid'}->{$pid};
 
-
-	$logger->log(LOG_DEBUG,"[TC] TASK: Task with PID $pid exited with status $status");
+	$logger->log(LOG_DEBUG,"[TC] TASK: Task with PID %s exited with status %s",$pid,$status);
 
 	# May have been reaped by task_child_close()
 	return if (!defined($task));
@@ -1759,9 +1936,10 @@ sub task_handle_SIGCHLD
 
 
 # Handle SIGINT
-sub task_handle_SIGINT
+sub _task_SIGINT
 {
 	my ($kernel,$heap,$signal_name) = @_[KERNEL,HEAP,ARG0];
+
 
 	# Shutdown stdin on all children, this will terminate /sbin/tc
 	foreach my $task_id (keys %{$heap->{'task_by_wid'}}) {
@@ -1773,9 +1951,6 @@ sub task_handle_SIGINT
 
 	$logger->log(LOG_WARN,"[TC] Killed children processes");
 }
-
-
-
 
 
 
