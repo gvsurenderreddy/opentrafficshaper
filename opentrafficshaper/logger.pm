@@ -1,6 +1,6 @@
 # Logging functionality
-# Copyright (C) 2007-2013, AllWorldIT
-# 
+# Copyright (C) 2007-2014, AllWorldIT
+#
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
@@ -81,9 +81,9 @@ sub log
 
 	# Parse message nicely
 	if ($msg =~ /^(\[[^\]]+\]) (.*)/s) {
-		$msg = "$1 $logtxt: $2";
+		$msg = sprintf("%s %s: %s",$1,$logtxt,$2);
 	} else {
-		$msg = "[UNKNOWN] $logtxt: $msg";
+		$msg = sprintf("[UNKNOWN] %s: %s",$logtxt,$msg);
 	}
 
 	# If we have args, this is more than likely a format string & args
@@ -93,7 +93,7 @@ sub log
 	# Check if we need to log this
 	if ($level <= $self->{'level'}) {
 		local *FH = $self->{'handle'};
-		print(FH "[".strftime('%F %T',localtime)." - $$] $msg\n");
+		printf(FH "[%s - %s] %s\n",strftime('%F %T',localtime),$$,$msg);
 	}
 }
 
