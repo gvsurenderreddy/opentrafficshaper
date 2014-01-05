@@ -1,5 +1,5 @@
 # OpenTrafficShaper radius module
-# Copyright (C) 2007-2013, AllWorldIT
+# Copyright (C) 2007-2014, AllWorldIT
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -42,7 +42,7 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 );
 
 use constant {
-	VERSION => '0.0.1',
+	VERSION => '0.1.1',
 	DATAGRAM_MAXLEN => 8192,
 	DEFAULT_EXPIRY_PERIOD => 86400,
 	# IANA public enterprise number
@@ -83,11 +83,13 @@ sub plugin_init
 	# Setup our environment
 	$logger = $globals->{'logger'};
 
-	$logger->log(LOG_NOTICE,"[RADIUS] OpenTrafficShaper Radius Module v".VERSION." - Copyright (c) 2013, AllWorldIT");
+	$logger->log(LOG_NOTICE,"[RADIUS] OpenTrafficShaper Radius Module v%s - Copyright (c) 2013-2014, AllWorldIT",VERSION);
 
 	# Split off dictionaries to load
 	my @dicts = ref($globals->{'file.config'}->{'plugin.radius'}->{'dictionary'}) eq "ARRAY" ?
-			@{$globals->{'file.config'}->{'plugin.radius'}->{'dictionary'}} : ( $globals->{'file.config'}->{'plugin.radius'}->{'dictionary'} );
+			@{$globals->{'file.config'}->{'plugin.radius'}->{'dictionary'}} :
+			( $globals->{'file.config'}->{'plugin.radius'}->{'dictionary'} );
+
 	foreach my $dict (@dicts) {
 		$dict =~ s/\s+//g;
  		# Skip comments
@@ -105,9 +107,9 @@ sub plugin_init
 	foreach my $df (@{$config->{'config.dictionaries'}}) {
 		# Load dictionary
 		if ($dict->readfile($df)) {
-			$logger->log(LOG_INFO,"[RADIUS] Loaded dictionary '$df'.");
+			$logger->log(LOG_INFO,"[RADIUS] Loaded dictionary '%s'",$df);
 		} else {
-			$logger->log(LOG_WARN,"[RADIUS] Failed to load dictionary '$df': $!");
+			$logger->log(LOG_WARN,"[RADIUS] Failed to load dictionary '%s': %s",$df,$!);
 		}
 	}
 	$logger->log(LOG_DEBUG,"[RADIUS] Loading dictionaries completed.");
@@ -116,33 +118,33 @@ sub plugin_init
 
 	# Check if we must override the expiry time
 	if (defined(my $expiry = $globals->{'file.config'}->{'plugin.radius'}->{'expiry_period'})) {
-		$logger->log(LOG_INFO,"[RADIUS] Set expiry_period to '$expiry'");
+		$logger->log(LOG_INFO,"[RADIUS] Set expiry_period to '%s'",$expiry);
 		$config->{'expiry_period'} = $expiry;
 	}
 
 	# Default interface group to use
 	if (defined(my $interfaceGroup = $globals->{'file.config'}->{'plugin.radius'}->{'interface_group'})) {
 		if (isInterfaceGroupIsValid($interfaceGroup)) {
-			$logger->log(LOG_INFO,"[RADIUS] Set interface_group to '$interfaceGroup'");
+			$logger->log(LOG_INFO,"[RADIUS] Set interface_group to '%s'",$interfaceGroup);
 			$config->{'interface_group'} = $interfaceGroup;
 		} else {
-			$logger->log(LOG_WARN,"[RADIUS] Cannot set 'interface_group' as value '$interfaceGroup' is invalid");
+			$logger->log(LOG_WARN,"[RADIUS] Cannot set 'interface_group' as value '%s' is invalid",$interfaceGroup);
 		}
 	}
 
 	# Default match priority to use
 	if (defined(my $matchPriority = $globals->{'file.config'}->{'plugin.radius'}->{'match_priority'})) {
 		if (isInterfaceGroupIsValid($matchPriority)) {
-			$logger->log(LOG_INFO,"[RADIUS] Set match_priority to '$matchPriority'");
+			$logger->log(LOG_INFO,"[RADIUS] Set match_priority to '%s'",$matchPriority);
 			$config->{'match_priority'} = $matchPriority;
 		} else {
-			$logger->log(LOG_WARN,"[RADIUS] Cannot set 'match_priority' as value '$matchPriority' is invalid");
+			$logger->log(LOG_WARN,"[RADIUS] Cannot set 'match_priority' as value '%s' is invalid",$matchPriority);
 		}
 	}
 
 	# Check if we must override the expiry time
 	if (defined(my $expiry = $globals->{'file.config'}->{'plugin.radius'}->{'expiry_period'})) {
-		$logger->log(LOG_INFO,"[RADIUS] Set expiry_period to '$expiry'");
+		$logger->log(LOG_INFO,"[RADIUS] Set expiry_period to '%s'",$expiry);
 		$config->{'expiry_period'} = $expiry;
 	}
 
@@ -178,7 +180,7 @@ sub session_start
 			Proto	 => 'udp',
 			LocalPort => '1813',
 	))) {
-		$logger->log(LOG_ERR,"Failed to create Radius listening socket: $!");
+		$logger->log(LOG_ERR,"Failed to create Radius listening socket: %s",$!);
 		return;
 	}
 
@@ -253,7 +255,7 @@ sub session_read
 			$logLine .= sprintf(" %s/%s: %s,",$vendor,$attr,$attrVal);
 		}
 	}
-	$logger->log(LOG_DEBUG,"[RADIUS] $logLine");
+	$logger->log(LOG_DEBUG,"[RADIUS] ",$logLine);
 
 
 	# TODO - verify packet
@@ -328,9 +330,19 @@ sub session_read
 	# Throw the change at the config manager
 	$kernel->post("configmanager" => "process_limit_change" => $user);
 
-	$logger->log(LOG_INFO,"[RADIUS] Code: %s, User: %s, IP: %s, InterfaceGroup: %s, MatchPriorityID: %s, Group: %s, Class: %s, CIR: %s/%s, Limit: %s/%s",
-			$user->{'Status'}, $user->{'Username'}, $user->{'IP'}, $user->{'InterfaceGroupID'}, $user->{'MatchPriorityID'}, $user->{'GroupID'},
-			$user->{'ClassID'}, prettyUndef($trafficLimitTx), prettyUndef($trafficLimitRx), prettyUndef($trafficLimitTxBurst), prettyUndef($trafficLimitRxBurst)
+	$logger->log(LOG_INFO,"[RADIUS] Code: %s, User: %s, IP: %s, InterfaceGroup: %s, MatchPriorityID: %s, Group: %s, Class: %s, ".
+			"CIR: %s/%s, Limit: %s/%s",
+			$user->{'Status'},
+			$user->{'Username'},
+			$user->{'IP'},
+			$user->{'InterfaceGroupID'},
+			$user->{'MatchPriorityID'},
+			$user->{'GroupID'},
+			$user->{'ClassID'},
+			prettyUndef($trafficLimitTx),
+			prettyUndef($trafficLimitRx),
+			prettyUndef($trafficLimitTxBurst),
+			prettyUndef($trafficLimitRxBurst)
 	);
 }
 
@@ -350,8 +362,6 @@ sub getStatus
 		return "unknown";
 	}
 }
-
-
 
 
 # Simple function to reduce everything to kbit
