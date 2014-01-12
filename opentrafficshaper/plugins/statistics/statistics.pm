@@ -548,7 +548,7 @@ sub _session_tick
 			if ($res = $sthStatsBasicCleanup->execute($key, $cleanUpTo)) {
 				# We get 0E0 for 0 when none were removed
 				if ($res ne "0E0") {
-					$logger->log(LOG_INFO,"[STATISTICS] Cleanup key %s stats_basic %s, up to %s [%s]",
+					$logger->log(LOG_INFO,"[STATISTICS] Cleanup key %s stats_basic, %s items up to %s [%s]",
 							$key,
 							$res,
 							$cleanUpTo,
