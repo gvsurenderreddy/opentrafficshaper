@@ -1115,6 +1115,12 @@ sub _session_tick
 	while (my ($pmid, $poolMember) = each(%{$poolMemberChangeQueue})) {
 
 		my $pool = $pools->{$poolMember->{'PoolID'}};
+
+		# We need to skip doing anything until the pool becomes live
+		if (getPoolShaperState($pool->{'ID'}) & SHAPER_NOTLIVE) {
+			next;
+		}
+
 		my $shaperState = getPoolMemberShaperState($poolMember->{'ID'});
 
 		# Pool member is newly added
