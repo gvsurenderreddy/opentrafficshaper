@@ -72,6 +72,8 @@ use constant {
 
 	STATISTICS_DIR_TX => 1,
 	STATISTICS_DIR_RX => 2,
+
+	STATISTICS_MAXFLUSH_PER_PERIOD => 10000,
 };
 
 
@@ -349,8 +351,14 @@ sub _session_tick
 	my $sthStatsBasicCleanup = $statsPreparedStatements->{'stats_basic_cleanup'};
 
 	# Even out flushing over 10s to absorb spikes
-	my $maxFlush = int(@{$statsQueue} / 10) + 100;
+	my $totalFlush = @{$statsQueue};
+	my $maxFlush = int($totalFlush / 10) + 100;
 	my $numFlush = 0;
+
+	# Make sure we don't write more than 10k entries per pass
+	if ($maxFlush > STATISTICS_MAXFLUSH_PER_PERIOD) {
+		$maxFlush = STATISTICS_MAXFLUSH_PER_PERIOD;
+	}
 
 	# Loop and build the data to create our multi-insert
 	my (@insertHolders,@insertBasicHolders);
@@ -418,7 +426,7 @@ sub _session_tick
 		my $timediff2 = tv_interval($timer1,$timer2);
 		$logger->log(LOG_INFO,"[STATISTICS] Total stats flush time %s/%s records: %s",
 				$numFlush,
-				$maxFlush,
+				$totalFlush,
 				sprintf('%.3fs',$timediff2)
 		);
 	}
