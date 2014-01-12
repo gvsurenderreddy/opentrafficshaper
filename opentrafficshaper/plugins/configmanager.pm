@@ -53,7 +53,7 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 	changePool
 	getPools
 	getPool
-	getPoolByIdentifer
+	getPoolByName
 	getPoolTxInterface
 	getPoolRxInterface
 	getPoolTrafficClassID
@@ -73,7 +73,8 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 	changePoolMember
 	getPoolMembers
 	getPoolMember
-	getPoolMembersByIP
+	getPoolMemberByUsernameIP
+	getAllPoolMembersByInterfaceGroupIP
 	getPoolMemberMatchPriority
 	setPoolMemberShaperState
 	unsetPoolMemberShaperState
@@ -127,7 +128,7 @@ use constant {
 # Mandatory pool attributes
 sub POOL_REQUIRED_ATTRIBUTES {
 	qw(
-		Identifier
+		Name
 		InterfaceGroupID
 		ClassID TrafficLimitTx TrafficLimitRx
 		Source
@@ -147,7 +148,8 @@ sub POOL_CHANGE_ATTRIBUTES {
 # Pool persistent attributes
 sub POOL_PERSISTENT_ATTRIBUTES {
 	qw(
-		Identifier
+		ID
+		Name
 		FriendlyName
 		InterfaceGroupID
 		ClassID TrafficLimitTx TrafficLimitRx TrafficLimitTxBurst TrafficLimitRxBurst
@@ -208,7 +210,7 @@ sub LIMIT_REQUIRED_ATTRIBUTES {
 # Override match attributes, one is required
 sub OVERRIDE_MATCH_ATTRIBUTES {
 	qw(
-		PoolIdentifier Username IPAddress
+		PoolName Username IPAddress
 		GroupID
 	)
 }
@@ -217,7 +219,7 @@ sub OVERRIDE_MATCH_ATTRIBUTES {
 sub OVERRIDE_ATTRIBUTES {
 	qw(
 		FriendlyName
-		PoolIdentifier Username IPAddress GroupID
+		PoolName Username IPAddress GroupID
 		ClassID TrafficLimitTx TrafficLimitRx TrafficLimitTxBurst TrafficLimitRxBurst
 		Expires
 		Notes
@@ -245,7 +247,7 @@ sub OVERRIDE_CHANGESET_ATTRIBUTES {
 sub OVERRIDE_PERSISTENT_ATTRIBUTES {
 	qw(
 		FriendlyName
-		PoolIdentifier Username IPAddress GroupID
+		PoolName Username IPAddress GroupID
 		ClassID TrafficLimitTx TrafficLimitRx TrafficLimitTxBurst TrafficLimitRxBurst
 		Notes
 		Expires Created
@@ -319,7 +321,7 @@ my $interfaceIPMap = {};
 # Parameters:
 # * FriendlyName
 #    - Used for display purposes
-# * Identifier
+# * Name
 #    - Unix timestamp when this entry expires, 0 if never
 # * ClassID
 #    - Class ID
@@ -338,7 +340,7 @@ my $interfaceIPMap = {};
 # * Source
 #    - This is the source of the limit, typically plugin.ModuleName
 my $pools = { };
-my $poolIdentifierMap = { };
+my $poolNameMap = { };
 my $poolIDCounter = 1;
 
 
@@ -380,8 +382,8 @@ my $poolMemberMap = { };
 # OVERRIDES
 #
 # Selection criteria:
-# * PoolIdentifier
-#    - Pool identifier
+# * PoolName
+#    - Pool name
 # * Username
 #    - Users username
 # * IPAddress
@@ -884,7 +886,7 @@ sub _session_stop
 	$interfaceIPMap = { };
 
 	$pools = { };
-	$poolIdentifierMap = { };
+	$poolNameMap = { };
 	$poolIDCounter = 1;
 
 	$poolMembers = { };
@@ -946,7 +948,7 @@ sub _session_tick
 				# There are no members, its safe to remove
 				if (getPoolMembers($pid) == 0) {
 					$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' [%s] has expired, removing",
-							$pool->{'Identifier'},
+							$pool->{'Name'},
 							$pid
 					);
 					removePool($pid);
@@ -959,16 +961,15 @@ sub _session_tick
 
 	# Loop through pool change queue
 	while (my ($pid, $pool) = each(%{$poolChangeQueue})) {
-
 		my $shaperState = getPoolShaperState($pool->{'ID'});
 
 		# Pool is newly added
 		if ($pool->{'Status'} == CFGM_NEW) {
 
 			# If the change is not yet live, we should queue it to go live
-			if ($shaperState == SHAPER_NOTLIVE) {
-				$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' [%s] new and not live, adding to shaper",
-						$pool->{'Identifier'},
+			if ($shaperState & SHAPER_NOTLIVE) {
+				$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' [%s] new and is not live, adding to shaper",
+						$pool->{'Name'},
 						$pid
 				);
 				$kernel->post('shaper' => 'pool_add' => $pid);
@@ -977,8 +978,13 @@ sub _session_tick
 				$pool->{'Status'} = CFGM_ONLINE;
 				# Remove from queue
 				delete($poolChangeQueue->{$pid});
+
 			} else {
-				$logger->log(LOG_ERR,"[CONFIGMANAGER] Pool '%s' [%s] has UNKNOWN state (CFGM_NEW && !SHAPER_NOTLIVE)");
+				$logger->log(LOG_ERR,"[CONFIGMANAGER] Pool '%s' [%s] has UNKNOWN state '%s'",
+						$pool->{'Name'},
+						$pid,
+						$shaperState
+				);
 			}
 
 		# Pool is online but NOTLIVE
@@ -986,16 +992,18 @@ sub _session_tick
 
 			# We've transitioned more than likely from offline, any state to online
 			# We don't care if the shaper is pending removal, we going to force re-adding now
-			if ($shaperState != SHAPER_LIVE) {
-				$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' [%s] online and not in live state, re-queue as add",
-						$pool->{'Identifier'},
+			if (!($shaperState & SHAPER_LIVE)) {
+				$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' [%s] online and is not live, re-queue as add",
+						$pool->{'Name'},
 						$pid
 				);
 				$pool->{'Status'} = CFGM_NEW;
+
 			} else {
-				$logger->log(LOG_ERR,"[CONFIGMANAGER] Pool '%s' [%s] has UNKNOWN state (CFGM_ONLINE && SHAPER_LIVE)",
-						$pool->{'Identifier'},
-						$pid
+				$logger->log(LOG_ERR,"[CONFIGMANAGER] Pool '%s' [%s] has UNKNOWN state '%s'",
+						$pool->{'Name'},
+						$pid,
+						$shaperState
 				);
 			}
 
@@ -1004,9 +1012,9 @@ sub _session_tick
 		} elsif ($pool->{'Status'} == CFGM_CHANGED) {
 
 			# If the shaper is live we can go ahead
-			if ($shaperState == SHAPER_LIVE) {
+			if ($shaperState & SHAPER_LIVE) {
 				$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' [%s] has been modified, sending to shaper",
-						$pool->{'Identifier'},
+						$pool->{'Name'},
 						$pid
 				);
 				$kernel->post('shaper' => 'pool_change' => $pid);
@@ -1016,18 +1024,18 @@ sub _session_tick
 				# Remove from queue
 				delete($poolChangeQueue->{$pid});
 
-			} elsif ($shaperState == SHAPER_NOTLIVE) {
-				$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' [%s] has been modified but not live, re-queue as add",
-						$pool->{'Identifier'},
+			} elsif ($shaperState & SHAPER_NOTLIVE) {
+				$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' [%s] has been modified and is not live, re-queue as add",
+						$pool->{'Name'},
 						$pid
 				);
 				$pool->{'Status'} = CFGM_NEW;
 
 			} else {
-				$logger->log(LOG_ERR,"[CONFIGMANAGER] Pool '%s' [%s] has UNKNOWN state (CFGM_CHANGED && !SHAPER_LIVE && ".
-						"!SHAPER_NOTLIVE)",
-						$pool->{'Identifier'},
-						$pid
+				$logger->log(LOG_ERR,"[CONFIGMANAGER] Pool '%s' [%s] has UNKNOWN state '%s'",
+						$pool->{'Name'},
+						$pid,
+						$shaperState
 				);
 			}
 
@@ -1036,13 +1044,13 @@ sub _session_tick
 		} elsif ($pool->{'Status'} == CFGM_OFFLINE) {
 
 			# If the change is live, but should go offline, queue it
-			if ($shaperState == SHAPER_LIVE) {
+			if ($shaperState & SHAPER_LIVE) {
 
-				if ($now - $pool->{'LastUpdate'} > 30) {
+				if ($now - $pool->{'LastUpdate'} > TIMEOUT_EXPIRE_OFFLINE) {
 					# If we still have pool members, we got to abort
 					if (!getPoolMembers($pid)) {
-						$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' [%s] marked offline and stale, removing from shaper",
-								$pool->{'Identifier'},
+						$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' [%s] marked offline and expired, removing from shaper",
+								$pool->{'Name'},
 								$pid
 						);
 						$kernel->post('shaper' => 'pool_remove' => $pid);
@@ -1050,7 +1058,7 @@ sub _session_tick
 					} else {
 						$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' [%s] marked offline, but still has pool members, ".
 								"aborting remove",
-								$pool->{'Identifier'},
+								$pool->{'Name'},
 								$pid
 						);
 						$pool->{'Status'} = CFGM_ONLINE;
@@ -1065,30 +1073,25 @@ sub _session_tick
 							my $poolMember = $poolMembers->{$pmid};
 							# Only remove ones online
 							if ($poolMember->{'Status'} == CFGM_ONLINE) {
-								$logger->log(LOG_INFO,"[CONFIGMANAGER] Pool '%s' [%s] marked offline and fresh, removing pool ".
-										"member [%s]",
-										$pool->{'Identifier'},
+								$logger->log(LOG_INFO,"[CONFIGMANAGER] Pool '%s' [%s] marked offline and not expired, removing ".
+										"pool member [%s]",
+										$pool->{'Name'},
 										$pid,
 										$pmid
 								);
 								removePoolMember($pmid);
 							}
 						}
-					} else {
-						$logger->log(LOG_INFO,"[CONFIGMANAGER] Pool '%s' [%s] marked offline and fresh, postponing",
-								$pool->{'Identifier'},
-								$pid
-						);
 					}
 				}
 
-			} elsif ($shaperState == SHAPER_NOTLIVE) {
+			} elsif ($shaperState & SHAPER_NOTLIVE) {
 				$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' [%s] marked offline and is not live, removing",
-						$pool->{'identifier'},
+						$pool->{'Name'},
 						$pid
 				);
-				# Remove pool from identifier map
-				delete($poolIdentifierMap->{$pool->{'InterfaceGroupID'}}->{$pool->{'Identifier'}});
+				# Remove pool from name map
+				delete($poolNameMap->{$pool->{'InterfaceGroupID'}}->{$pool->{'Name'}});
 				# Remove pool member mapping
 				delete($poolMemberMap->{$pool->{'ID'}});
 				# Remove from queue
@@ -1100,8 +1103,8 @@ sub _session_tick
 			}
 
 		} else {
-			$logger->log(LOG_ERR,"[CONFIGMANAGER] Pool '%s' [%s] has UNKNOWN state '%s'",
-					$pool->{'Identifier'},
+			$logger->log(LOG_ERR,"[CONFIGMANAGER] Pool '%s' [%s] has UNKNOWN status '%s'",
+					$pool->{'Name'},
 					$pid,
 					$pool->{'Status'}
 			);
@@ -1114,13 +1117,13 @@ sub _session_tick
 		my $pool = $pools->{$poolMember->{'PoolID'}};
 		my $shaperState = getPoolMemberShaperState($poolMember->{'ID'});
 
-		# Pool is newly added
+		# Pool member is newly added
 		if ($poolMember->{'Status'} == CFGM_NEW) {
 
 			# If the change is not yet live, we should queue it to go live
-			if ($shaperState == SHAPER_NOTLIVE) {
-				$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' member '%s' [%s] new and not live, adding to shaper",
-						$pool->{'Identifier'},
+			if ($shaperState & SHAPER_NOTLIVE) {
+				$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' member '%s' [%s] new and is not live, adding to shaper",
+						$pool->{'Name'},
 						$poolMember->{'IPAddress'},
 						$pmid
 				);
@@ -1130,11 +1133,13 @@ sub _session_tick
 				$poolMember->{'Status'} = CFGM_ONLINE;
 				# Remove from queue
 				delete($poolMemberChangeQueue->{$pmid});
+
 			} else {
-				$logger->log(LOG_ERR,"[CONFIGMANAGER] Pool '%s' member '%s' [%s] has UNKNOWN state (CFGM_NEW && !SHAPER_NOTLIVE)",
-						$pool->{'Identifier'},
+				$logger->log(LOG_ERR,"[CONFIGMANAGER] Pool '%s' member '%s' [%s] has UNKNOWN state '%s'",
+						$pool->{'Name'},
 						$poolMember->{'IPAddress'},
-						$pmid
+						$pmid,
+						$shaperState
 				);
 			}
 
@@ -1143,18 +1148,20 @@ sub _session_tick
 
 			# We've transitioned more than likely from offline, any state to online
 			# We don't care if the shaper is pending removal, we going to force re-adding now
-			if ($shaperState != SHAPER_LIVE) {
-				$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' member '%s' [%s] online and not in live state, re-queue as add",
-						$pool->{'Identifier'},
+			if (!($shaperState & SHAPER_LIVE)) {
+				$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' member '%s' [%s] online and is not live, re-queue as add",
+						$pool->{'Name'},
 						$poolMember->{'IPAddress'},
 						$pmid
 				);
 				$poolMember->{'Status'} = CFGM_NEW;
+
 			} else {
-				$logger->log(LOG_ERR,"[CONFIGMANAGER] Pool '%s' member '%s' [%s] has UNKNOWN state (CFGM_ONLINE && SHAPER_LIVE)",
-						$pool->{'Identifier'},
+				$logger->log(LOG_ERR,"[CONFIGMANAGER] Pool '%s' member '%s' [%s] has UNKNOWN state '%s'",
+						$pool->{'Name'},
 						$poolMember->{'IPAddress'},
-						$pmid
+						$pmid,
+						$shaperState
 				);
 			}
 
@@ -1163,9 +1170,9 @@ sub _session_tick
 		} elsif ($poolMember->{'Status'} == CFGM_CHANGED) {
 
 			# If the shaper is live we can go ahead
-			if ($shaperState == SHAPER_LIVE) {
+			if ($shaperState & SHAPER_LIVE) {
 				$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' member '%s' [%s] has been modified, sending to shaper",
-						$pool->{'Identifier'},
+						$pool->{'Name'},
 						$poolMember->{'IPAddress'},
 						$pmid
 				);
@@ -1176,20 +1183,21 @@ sub _session_tick
 				# Remove from queue
 				delete($poolMemberChangeQueue->{$pmid});
 
-			} elsif ($shaperState == SHAPER_NOTLIVE) {
-				$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' member '%s' [%s] has been modified but not live, re-queue as ".
+			} elsif ($shaperState & SHAPER_NOTLIVE) {
+				$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' member '%s' [%s] has been modified and is not live, re-queue as ".
 						"add",
-						$pool->{'Identifier'},
+						$pool->{'Name'},
 						$poolMember->{'IPAddress'},
 						$pmid
 				);
 				$poolMember->{'Status'} = CFGM_NEW;
+
 			} else {
-				$logger->log(LOG_ERR,"[CONFIGMANAGER] Pool '%s' member '%s' [%s] has UNKNOWN state (CFGM_CHANGED && ".
-						"!SHAPER_LIVE && !SHAPER_NOTLIVE)",
-						$pool->{'Identifier'},
+				$logger->log(LOG_ERR,"[CONFIGMANAGER] Pool '%s' member '%s' [%s] has UNKNOWN state '%s'",
+						$pool->{'Name'},
 						$poolMember->{'IPAddress'},
-						$pmid
+						$pmid,
+						$shaperState
 				);
 			}
 
@@ -1198,28 +1206,29 @@ sub _session_tick
 		} elsif ($poolMember->{'Status'} == CFGM_OFFLINE) {
 
 			# If the change is live, but should go offline, queue it
-			if ($shaperState == SHAPER_LIVE) {
+			if ($shaperState & SHAPER_LIVE) {
 
-				if ($now - $poolMember->{'LastUpdate'} > 10) {
-					$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' member '%s' [%s] marked offline and stale, removing from ".
-							"shaper",
-							$pool->{'Identifier'},
+				if ($now - $poolMember->{'LastUpdate'} > TIMEOUT_EXPIRE_OFFLINE) {
+					$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' member '%s' [%s] marked offline and expired, removing ".
+							"from shaper",
+							$pool->{'Name'},
 							$poolMember->{'IPAddress'},
 							$pmid
 					);
 					$kernel->post('shaper' => 'poolmember_remove' => $pmid);
 					setPoolMemberShaperState($poolMember->{'ID'},SHAPER_PENDING);
+
 				} else {
 					$logger->log(LOG_INFO,"[CONFIGMANAGER] Pool '%s' member '%s' [%s] marked offline and fresh, postponing",
-							$pool->{'Identifier'},
+							$pool->{'Name'},
 							$poolMember->{'IPAddress'},
 							$pmid
 					);
 				}
 
-			} elsif ($shaperState == SHAPER_NOTLIVE) {
+			} elsif ($shaperState & SHAPER_NOTLIVE) {
 				$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' member '%s' [%s] marked offline and is not live, removing",
-						$pool->{'Identifier'},
+						$pool->{'Name'},
 						$poolMember->{'IPAddress'},
 						$pmid
 				);
@@ -1236,8 +1245,8 @@ sub _session_tick
 			}
 
 		} else {
-			$logger->log(LOG_ERR,"[CONFIGMANAGER] Pool '%s' member '%s' [%s] has UNKNOWN state '%s'",
-					$pool->{'Identifier'},
+			$logger->log(LOG_ERR,"[CONFIGMANAGER] Pool '%s' member '%s' [%s] has UNKNOWN status '%s'",
+					$pool->{'Name'},
 					$poolMember->{'IPAddress'},
 					$pmid,
 					$poolMember->{'Status'}
@@ -1728,46 +1737,46 @@ sub createPool
 
 	my $now = time();
 
-	# Now check if the identifier is valid
-	if (!defined($pool->{'Identifier'} = $poolData->{'Identifier'})) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process pool add as Identifier is invalid");
+	# Now check if the name is valid
+	if (!defined($pool->{'Name'} = $poolData->{'Name'})) {
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process pool add as Name is invalid");
 		return;
 	}
 	# Check interface group ID is OK
 	if (!defined($pool->{'InterfaceGroupID'} = isInterfaceGroupIDValid($poolData->{'InterfaceGroupID'}))) {
 		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process pool add for '%s' as the InterfaceGroupID is invalid",
-				$pool->{'Identifier'}
+				$pool->{'Name'}
 		);
 		return;
 	}
-	# If we already have this identifier added, return it as the pool
-	if (defined(my $pool = $poolIdentifierMap->{$pool->{'InterfaceGroupID'}}->{$pool->{'Identifier'}})) {
+	# If we already have this name added, return it as the pool
+	if (defined(my $pool = $poolNameMap->{$pool->{'InterfaceGroupID'}}->{$pool->{'Name'}})) {
 		return $pool->{'ID'};
 	}
 	# Check class is OK
-	if (!defined($pool->{'ClassID'} = isClassIDValid($poolData->{'ClassID'}))) {
+	if (!defined($pool->{'ClassID'} = isTrafficClassIDValid($poolData->{'ClassID'}))) {
 		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process pool add for '%s' as the ClassID is invalid",
-				$pool->{'Identifier'}
+				$pool->{'Name'}
 		);
 		return;
 	}
 	# Make sure things are not attached to the default pool
 	if (defined($config->{'default_pool'}) && $pool->{'ClassID'} eq $config->{'default_pool'}) {
 		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process pool add for '%s' as the ClassID is the 'default_pool' ClassID",
-				$pool->{'Identifier'}
+				$pool->{'Name'}
 		);
 		return;
 	}
 	# Check traffic limits
 	if (!isNumber($pool->{'TrafficLimitTx'} = $poolData->{'TrafficLimitTx'})) {
 		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process pool add for '%s' as the TrafficLimitTx is invalid",
-				$pool->{'Identifier'}
+				$pool->{'Name'}
 		);
 		return;
 	}
 	if (!isNumber($pool->{'TrafficLimitRx'} = $poolData->{'TrafficLimitRx'})) {
 		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process pool add for '%s' as the TrafficLimitRx is invalid",
-				$pool->{'Identifier'}
+				$pool->{'Name'}
 		);
 		return;
 	}
@@ -1800,8 +1809,8 @@ sub createPool
 	# Add pool
 	$pools->{$pool->{'ID'}} = $pool;
 
-	# Link pool identifier map
-	$poolIdentifierMap->{$pool->{'InterfaceGroupID'}}->{$pool->{'Identifier'}} = $pool;
+	# Link pool name map
+	$poolNameMap->{$pool->{'InterfaceGroupID'}}->{$pool->{'Name'}} = $pool;
 	# Blank our pool member mapping
 	$poolMemberMap->{$pool->{'ID'}} = { };
 
@@ -1914,23 +1923,23 @@ sub getPool
 }
 
 
-# Function to get a pool member by its identifier
-sub getPoolByIdentifer
+# Function to get a pool by its name
+sub getPoolByName
 {
-	my ($interfaceGroupID,$identifier) = @_;
+	my ($interfaceGroupID,$name) = @_;
 
 
 	# Make sure both params are defined or we get warnings
-	if (!defined($interfaceGroupID) || !defined($identifier)) {
+	if (!defined($interfaceGroupID) || !defined($name)) {
 		return;
 	}
 
 	# Maybe it doesn't exist?
-	if (!defined($poolIdentifierMap->{$interfaceGroupID}) || !defined($poolIdentifierMap->{$interfaceGroupID}->{$identifier})) {
+	if (!defined($poolNameMap->{$interfaceGroupID}) || !defined($poolNameMap->{$interfaceGroupID}->{$name})) {
 		return;
 	}
 
-	return dclone($poolIdentifierMap->{$interfaceGroupID}->{$identifier});
+	return dclone($poolNameMap->{$interfaceGroupID}->{$name});
 }
 
 
@@ -1997,9 +2006,9 @@ sub setPoolShaperState
 		return;
 	}
 
-	$pools->{$pid}->{'.shaper_state'} = $state;
+	$pools->{$pid}->{'.shaper_state'} |= $state;
 
-	return $state;
+	return $pools->{$pid}->{'.shaper_state'};
 }
 
 
@@ -2061,7 +2070,7 @@ sub isPoolReady
 		return;
 	}
 
-	return ($pools->{$pid}->{'Status'} == CFGM_ONLINE && $state == SHAPER_LIVE);
+	return ($pools->{$pid}->{'Status'} == CFGM_ONLINE && $state & SHAPER_LIVE);
 }
 
 
@@ -2333,8 +2342,37 @@ sub getPoolMember
 }
 
 
-# Function to return pool member ID's with a certain IP address
-sub getPoolMembersByIP
+# Function to return a list of pool ID's
+sub getPoolMemberByUsernameIP
+{
+	my ($pid,$username,$ipAddress) = @_;
+
+
+	# Check pool exists first
+	if (!isPoolIDValid($pid)) {
+		return;
+	}
+
+	# Check our member map is not undefined
+	if (!defined($poolMemberMap->{$pid})) {
+		return;
+	}
+
+	# Loop with pool members and grab the match, there can only be one as we cannot conflict username and IP
+	foreach my $pmid (keys %{$poolMemberMap->{$pid}}) {
+		my $poolMember = $poolMemberMap->{$pid}->{$pmid};
+
+		if ($poolMember->{'Username'} eq $username && $poolMember->{'IPAddress'} eq $ipAddress) {
+			return $pmid;
+		}
+	}
+
+	return;
+}
+
+
+# Function to return pool member ID's with a certain IP address using an interface group
+sub getAllPoolMembersByInterfaceGroupIP
 {
 	my ($interfaceGroupID,$ipAddress) = @_;
 
@@ -2378,7 +2416,7 @@ sub isPoolMemberReady
 		return;
 	}
 
-	return ($poolMembers->{$pmid}->{'Status'} == CFGM_ONLINE && getPoolMemberShaperState($pmid) == SHAPER_LIVE);
+	return ($poolMembers->{$pmid}->{'Status'} == CFGM_ONLINE && getPoolMemberShaperState($pmid) & SHAPER_LIVE);
 }
 
 
@@ -2426,9 +2464,9 @@ sub setPoolMemberShaperState
 		return;
 	}
 
-	$poolMembers->{$pmid}->{'.shaper_state'} = $state;
+	$poolMembers->{$pmid}->{'.shaper_state'} |= $state;
 
-	return $state;
+	return $poolMembers->{$pmid}->{'.shaper_state'};
 }
 
 
@@ -2529,10 +2567,10 @@ sub createLimit
 		return;
 	}
 
-	my $poolIdentifier = $limitData->{'Username'};
+	my $poolName = $limitData->{'Username'};
 	my $poolData = {
 		'FriendlyName' => $limitData->{'IPAddress'},
-		'Identifier' => $poolIdentifier,
+		'Name' => $poolName,
 		'InterfaceGroupID' => $limitData->{'InterfaceGroupID'},
 		'ClassID' => $limitData->{'ClassID'},
 		'TrafficLimitTx' => $limitData->{'TrafficLimitTx'},
@@ -2671,7 +2709,7 @@ sub removeOverride
 			delete($pool->{'.applied_overrides'}->{$override->{'ID'}});
 
 			# If the pool is online and live, trigger a change
-			if ($pool->{'Status'} == CFGM_ONLINE && getPoolShaperState($pid) == SHAPER_LIVE) {
+			if ($pool->{'Status'} == CFGM_ONLINE && getPoolShaperState($pid) & SHAPER_LIVE) {
 				$poolChangeQueue->{$pool->{'ID'}} = $pool;
 				$pool->{'Status'} = CFGM_CHANGED;
 			}
@@ -2846,7 +2884,7 @@ sub _override_resolve
 	while ((my $pid, my $pool) = each(%{$poolHash})) {
 		# Build a candidate from the pool
 		my $candidate = {
-			'PoolIdentifier' => $pool->{'Identifier'},
+			'PoolName' => $pool->{'Name'},
 		};
 
 		# If we only have 1 member in the pool, add its username, IP and group
@@ -2905,7 +2943,7 @@ sub _override_resolve
 				$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Override '%s' [%s] applied to pool '%s' [%s]",
 						$override->{'FriendlyName'},
 						$override->{'ID'},
-						$pool->{'Identifier'},
+						$pool->{'Name'},
 						$pool->{'ID'}
 				);
 
@@ -2919,7 +2957,7 @@ sub _override_resolve
 
 					$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Override '%s' no longer applies to pool '%s' [%s]",
 							$override->{'ID'},
-							$pool->{'Identifier'},
+							$pool->{'Name'},
 							$pool->{'ID'}
 					);
 				}
@@ -2934,7 +2972,7 @@ sub _override_resolve
 		# If there were pool changes, trigger a pool update
 		if (keys %{$poolChanges} > 0) {
 			# If the pool is currently online and live, trigger a change
-			if ($pool->{'Status'} == CFGM_ONLINE && getPoolShaperState($pid) == SHAPER_LIVE) {
+			if ($pool->{'Status'} == CFGM_ONLINE && getPoolShaperState($pid) & SHAPER_LIVE) {
 				$pool->{'Status'} = CFGM_CHANGED;
 				$poolChangeQueue->{$pool->{'ID'}} = $pool;
 			}

@@ -35,8 +35,9 @@ use opentrafficshaper::plugins::configmanager qw(
 		removePoolAttribute
 		getPoolTxInterface
 		getPoolRxInterface
-		getPoolShaperState
 		setPoolShaperState
+		unsetPoolShaperState
+		getPoolShaperState
 
 		getEffectivePool
 
@@ -46,6 +47,7 @@ use opentrafficshaper::plugins::configmanager qw(
 		removePoolMemberAttribute
 		getPoolMemberMatchPriority
 		setPoolMemberShaperState
+		unsetPoolMemberShaperState
 		getPoolMemberShaperState
 
 		getTrafficClassPriority
@@ -242,7 +244,7 @@ sub _session_pool_add
 	}
 
 	$logger->log(LOG_INFO,"[TC] Add pool '%s' to interface group '%s' [%s]",
-			$pool->{'Identifier'},
+			$pool->{'Name'},
 			$pool->{'InterfaceGroupID'},
 			$pool->{'ID'}
 	);
@@ -300,6 +302,7 @@ sub _session_pool_add
 	setPoolAttribute($pool->{'ID'},'shaper.live.TrafficLimitRxBurst',$trafficLimitRxBurst);
 
 	# Mark as live
+	unsetPoolShaperState($pool->{'ID'},SHAPER_NOTLIVE|SHAPER_PENDING);
 	setPoolShaperState($pool->{'ID'},SHAPER_LIVE);
 }
 
@@ -320,16 +323,16 @@ sub _session_pool_remove
 	}
 
 	# Make sure its not NOTLIVE
-	if (getPoolShaperState($pid) == SHAPER_NOTLIVE) {
+	if (getPoolShaperState($pid) & SHAPER_NOTLIVE) {
 		$logger->log(LOG_WARN,"[TC] Ignoring remove for pool '%s' [%s]",
-				$pool->{'Identifier'},
+				$pool->{'Name'},
 				$pool->{'ID'}
 		);
 		return;
 	}
 
 	$logger->log(LOG_INFO,"[TC] Removing pool '%s' [%s]",
-			$pool->{'Identifier'},
+			$pool->{'Name'},
 			$pool->{'ID'}
 	);
 
@@ -370,9 +373,6 @@ sub _session_pool_remove
 	# Post changeset
 	$kernel->post("_tc" => "queue" => $changeSet);
 
-	# Mark as not live
-	setPoolShaperState($pool->{'ID'},SHAPER_NOTLIVE);
-
 	# Cleanup attributes
 	removePoolAttribute($pool->{'ID'},'tc.txclass');
 	removePoolAttribute($pool->{'ID'},'tc.rxclass');
@@ -382,6 +382,10 @@ sub _session_pool_remove
 	removePoolAttribute($pool->{'ID'},'shaper.live.TrafficLimitTxBurst');
 	removePoolAttribute($pool->{'ID'},'shaper.live.TrafficLimitRx');
 	removePoolAttribute($pool->{'ID'},'shaper.live.TrafficLimitRxBurst');
+
+	# Mark as not live
+	unsetPoolShaperState($pool->{'ID'},SHAPER_LIVE|SHAPER_PENDING);
+	setPoolShaperState($pool->{'ID'},SHAPER_NOTLIVE);
 }
 
 
@@ -394,7 +398,7 @@ sub _session_pool_change
 	# Grab pool
 	my $pool = getPool($pid);
 
-	$logger->log(LOG_INFO,"[TC] Processing changes for '%s' [%s]",$pool->{'Identifier'},$pool->{'ID'});
+	$logger->log(LOG_INFO,"[TC] Processing changes for '%s' [%s]",$pool->{'Name'},$pool->{'ID'});
 
 	# Grab our effective pool
 	my $effectivePool = getEffectivePool($pool->{'ID'});
@@ -434,7 +438,9 @@ sub _session_pool_change
 	setPoolAttribute($pool->{'ID'},'shaper.live.TrafficLimitTxBurst',$trafficLimitTxBurst);
 	setPoolAttribute($pool->{'ID'},'shaper.live.TrafficLimitRx',$trafficLimitRx);
 	setPoolAttribute($pool->{'ID'},'shaper.live.TrafficLimitRxBurst',$trafficLimitRxBurst);
+
 	# Mark as live
+	unsetPoolShaperState($pool->{'ID'},SHAPER_NOTLIVE|SHAPER_PENDING);
 	setPoolShaperState($pool->{'ID'},SHAPER_LIVE);
 }
 
@@ -638,6 +644,7 @@ sub _session_poolmember_add
 	$kernel->post("_tc" => "queue" => $changeSet);
 
 	# Mark pool member as live
+	unsetPoolMemberShaperState($poolMember->{'ID'},SHAPER_NOTLIVE|SHAPER_PENDING);
 	setPoolMemberShaperState($poolMember->{'ID'},SHAPER_LIVE);
 }
 
@@ -659,12 +666,12 @@ sub _session_poolmember_remove
 	my $pool = getPool($poolMember->{'PoolID'});
 
 	# Make sure its not NOTLIVE
-	if (getPoolMemberShaperState($pmid) == SHAPER_NOTLIVE) {
+	if (getPoolMemberShaperState($pmid) & SHAPER_NOTLIVE) {
 		$logger->log(LOG_WARN,"[TC] Ignoring remove for pool member '%s' with IP '%s' [%s] from pool '%s'",
 				$poolMember->{'Username'},
 				$poolMember->{'IPAddress'},
 				$poolMember->{'ID'},
-				$pool->{'Identifier'}
+				$pool->{'Name'}
 		);
 		return;
 	}
@@ -673,7 +680,7 @@ sub _session_poolmember_remove
 			$poolMember->{'Username'},
 			$poolMember->{'IPAddress'},
 			$poolMember->{'ID'},
-			$pool->{'Identifier'}
+			$pool->{'Name'}
 	);
 
 	# Grab our interfaces
@@ -713,12 +720,13 @@ sub _session_poolmember_remove
 	# Post changeset
 	$kernel->post("_tc" => "queue" => $changeSet);
 
-	# Mark as not live
-	setPoolMemberShaperState($poolMember->{'ID'},SHAPER_NOTLIVE);
-
 	# Cleanup attributes
 	removePoolMemberAttribute($poolMember->{'ID'},'tc.txfilter');
 	removePoolMemberAttribute($poolMember->{'ID'},'tc.rxfilter');
+
+	# Mark as not live
+	unsetPoolMemberShaperState($poolMember->{'ID'},SHAPER_LIVE|SHAPER_PENDING);
+	setPoolMemberShaperState($poolMember->{'ID'},SHAPER_NOTLIVE);
 }
 
 

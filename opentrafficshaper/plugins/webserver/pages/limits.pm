@@ -52,13 +52,13 @@ use opentrafficshaper::utils qw(
 use opentrafficshaper::plugins::configmanager qw(
 	getPools
 	getPool
-	getPoolByIdentifer
+	getPoolByName
 	getPoolShaperState
 	isPoolReady
 
 	getPoolMembers
 	getPoolMember
-	getPoolMembersByIP
+	getAllPoolMembersByInterfaceGroupIP
 	getPoolMemberShaperState
 	isPoolMemberReady
 
@@ -144,7 +144,7 @@ sub pool_list
 				<tr>
 					<th></th>
 					<th>Friendly Name</th>
-					<th>Identifier</th>
+					<th>Name</th>
 					<th>Expires</th>
 					<th></th>
 					<th>Class</th>
@@ -180,10 +180,10 @@ EOF
 
 
 		my $friendlyName = (defined($pool->{'FriendlyName'}) && $pool->{'FriendlyName'} ne "") ? $pool->{'FriendlyName'} :
-				$pool->{'Identifier'};
+				$pool->{'Name'};
 		my $friendlyNameEncoded = encode_entities($friendlyName);
 
-		my $identifierEncoded = encode_entities($pool->{'Identifier'});
+		my $nameEncoded = encode_entities($pool->{'Name'});
 
 		my $expiresStr = ($pool->{'Expires'} > 0) ? DateTime->from_epoch( epoch => $pool->{'Expires'} )->iso8601() : '-never-';
 
@@ -191,7 +191,7 @@ EOF
 
 		# Display relevant icons depending on pool status
 		my $icons = "";
-		if (getPoolShaperState($pool->{'ID'}) == SHAPER_NOTLIVE || $pool->{'Status'} == CFGM_CHANGED) {
+		if (getPoolShaperState($pool->{'ID'}) & SHAPER_NOTLIVE || $pool->{'Status'} == CFGM_CHANGED) {
 			$icons .= '<span class="glyphicon glyphicon-time" />';
 		}
 		if ($pool->{'Status'} == CFGM_NEW) {
@@ -212,7 +212,7 @@ EOF
 				<tr>
 					<td>$icons</td>
 					<td>$friendlyNameEncoded</td>
-					<td>$identifierEncoded</td>
+					<td>$nameEncoded</td>
 					<td>$expiresStr</td>
 					<td><span class="glyphicon glyphicon-arrow-right" /></td>
 					<td>$classStr</td>
@@ -267,7 +267,7 @@ sub pool_addedit
 	# Items for our form...
 	my @formElements = qw(
 		FriendlyName
-		Identifier
+		Name
 		InterfaceGroupID
 		ClassID
 		TrafficLimitTx TrafficLimitTxBurst
@@ -356,16 +356,16 @@ sub pool_addedit
 		my $friendlyName = $formData->{'FriendlyName'};
 
 		# Check POST data
-		my $identifier;
-		if (!defined($identifier = isUsername($formData->{'Identifier'}))) {
-			push(@errors,"Identifier is not valid");
+		my $name;
+		if (!defined($name = isUsername($formData->{'Name'}))) {
+			push(@errors,"Name is not valid");
 		}
 		my $interfaceGroupID;
 		if (!defined($interfaceGroupID = isInterfaceGroupIDValid($formData->{'InterfaceGroupID'}))) {
 			push(@errors,"Interface group is not valid");
 		}
-		if ($formType ne "Edit" && getPoolByIdentifer($interfaceGroupID,$identifier)) {
-			push(@errors,"A pool with the same identifier already exists");
+		if ($formType ne "Edit" && getPoolByName($interfaceGroupID,$name)) {
+			push(@errors,"A pool with the same name already exists");
 		}
 		my $classID;
 		if (!defined($classID = isTrafficClassIDValid($formData->{'ClassID'}))) {
@@ -427,7 +427,7 @@ sub pool_addedit
 			# Build pool details
 			my $poolData = {
 				'FriendlyName' => $friendlyName,
-				'Identifier' => $identifier,
+				'Name' => $name,
 				'InterfaceGroupID' => $interfaceGroupID,
 				'ClassID' => $classID,
 				'TrafficLimitTx' => $trafficLimitTx,
@@ -450,10 +450,10 @@ sub pool_addedit
 
 			$kernel->post("configmanager" => $cEvent => $poolData);
 
-			$logger->log(LOG_INFO,"[WEBSERVER/LIMITS] Pool: %s, Identifier: %s, InterfaceGroup: %s, Class: %s, Limits: %s/%s, ".
+			$logger->log(LOG_INFO,"[WEBSERVER/LIMITS] Pool: %s, Name: %s, InterfaceGroup: %s, Class: %s, Limits: %s/%s, ".
 					"Burst: %s/%s",
 					$formType,
-					prettyUndef($identifier),
+					prettyUndef($name),
 					prettyUndef($interfaceGroupID),
 					prettyUndef($classID),
 					prettyUndef($trafficLimitTx),
@@ -548,11 +548,11 @@ EOF
 				</div>
 			</div>
 			<div class="form-group">
-				<label for="Identifier" class="col-md-2 control-label">Identifier</label>
+				<label for="Name" class="col-md-2 control-label">Name</label>
 				<div class="row">
 					<div class="col-md-4 input-group">
-						<input name="Identifier" type="text" placeholder="Identifier" class="form-control"
-								value="$formData->{'Identifier'}" $formNoEdit />
+						<input name="Name" type="text" placeholder="Name" class="form-control"
+								value="$formData->{'Name'}" $formNoEdit />
 						<span class="input-group-addon">*</span>
 					</div>
 				</div>
@@ -720,12 +720,12 @@ EOF
 	# Make the pool ID safe for HTML
 	my $encodedPID = encode_entities($queryParams->{'pid'}->{'value'});
 	# Make the friendly name HTML safe
-	my $encodedIdentifier = encode_entities($pool->{'Identifier'});
+	my $encodedName = encode_entities($pool->{'Name'});
 
 	# Build our confirmation dialog
 	$content .= <<EOF;
 		<div class="alert alert-danger">
-			Are you very sure you wish to remove pool for "$encodedIdentifier"?
+			Are you very sure you wish to remove pool for "$encodedName"?
 		</div>
 		<form role="form" method="post">
 			<input type="submit" class="btn btn-primary" name="confirm" value="Yes" />
@@ -782,9 +782,9 @@ EOF
 	my $pidEscaped = encode_entities($pool->{'ID'});
 
 	my $poolFriendlyName = (defined($pool->{'FriendlyName'}) && $pool->{'FriendlyName'} ne "") ? $pool->{'FriendlyName'} :
-			$pool->{'Identifier'};
+			$pool->{'Name'};
 	my $poolFriendlyNameEncoded = encode_entities($poolFriendlyName);
-	my $poolIdentifierEncoded = encode_entities($pool->{'Identifier'});
+	my $poolNameEncoded = encode_entities($pool->{'Name'});
 
 	# Menu
 	$customMenu = [
@@ -803,7 +803,7 @@ EOF
 	$content .=<<EOF;
 		<legend>
 			<a href="pool-list"><span class="glyphicon glyphicon-circle-arrow-left"></span></a>
-			Pool Member List: '$poolFriendlyNameEncoded' [$poolIdentifierEncoded]
+			Pool Member List: '$poolFriendlyNameEncoded' [$poolNameEncoded]
 		</legend>
 		<table class="table">
 			<thead>
@@ -848,7 +848,7 @@ EOF
 
 		# Display relevant icons depending on pool status
 		my $icons = "";
-		if (getPoolMemberShaperState($poolMember->{'ID'}) ne SHAPER_LIVE) {
+		if (!(getPoolMemberShaperState($poolMember->{'ID'}) & SHAPER_LIVE)) {
 			$icons .= '<span class="glyphicon glyphicon-time" />';
 		}
 		if ($poolMember->{'Status'} == CFGM_NEW) {
@@ -1042,7 +1042,7 @@ sub poolmember_addedit
 		}
 
 		if ($formType eq "Add") {
-			if (getPoolMembersByIP($pool->{'InterfaceGroupID'},$ipAddress)) {
+			if (getAllPoolMembersByInterfaceGroupIP($pool->{'InterfaceGroupID'},$ipAddress)) {
 				push(@errors,"A pool member with the same IP address already exists");
 			}
 		} elsif ($formType eq "Edit") {
@@ -1803,7 +1803,7 @@ EOF
 
 		my $friendlyNameEncoded = prettyUndef(encode_entities($override->{'FriendlyName'}));
 		my $usernameEncoded = prettyUndef(encode_entities($override->{'Username'}));
-		my $poolIdentifierEncoded = prettyUndef(encode_entities($override->{'PoolIdentifier'}));
+		my $poolNameEncoded = prettyUndef(encode_entities($override->{'PoolName'}));
 		my $ipAddress = prettyUndef($override->{'IPAddress'});
 		my $expiresStr = ($override->{'Expires'} > 0) ?
 				DateTime->from_epoch( epoch => $override->{'Expires'} )->iso8601() : '-never-';
@@ -1818,7 +1818,7 @@ EOF
 				<tr>
 					<td></td>
 					<td>$friendlyNameEncoded</td>
-					<td>$poolIdentifierEncoded</td>
+					<td>$poolNameEncoded</td>
 					<td>$usernameEncoded</td>
 					<td>$ipAddress</td>
 					<td>$expiresStr</td>
@@ -1869,7 +1869,7 @@ sub override_addedit
 	# Items for our form...
 	my @formElements = qw(
 		FriendlyName
-		PoolIdentifier Username IPAddress
+		PoolName Username IPAddress
 		ClassID
 		TrafficLimitTx TrafficLimitTxBurst
 		TrafficLimitRx TrafficLimitRxBurst
@@ -1970,12 +1970,12 @@ sub override_addedit
 			push(@errors,"Friendly name must be specified");
 		}
 
-		# Make sure we have at least a pool identifier, username or IP address
-		my $poolIdentifier = isUsername($formData->{'PoolIdentifier'});
+		# Make sure we have at least a pool name, username or IP address
+		my $poolName = isUsername($formData->{'PoolName'});
 		my $username = isUsername($formData->{'Username'});
 		my $ipAddress = isIP($formData->{'IPAddress'});
-		if (!defined($poolIdentifier) && !defined($username) && !defined($ipAddress)) {
-			push(@errors,"A pool identifier and/or IP address and/or Username must be specified");
+		if (!defined($poolName) && !defined($username) && !defined($ipAddress)) {
+			push(@errors,"A pool name and/or IP address and/or Username must be specified");
 		}
 
 		# If the traffic class is ticked, process it
@@ -2058,7 +2058,7 @@ sub override_addedit
 			# Build override
 			my $overrideData = {
 				'FriendlyName' => $friendlyName,
-				'PoolIdentifier' => $poolIdentifier,
+				'PoolName' => $poolName,
 				'Username' => $username,
 				'IPAddress' => $ipAddress,
 #				'GroupID' => 1,
@@ -2084,7 +2084,7 @@ sub override_addedit
 
 			$logger->log(LOG_INFO,"[WEBSERVER/OVERRIDE/ADD] Pool: %s, User: %s, IP: %s, Group: %s, Class: %s, Limits: %s/%s, ".
 					"Burst: %s/%s",
-					prettyUndef($poolIdentifier),
+					prettyUndef($poolName),
 					prettyUndef($username),
 					prettyUndef($ipAddress),
 					"",
@@ -2176,11 +2176,11 @@ EOF
 				</div>
 			</div>
 			<div class="form-group">
-				<label for="PoolIdentifier" class="col-md-2 control-label">Pool Identifier</label>
+				<label for="PoolName" class="col-md-2 control-label">Pool Name</label>
 				<div class="row">
 					<div class="col-md-4">
-						<input name="PoolIdentifier" type="text" placeholder="Pool Identifier To Override" class="form-control"
-								value="$formData->{'PoolIdentifier'}" $formNoEdit/>
+						<input name="PoolName" type="text" placeholder="Pool Name To Override" class="form-control"
+								value="$formData->{'PoolName'}" $formNoEdit/>
 					</div>
 				</div>
 			</div>

@@ -943,7 +943,7 @@ sub _getIdentifierFromPID
 		return undef;
 	}
 
-	return sprintf("Pool:%s",$pool->{'Identifier'});
+	return sprintf("Pool:%s",$pool->{'Name'});
 }
 
 
