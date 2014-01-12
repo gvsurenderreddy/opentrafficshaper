@@ -3054,7 +3054,7 @@ sub _load_statefile
 	if (! tie %stateHash, 'Config::IniFiles', ( -file => $config->{'statefile'} )) {
 		# Check if we got errors, if we did use them for our reason
 		my @errors = @Config::IniFiles::errors;
-		my $reason = $1 || join('; ',@errors) || "Config file blank?";
+		my $reason = $1 || join('; ',@errors);
 
 		$logger->log(LOG_ERR,"[CONFIGMANAGER] Failed to open statefile '%s': %s",$config->{'statefile'},$reason);
 
