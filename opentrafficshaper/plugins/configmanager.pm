@@ -2199,8 +2199,6 @@ sub	createPoolMember
 	# Add pool member
 	$poolMembers->{$poolMember->{'ID'}} = $poolMember;
 
-	# Link interface IP address map
-	$interfaceIPMap->{$pool->{'InterfaceGroupID'}}->{$poolMember->{'IPAddress'}}->{$poolMember->{'ID'}} = $poolMember;
 	# Link pool map
 	$poolMemberMap->{$pool->{'ID'}}->{$poolMember->{'ID'}} = $poolMember;
 
@@ -2213,8 +2211,36 @@ sub	createPoolMember
 
 	setPoolMemberShaperState($poolMember->{'ID'},SHAPER_NOTLIVE);
 
-	# Pool member needs updating
-	$poolMemberChangeQueue->{$poolMember->{'ID'}} = $poolMember;
+	# Check for IP conflicts
+	if (
+			defined($interfaceIPMap->{$pool->{'InterfaceGroupID'}}->{$poolMember->{'IPAddress'}}) &&
+			(my @conflicts = keys %{$interfaceIPMap->{$pool->{'InterfaceGroupID'}}->{$poolMember->{'IPAddress'}}}) > 0
+	) {
+		# Loop wiht conflicts and build some log items to use
+		my @logItems;
+		foreach my $pmid (@conflicts) {
+			my $cPoolMember = $poolMembers->{$pmid};
+			my $cPool = $pools->{$cPoolMember->{'PoolID'}};
+			push(@logItems,sprintf("Pool:%s/Member:%s",$cPool->{'Name'},$cPoolMember->{'Username'}));
+		}
+
+		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' member '%s' IP '%s' conflicts with: %s",
+				$pool->{'Name'},
+				$poolMember->{'Username'},
+				$poolMember->{'IPAddress'},
+				join(", ",@logItems)
+		);
+
+		setPoolMemberShaperState($poolMember->{'ID'},SHAPER_CONFLICT);
+
+	# We don't have to add it to the queue
+	} else {
+		# Pool member needs updating
+		$poolMemberChangeQueue->{$poolMember->{'ID'}} = $poolMember;
+	}
+
+	# Link interface IP address map, we must do the check above FIRST, and that neds the pool to be added to the pool map
+	$interfaceIPMap->{$pool->{'InterfaceGroupID'}}->{$poolMember->{'IPAddress'}}->{$poolMember->{'ID'}} = $poolMember;
 
 	# Resolve overrides, there may of been no pool members, now there is one and we may be able to apply an override
 	_override_resolve([$pool->{'ID'}]);
