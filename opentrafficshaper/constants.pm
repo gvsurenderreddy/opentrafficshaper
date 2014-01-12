@@ -33,6 +33,7 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 	SHAPER_NOTLIVE
 	SHAPER_PENDING
 	SHAPER_LIVE
+	SHAPER_CONFLICT
 );
 
 
@@ -41,9 +42,9 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 # CFGM_ONLINE - Online
 # CFGM_CHANGED - Changed
 use constant {
-	CFGM_OFFLINE => 0,
-	CFGM_CHANGED => 1,
-	CFGM_ONLINE => 2,
+	CFGM_OFFLINE => 1,
+	CFGM_CHANGED => 2,
+	CFGM_ONLINE => 3,
 	CFGM_NEW => 4,
 };
 
@@ -51,10 +52,12 @@ use constant {
 # SHAPER_NOTLIVE - Nothing is going on yet, something should happen
 # SHAPER_PENDING - Waiting on shaper to do a change
 # SHAPER_LIVE - Shaper is up to date with our config
+# SHAPER_CONFLICT - Item is in conflict
 use constant {
-	SHAPER_NOTLIVE => 0,
-	SHAPER_PENDING => 1,
-	SHAPER_LIVE => 2,
+	SHAPER_NOTLIVE => 1,
+	SHAPER_PENDING => 2,
+	SHAPER_LIVE => 4,
+	SHAPER_CONFLICT => 8,
 };
 
 
