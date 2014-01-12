@@ -830,6 +830,13 @@ sub plugin_init
 # Start the plugin
 sub plugin_start
 {
+	# Load config
+	if (-f $config->{'statefile'}) {
+		_load_statefile();
+	} else {
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Statefile '%s' cannot be opened: %s",$config->{'statefile'},$!);
+	}
+
 	$logger->log(LOG_INFO,"[CONFIGMANAGER] Started with %s pools, %s pool members and %s overrides",
 			scalar(keys %{$pools}),
 			scalar(keys %{$poolMembers}),
@@ -847,13 +854,6 @@ sub _session_start
 
 	# Set our alias
 	$kernel->alias_set("configmanager");
-
-	# Load config
-	if (-f $config->{'statefile'}) {
-		_load_statefile($kernel);
-	} else {
-		$logger->log(LOG_WARN,"[CONFIGMANAGER] Statefile '%s' cannot be opened: %s",$config->{'statefile'},$!);
-	}
 
 	# Set delay on config updates
 	$kernel->delay('_tick' => TICK_PERIOD);
