@@ -483,7 +483,7 @@ sub _session_poolmember_add
 	my $txInterface = getPoolTxInterface($pool->{'ID'});
 	my $rxInterface = getPoolRxInterface($pool->{'ID'});
 	my $trafficPriority = getTrafficClassPriority($pool->{'ClassID'});
-	my $matchPriority = getPoolMemberMatchPriority($pool->{'ID'});
+	my $matchPriority = getPoolMemberMatchPriority($poolMember->{'ID'});
 
 	# Check if we have a entry for the /8, if not we must create our 2nd level hash table and link it
 	if (!defined($tcFilterMappings->{$txInterface}->{'dst'}->{$matchPriority}->{$ip1})) {
