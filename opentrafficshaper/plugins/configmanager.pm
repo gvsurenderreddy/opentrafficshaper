@@ -86,6 +86,9 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 
 	getTrafficDirection
 
+	isInterfaceIDValid
+	isGroupIDValid
+
 	getInterface
 	getInterfaces
 	getInterfaceTrafficClasses
