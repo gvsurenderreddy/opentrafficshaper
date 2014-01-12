@@ -193,7 +193,6 @@ sub LIMIT_REQUIRED_ATTRIBUTES {
 		InterfaceGroupID MatchPriorityID
 		GroupID
 		ClassID	TrafficLimitTx TrafficLimitRx
-		Status
 		Source
 	)
 }
@@ -2501,7 +2500,6 @@ sub createLimit
 		'TrafficLimitRxBurst' => $limitData->{'TrafficLimitRxBurst'},
 		'Expires' => $limitData->{'Expires'},
 		'Notes' => $limitData->{'Notes'},
-		'Status' => $limitData->{'Status'},
 		'Source' => $limitData->{'Source'}
 	};
 
@@ -2521,7 +2519,6 @@ sub createLimit
 		'GroupID' => $limitData->{'GroupID'},
 		'Expires' => $limitData->{'Expires'},
 		'Notes' => $limitData->{'Notes'},
-		'Status' => $limitData->{'Status'},
 		'Source' => $limitData->{'Source'}
 	};
 
