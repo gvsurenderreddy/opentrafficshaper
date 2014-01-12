@@ -1474,20 +1474,6 @@ sub isGroupIDValid
 }
 
 
-# Function to check the class ID exists
-sub isClassIDValid
-{
-	my $cid = shift;
-
-
-	if (!defined($config->{'classes'}->{$cid})) {
-		return;
-	}
-
-	return $cid;
-}
-
-
 # Function to return if an interface ID is valid
 sub isInterfaceIDValid
 {
