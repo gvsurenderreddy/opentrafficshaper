@@ -49,6 +49,8 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 	getOverrides
 
 	createPool
+	removePool
+	changePool
 	getPools
 	getPool
 	getPoolByIdentifer
@@ -66,6 +68,9 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 
 	getEffectivePool
 
+	createPoolMember
+	removePoolMember
+	changePoolMember
 	getPoolMembers
 	getPoolMember
 	getPoolMembersByIP
