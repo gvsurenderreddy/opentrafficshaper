@@ -60,6 +60,7 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 	removePoolAttribute
 	getPoolShaperState
 	setPoolShaperState
+	unsetPoolShaperState
 	isPoolIDValid
 	isPoolReady
 
@@ -70,6 +71,7 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 	getPoolMembersByIP
 	getPoolMemberMatchPriority
 	setPoolMemberShaperState
+	unsetPoolMemberShaperState
 	getPoolMemberShaperState
 	getPoolMemberMatchPriority
 	setPoolMemberAttribute
@@ -1996,6 +1998,23 @@ sub setPoolShaperState
 }
 
 
+# Function to unset pools shaper state
+sub unsetPoolShaperState
+{
+	my ($pid,$state) = @_;
+
+
+	# Check pool exists first
+	if (!isPoolIDValid($pid)) {
+		return;
+	}
+
+	$pools->{$pid}->{'.shaper_state'} ^= $state;
+
+	return $pools->{$pid}->{'.shaper_state'};
+}
+
+
 # Function to get shaper state for a pool
 sub getPoolShaperState
 {
@@ -2405,6 +2424,23 @@ sub setPoolMemberShaperState
 	$poolMembers->{$pmid}->{'.shaper_state'} = $state;
 
 	return $state;
+}
+
+
+# Function to unset pool member shaper state
+sub unsetPoolMemberShaperState
+{
+	my ($pmid,$state) = @_;
+
+
+	# Check pool member exists first
+	if (!isPoolMemberIDValid($pmid)) {
+		return;
+	}
+
+	$poolMembers->{$pmid}->{'.shaper_state'} ^= $state;
+
+	return $poolMembers->{$pmid}->{'.shaper_state'};
 }
 
 
