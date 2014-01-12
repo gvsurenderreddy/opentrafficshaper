@@ -1711,7 +1711,10 @@ sub createPool
 		}
 	}
 	if ($isInvalid) {
-		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process pool add as there is an attribute missing: '%s'",$isInvalid);
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process pool add for '%s' as there is an attribute missing: '%s'",
+				prettyUndef($poolData->{'Name'}),
+				$isInvalid
+		);
 		return;
 	}
 
