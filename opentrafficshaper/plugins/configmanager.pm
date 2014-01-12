@@ -3037,12 +3037,13 @@ sub _override_remove_pool
 # Load our statefile
 sub _load_statefile
 {
-	my $kernel = shift;
-
-
 	# Check if the state file exists first of all
-	if (! -e $config->{'statefile'}) {
+	if (! -f $config->{'statefile'}) {
 		$logger->log(LOG_ERR,"[CONFIGMANAGER] Statefile '%s' doesn't exist",$config->{'statefile'});
+		return;
+	}
+	if (! -s $config->{'statefile'}) {
+		$logger->log(LOG_ERR,"[CONFIGMANAGER] Statefile '%s' has zero size ignoring",$config->{'statefile'});
 		return;
 	}
 
