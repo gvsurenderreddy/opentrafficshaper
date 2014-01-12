@@ -3089,6 +3089,9 @@ sub _load_statefile
 		createOverride($coverride);
 	}
 
+	# We need a pool ID translation, when we recreate pools we get different ID's, we cannot restore members with orignal ID's
+	my %pidMap;
+
 	# Loop with pools
 	foreach my $section ($state->GroupMembers('pool')) {
 		my $pool = $stateHash{$section};
@@ -3106,7 +3109,15 @@ sub _load_statefile
 		}
 
 		# Process this pool
-		createPool($cpool);
+		if (defined(my $pid = createPool($cpool))) {
+			# Save the new ID
+			$pidMap{$pool->{'ID'}} = $pid;
+		} else {
+			$logger->log(LOG_ERR,"[CONFIGMANAGER] Failed to load pool '%s' [%s], members will be ignored",
+				prettyUndef($cpool->{'Name'}),
+				$section
+			);
+		}
 	}
 
 	# Loop with pool members
@@ -3125,8 +3136,19 @@ sub _load_statefile
 			}
 		}
 
-		# Process this pool member
-		createPoolMember($cpoolMember);
+		# Translate pool ID
+		if (my $pid = $pidMap{$cpoolMember->{'PoolID'}}) {
+			$cpoolMember->{'PoolID'} = $pid;
+			# Process this pool member
+			if (!defined(my $pmid = createPoolMember($cpoolMember))) {
+				$logger->log(LOG_ERR,"[CONFIGMANAGER] Failed to load pool member '%s'",$pmid);
+			}
+		} else {
+			$logger->log(LOG_ERR,"[CONFIGMANAGER] Failed to load pool member '%s', no pool ID map for '%s'",
+					$cpoolMember->{'Username'},
+					$cpoolMember->{'PoolID'}
+			);
+		}
 	}
 }
 
