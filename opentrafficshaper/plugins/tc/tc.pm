@@ -1529,7 +1529,7 @@ sub __reserveMinorTcClass
 	}
 
 	# Maybe we have one free?
-	my $minorTcClass = pop(@{$tcClasses->{$interface}->{$majorTcClass}->{'free'}});
+	my $minorTcClass = shift(@{$tcClasses->{$interface}->{$majorTcClass}->{'free'}});
 
 	# Generate new number
 	if (!$minorTcClass) {
@@ -1562,7 +1562,7 @@ sub _reserveMajorTcClass
 	}
 
 	# Maybe we have one free?
-	my $majorTcClass = pop(@{$tcClasses->{$interface}->{'free'}});
+	my $majorTcClass = shift(@{$tcClasses->{$interface}->{'free'}});
 
 	# Generate new number
 	if (!$majorTcClass) {
@@ -1666,7 +1666,7 @@ sub _reserveTcFilter
 	}
 
 	# Maybe we have one free?
-	my $filterID = pop(@{$tcFilters->{$interface}->{'free'}});
+	my $filterID = shift(@{$tcFilters->{$interface}->{'free'}});
 
 	# Generate new number
 	if (!$filterID) {
