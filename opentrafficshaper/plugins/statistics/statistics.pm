@@ -102,21 +102,25 @@ my $config = {
 # Stats configuration
 my $statsConfig = {
 	1 => {
-		'precision' => 300,
-		'retention' => 2, # 2 days
+		'precision' => 300, # 5min
+		'retention' => 4, # 4 days
 	},
 	2 => {
-		'precision' => 900,
-		'retention' => 14, # 2 week
+		'precision' => 900, # 15min
+		'retention' => 14, # 14 days
 	},
 	3 => {
-		'precision' => 3600,
+		'precision' => 3600, # 1hr
 		'retention' => 28 * 2, # 2 months
 	},
 	4 => {
 		'precision' => 21600, # 6hr
-		'retention' => 28 * 12 * 2, # 2 years
+		'retention' => 28 * 6, # 6 months
 	},
+	5 => {
+		'precision' => 86400, # 24hr
+		'retention' => 28 * 12 * 2, # 2 years
+	}
 };
 
 
