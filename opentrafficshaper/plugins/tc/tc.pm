@@ -1492,7 +1492,7 @@ sub _disposePoolTcClass
 {
 	my ($interface,$tcClass) = @_;
 
-	return __disposeMinorTcClass($interface,TC_ROOT_CLASS,"_pool_class_:$tcClass");
+	return __disposeMinorTcClass($interface,TC_ROOT_CLASS,$tcClass);
 }
 
 
