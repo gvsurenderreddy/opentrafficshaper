@@ -30,6 +30,25 @@ use IO::Socket::INET;
 
 use opentrafficshaper::logger;
 use opentrafficshaper::utils;
+use opentrafficshaper::plugins::configmanager qw(
+	createPool
+	changePool
+
+	createPoolMember
+	changePoolMember
+
+	createLimit
+
+	getPoolByName
+	getPoolMember
+	getPoolMembers
+	getPoolMemberByUsernameIP
+
+	isInterfaceGroupIDValid
+	isTrafficClassIDValid
+	isMatchPriorityIDValid
+	isGroupIDValid
+);
 
 
 # Exporter stuff
@@ -42,9 +61,15 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 );
 
 use constant {
-	VERSION => '0.1.1',
+	VERSION => '0.2.1',
+
 	DATAGRAM_MAXLEN => 8192,
+
 	DEFAULT_EXPIRY_PERIOD => 86400,
+
+	# Expirty period for removal of entries
+	REMOVE_EXPIRY_PERIOD => 60,
+
 	# IANA public enterprise number
 	# This is used as the radius vendor code
 	IANA_PEN => 42109,
@@ -67,8 +92,11 @@ my $logger;
 # Our own data storage
 my $config = {
 	'expiry_period' => DEFAULT_EXPIRY_PERIOD,
+	'username_to_pool_transform' => undef,
 	'interface_group' => 'eth1,eth0',
 	'match_priority' => 2,
+	'traffic_class' => 2,
+	'group' => 1,
 };
 
 my $dictionary;
@@ -122,19 +150,27 @@ sub plugin_init
 		$config->{'expiry_period'} = $expiry;
 	}
 
+	# Check if we got a username to pool transform
+	if (defined(my $userPoolTransform = $globals->{'file.config'}->{'plugin.radius'}->{'username_to_pool_transform'})) {
+		$logger->log(LOG_INFO,"[RADIUS] Set username_to_pool_transform to '%s'",$userPoolTransform);
+		$config->{'username_to_pool_transform'} = $userPoolTransform;
+	}
+
 	# Default interface group to use
-	if (defined(my $interfaceGroup = $globals->{'file.config'}->{'plugin.radius'}->{'interface_group'})) {
-		if (isInterfaceGroupIsValid($interfaceGroup)) {
+	if (defined(my $interfaceGroup = $globals->{'file.config'}->{'plugin.radius'}->{'default_interface_group'})) {
+		if (isInterfaceGroupIDValid($interfaceGroup)) {
 			$logger->log(LOG_INFO,"[RADIUS] Set interface_group to '%s'",$interfaceGroup);
 			$config->{'interface_group'} = $interfaceGroup;
 		} else {
 			$logger->log(LOG_WARN,"[RADIUS] Cannot set 'interface_group' as value '%s' is invalid",$interfaceGroup);
 		}
+	} else {
+		$logger->log(LOG_INFO,"[RADIUS] Using default interface_group '%s'",$config->{'interface_group'});
 	}
 
 	# Default match priority to use
-	if (defined(my $matchPriority = $globals->{'file.config'}->{'plugin.radius'}->{'match_priority'})) {
-		if (isInterfaceGroupIsValid($matchPriority)) {
+	if (defined(my $matchPriority = $globals->{'file.config'}->{'plugin.radius'}->{'default_match_priority'})) {
+		if (isMatchPriorityIDValid($matchPriority)) {
 			$logger->log(LOG_INFO,"[RADIUS] Set match_priority to '%s'",$matchPriority);
 			$config->{'match_priority'} = $matchPriority;
 		} else {
@@ -142,19 +178,32 @@ sub plugin_init
 		}
 	}
 
-	# Check if we must override the expiry time
-	if (defined(my $expiry = $globals->{'file.config'}->{'plugin.radius'}->{'expiry_period'})) {
-		$logger->log(LOG_INFO,"[RADIUS] Set expiry_period to '%s'",$expiry);
-		$config->{'expiry_period'} = $expiry;
+	# Default traffic class to use
+	if (defined(my $trafficClassID = $globals->{'file.config'}->{'plugin.radius'}->{'default_traffic_class'})) {
+		if (isTrafficClassIDValid($trafficClassID)) {
+			$logger->log(LOG_INFO,"[RADIUS] Set traffic_class to '%s'",$trafficClassID);
+			$config->{'traffic_class'} = $trafficClassID;
+		} else {
+			$logger->log(LOG_WARN,"[RADIUS] Cannot set 'traffic_class' as value '%s' is invalid",$trafficClassID);
+		}
+	}
+
+	# Default group to use
+	if (defined(my $group = $globals->{'file.config'}->{'plugin.radius'}->{'default_group'})) {
+		if (isGroupIDValid($group)) {
+			$logger->log(LOG_INFO,"[RADIUS] Set group to '%s'",$group);
+			$config->{'group'} = $group;
+		} else {
+			$logger->log(LOG_WARN,"[RADIUS] Cannot set 'group' as value '%s' is invalid",$group);
+		}
 	}
 
 	# Radius listener
 	POE::Session->create(
 		inline_states => {
-			_start => \&session_start,
-			_stop => \&session_stop,
-
-			get_datagram => \&session_read,
+			_start => \&_session_start,
+			_stop => \&_session_stop,
+			_socket_read => \&_session_socket_read,
 		}
 	);
 
@@ -169,15 +218,17 @@ sub plugin_start
 }
 
 
-
 # Initialize server
-sub session_start
+sub _session_start
 {
 	my ($kernel,$heap) = @_[KERNEL,HEAP];
 
+
 	# Create socket for radius
 	if (!defined($heap->{'socket'} = IO::Socket::INET->new(
-			Proto	 => 'udp',
+			Proto => 'udp',
+# TODO - Add to config file
+#			LocalAddr => '192.168.254.2',
 			LocalPort => '1813',
 	))) {
 		$logger->log(LOG_ERR,"Failed to create Radius listening socket: %s",$!);
@@ -187,17 +238,18 @@ sub session_start
 	# Set our alias
 	$kernel->alias_set("plugin.radius");
 
-	# Setup our reader
-	$kernel->select_read($heap->{'socket'}, "get_datagram");
+	# Setup our socket reader event
+	$kernel->select_read($heap->{'socket'}, "_socket_read");
 
 	$logger->log(LOG_DEBUG,"[RADIUS] Initialized");
 }
 
 
 # Shut down server
-sub session_stop
+sub _session_stop
 {
 	my ($kernel,$heap) = @_[KERNEL,HEAP];
+
 
 	# Tear down the socket select
 	if (defined($heap->{'socket'})) {
@@ -215,24 +267,28 @@ sub session_stop
 
 
 # Read event for server
-sub session_read
+sub _session_socket_read
 {
 	my ($kernel, $socket) = @_[KERNEL, ARG0];
 
 
+	# Read in packet from the socket
 	my $peer = recv($socket, my $udp_packet = "", DATAGRAM_MAXLEN, 0);
 	# If we don't have a peer, just return
-	return unless defined $peer;
+	if (!defined($peer)) {
+		$logger->log(LOG_WARN,"[RADIUS] Peer appears to be undefined");
+		return;
+	}
 
 	# Get peer port and addy from remote host
 	my ($peer_port, $peer_addr) = unpack_sockaddr_in($peer);
 	my $peer_addr_h = inet_ntoa($peer_addr);
 
 	# Parse packet
-	my $pkt = new opentrafficshaper::plugins::radius::Radius::Packet($dictionary,$udp_packet);
+	my $pkt = opentrafficshaper::plugins::radius::Radius::Packet->new($dictionary,$udp_packet);
 
 	# Build log line
-	my $logLine = sprintf("Remote: $peer_addr_h, Code: %s, Identifier: %s => ",$pkt->code,$pkt->identifier);
+	my $logLine = sprintf("Remote: %s:%s, Code: %s, Identifier: %s => ",$peer_addr_h,$peer_port,$pkt->code,$pkt->identifier);
 	foreach my $attr ($pkt->attributes) {
 		$logLine .= sprintf(" %s: '%s',", $attr, $pkt->rawattr($attr));
 	}
@@ -255,7 +311,7 @@ sub session_read
 			$logLine .= sprintf(" %s/%s: %s,",$vendor,$attr,$attrVal);
 		}
 	}
-	$logger->log(LOG_DEBUG,"[RADIUS] ",$logLine);
+	$logger->log(LOG_DEBUG,"[RADIUS] %s",$logLine);
 
 
 	# TODO - verify packet
@@ -265,85 +321,241 @@ sub session_read
 
 	# Pull in a variables from packet
 	my $username = $pkt->rawattr("User-Name");
-	my $trafficGroup;
+	my $group = $config->{'group'};
 	if (my $attrRawVal = $pkt->vsattr(IANA_PEN,'OpenTrafficShaper-Traffic-Group')) {
-		$trafficGroup = @{ $attrRawVal }[0];
+		my $var = @{ $attrRawVal }[0];
+		# Next check if its valid
+		if (isGroupIDValid($var)) {
+			$group = $var;
+		} else {
+			$logger->log(LOG_WARN,"[RADIUS] Cannot set 'group' for user '%s' as value '%s' is invalid, using default '%s'",
+					$username,
+					$var,
+					$group
+			);
+		}
 	}
-	my $trafficClass;
+	my $trafficClassID = $config->{'traffic_class'};
 	if (my $attrRawVal = $pkt->vsattr(IANA_PEN,'OpenTrafficShaper-Traffic-Class')) {
-		$trafficClass = @{ $attrRawVal }[0];
+		my $var = @{ $attrRawVal }[0];
+		# Check if its valid
+		if (isTrafficClassIDValid($var)) {
+			$trafficClassID = $var;
+		} else {
+			$logger->log(LOG_WARN,"[RADIUS] Cannot set 'traffic_class' for user '%s' as value '%s' is invalid, using default '%s'",
+					$username,
+					$var,
+					$trafficClassID
+			);
+		}
 	}
+
 	my $trafficLimit;
 	if (my $attrRawVal = $pkt->vsattr(IANA_PEN,'OpenTrafficShaper-Traffic-Limit')) {
 		$trafficLimit = @{ $attrRawVal }[0];
 	}
-
 	# Grab rate limits from the string we got
 	my $trafficLimitRx; my $trafficLimitTx;
 	my $trafficLimitRxBurst; my $trafficLimitTxBurst;
 	if (defined($trafficLimit)) {
-		my ($trafficLimitRxQuantifier,$trafficLimitTxQuantifier);
-		my ($trafficLimitRxBurstQuantifier,$trafficLimitTxBurstQuantifier);
 		# Match rx-rate[/tx-rate] rx-burst-rate[/tx-burst-rate]
 		if ($trafficLimit =~ /^(\d+)([km])(?:\/(\d+)([km]))?(?: (\d+)([km])(?:\/(\d+)([km]))?)?/) {
 			$trafficLimitRx = getKbit($1,$2);
 			$trafficLimitTx = getKbit($3,$4);
 			$trafficLimitRxBurst = getKbit($5,$6);
 			$trafficLimitTxBurst = getKbit($7,$8);
+		} else {
+			$logger->log(LOG_DEBUG,"[RADIUS] The 'OpenTrafficShaper-Traffic-Limit' attribute appears to be invalid for user '%s'".
+					": '%s'",
+					$username,
+					$trafficLimit
+			);
+			return;
 		}
 	}
 
-	# Set default if they undefined
-	if (!defined($trafficGroup)) {
-		$trafficGroup = 1;
-	}
-	if (!defined($trafficClass)) {
-		$trafficClass = 1;
-	}
-
-	# If we don't have rate limits, short circuit
-	if (!defined($trafficLimitTx)) {
-		return;
-	}
-	if (!defined($trafficLimitRx)) {
-		return;
+	# Check if we have a pool transform
+	my $tPoolName;
+	if (defined($config->{'username_to_pool_transform'})) {
+		# Check if transform matches, if it does set pool name
+		if ($username =~ $config->{'username_to_pool_transform'}) {
+			my $tPoolName = $1;
+		}
 	}
 
-	# Build user
-	my $user = {
-		'Username' => $username,
-		'IP' => $pkt->attr('Framed-IP-Address'),
-		'InterfaceGroupID' => $config->{'interface_group'},
-		'MatchPriorityID' => $config->{'match_priority'},
-		'GroupID' => $trafficGroup,
-		'ClassID' => $trafficClass,
-		'TrafficLimitTx' => $trafficLimitTx,
-		'TrafficLimitRx' => $trafficLimitRx,
-		'TrafficLimitTxBurst' => $trafficLimitTxBurst,
-		'TrafficLimitRxBurst' => $trafficLimitRxBurst,
-		'Expires' => $now + (defined($globals->{'file.config'}->{'plugin.radius'}->{'expire_entries'}) ?
-				$globals->{'file.config'}->{'plugin.radius'}->{'expire_entries'} : $config->{'expiry_period'}),
-		'Status' => getStatus($pkt->rawattr('Acct-Status-Type')),
-		'Source' => "plugin.radius",
-	};
+	# Check what to use for the pool name, by default its the username
+	my $poolName = $tPoolName || $username;
+	# Try grab the pool
+	my $pool = getPoolByName($poolName);
+	my $pid = defined($pool) ? $pool->{'ID'} : undef;
 
-	# Throw the change at the config manager
-	$kernel->post("configmanager" => "process_limit_change" => $user);
+	my $ipAddress = $pkt->attr('Framed-IP-Address');
+	my $statusType = getStatus($pkt->rawattr('Acct-Status-Type'));
 
-	$logger->log(LOG_INFO,"[RADIUS] Code: %s, User: %s, IP: %s, InterfaceGroup: %s, MatchPriorityID: %s, Group: %s, Class: %s, ".
+	$logger->log(LOG_INFO,"[RADIUS] Status: %s, User: %s, IP: %s, InterfaceGroup: %s, MatchPriorityID: %s, Group: %s, Class: %s, ".
 			"CIR: %s/%s, Limit: %s/%s",
-			$user->{'Status'},
-			$user->{'Username'},
-			$user->{'IP'},
-			$user->{'InterfaceGroupID'},
-			$user->{'MatchPriorityID'},
-			$user->{'GroupID'},
-			$user->{'ClassID'},
+			$statusType,
+			$username,
+			$ipAddress,
+			$config->{'interface_group'},
+			$config->{'match_priority'},
+			$group,
+			$trafficClassID,
 			prettyUndef($trafficLimitTx),
 			prettyUndef($trafficLimitRx),
 			prettyUndef($trafficLimitTxBurst),
 			prettyUndef($trafficLimitRxBurst)
 	);
+
+	# Check if user is new or online
+	if ($statusType eq "new" || $statusType eq "online") {
+		# Check if pool is defined
+		if (defined($pool)) {
+			my @poolMembers = getPoolMembers($pid);
+
+			# Check if we created the pool
+			if ($pool->{'Source'} eq "plugin.radius") {
+				# Make sure the pool is 0 or 1
+				if (@poolMembers < 2) {
+					# Change the details
+					my $changes = changePool({
+							'ID' => $pid,
+							'ClassID' => $trafficClassID,
+							'TrafficLimitTx' => $trafficLimitTx,
+							'TrafficLimitRx' => $trafficLimitRx,
+							'TrafficLimitTxBurst' => $trafficLimitTxBurst,
+							'TrafficLimitRxBurst' => $trafficLimitRxBurst,
+							'Expires' => $now + DEFAULT_EXPIRY_PERIOD
+					});
+
+					my @txtChanges;
+					foreach my $item (keys %{$changes}) {
+						push(@txtChanges,sprintf("%s = %s",$item,$changes->{$item}));
+					}
+					if (@txtChanges) {
+						$logger->log(LOG_INFO,"[RADIUS] Pool '%s' updated: %s",$poolName,join(", ",@txtChanges));
+					}
+
+				# If we do have more than 1 member, make a note of it
+				} else {
+					$logger->log(LOG_NOTICE,"[RADIUS] Pool '%s' has more than 1 member, not updating",$poolName);
+				}
+			}
+
+		# No pool, time to create one
+		} else {
+			# If we don't have rate limits, short circuit
+			if (!defined($trafficLimitTx)) {
+				$logger->log(LOG_NOTICE,"[RADIUS] Pool '%s' has no 'TrafficLimitTx', aborting",$poolName);
+				return;
+			}
+			if (!defined($trafficLimitRx)) {
+				$logger->log(LOG_NOTICE,"[RADIUS] Pool '%s' has no 'TrafficLimitRx', aborting",$poolName);
+				return;
+			}
+
+			# Create pool
+			$pid = createPool({
+					'FriendlyName' => $ipAddress,
+					'Name' => $poolName,
+					'InterfaceGroupID' => $config->{'interface_group'},
+					'ClassID' => $trafficClassID,
+					'TrafficLimitTx' => $trafficLimitTx,
+					'TrafficLimitRx' => $trafficLimitRx,
+					'TrafficLimitTxBurst' => $trafficLimitTxBurst,
+					'TrafficLimitRxBurst' => $trafficLimitRxBurst,
+					'Expires' => $now + $config->{'expiry_period'},
+					'Source' => "plugin.radius",
+			});
+			if (!defined($pid)) {
+				$logger->log(LOG_WARN,"[RADIUS] Pool '%s' failed to create, aborting",$poolName);
+				return;
+			}
+		}
+
+		# If we have a pool member
+		if (defined(my $pmid = getPoolMemberByUsernameIP($pid,$username,$ipAddress))) {
+			my $poolMember = getPoolMember($pmid);
+
+			# Check if we created the pool member
+			if ($poolMember->{'Source'} eq "plugin.radius") {
+
+				my $changes = changePoolMember({
+						'ID' => $poolMember->{'ID'},
+						'Expires' => $now + DEFAULT_EXPIRY_PERIOD
+				});
+
+				my @txtChanges;
+				foreach my $item (keys %{$changes}) {
+					push(@txtChanges,sprintf("%s = %s",$item,$changes->{$item}));
+				}
+				if (@txtChanges) {
+					$logger->log(LOG_INFO,"[RADIUS] Pool '%s' member '%s' updated: %s",
+							$poolName,
+							$username,
+							join(", ",@txtChanges)
+					);
+				}
+
+
+			# If not display message
+			} else {
+				$logger->log(LOG_NOTICE,"[RADIUS] Pool '%s' member '%s' update ignored as it was not added by 'plugin.radius'",
+						$poolName,
+						$username
+				);
+			}
+
+		# We have a pool but no member...
+		} else {
+			createPoolMember({
+				'FriendlyName' => $username,
+				'Username' => $username,
+				'IPAddress' => $ipAddress,
+				'InterfaceGroupID' => $config->{'interface_group'},
+				'MatchPriorityID' => $config->{'match_priority'},
+				'PoolID' => $pid,
+				'GroupID' => $group,
+				'Expires' => $now + $config->{'expiry_period'},
+				'Source' => "plugin.radius",
+			});
+		}
+
+	# Radius user going offline
+	} elsif ($statusType eq "offline") {
+
+		# Check if we have a pool
+		if (defined($pool)) {
+			# Grab pool members
+			my @poolMembers = getPoolMembers($pool->{'ID'});
+
+			# If this is ours we can set the expires to "queue" removal
+			if ($pool->{'Source'} eq "plugin.radius") {
+				# If there is only 1 pool member, then lets expire the pool in the removal expiry period
+				if (@poolMembers == 1) {
+					$logger->log(LOG_INFO,"[RADIUS] Expiring pool '$poolName'");
+					changePool($pool->{'ID'},{ 'Expires' => $now + REMOVE_EXPIRY_PERIOD });
+				}
+			}
+
+			# Check if we have a pool member with this username and IP
+			if (my $pmid = getPoolMemberByUsernameIP($pool->{'ID'},$username,$ipAddress)) {
+				$logger->log(LOG_INFO,"[RADIUS] Expiring pool '$poolName' member '$username'");
+				changePoolMember($pmid,{ 'Expires' => $now + REMOVE_EXPIRY_PERIOD });
+			}
+
+			$logger->log(LOG_INFO,"[RADIUS] Pool '$poolName' member '$username' set to expire as they're offline");
+
+		# No pool
+		} else {
+			$logger->log(LOG_DEBUG,"[RADIUS] Pool '$poolName' member '$username' doesn't exist went offline");
+		}
+
+
+	} else {
+		$logger->log(LOG_WARN,"[RADIUS] Unknown radius code '%s' for pool '%s' member '%s'",$pkt->code,$poolName,$username);
+	}
+
 }
 
 
