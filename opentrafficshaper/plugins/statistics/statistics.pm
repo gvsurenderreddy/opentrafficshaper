@@ -227,6 +227,7 @@ sub plugin_init
 				stats
 			WHERE
 				`Key` = ?
+				AND `Timestamp` > ?
 				AND `Timestamp` < ?
 			GROUP BY
 				`IdentifierID`, `TimestampM`, `Direction`
@@ -245,6 +246,7 @@ sub plugin_init
 				stats_basic
 			WHERE
 				`Key` = ?
+				AND `Timestamp` > ?
 				AND `Timestamp` < ?
 			GROUP BY
 				`IdentifierID`, `TimestampM`
@@ -454,10 +456,11 @@ sub _session_tick
 		my $numStatsBasicConsolidated = 0;
 		my $numStatsConsolidated = 0;
 
+		my $consolidateFrom = $lastPeriod - $precision * 2;
 		my $consolidateUpTo = $lastPeriod - $precision;
 
 		# Execute and pull in consolidated stats
-		$res = $sthStatsBasicConsolidate->execute($precision,$prevKey,$consolidateUpTo);
+		$res = $sthStatsBasicConsolidate->execute($precision,$prevKey,$consolidateFrom,$consolidateUpTo);
 		if ($res) {
 			# Loop with items returned
 			while (my $item = $sthStatsBasicConsolidate->fetchrow_hashref()) {
@@ -476,7 +479,7 @@ sub _session_tick
 			);
 		}
 		# And the normal stats...
-		$res = $sthStatsConsolidate->execute($precision,$prevKey,$consolidateUpTo);
+		$res = $sthStatsConsolidate->execute($precision,$prevKey,$consolidateFrom,$consolidateUpTo);
 		if ($res) {
 			# Loop with items returned
 			while (my $item = $sthStatsConsolidate->fetchrow_hashref()) {
@@ -501,12 +504,14 @@ sub _session_tick
 		my $timerB = [gettimeofday];
 		my $timediffB = tv_interval($timerA,$timerB);
 
-		$logger->log(LOG_INFO,"[STATISTICS] Stats consolidation time for key %s: %s (%s basic, %s normal), up to %s [%s]",
+		$logger->log(LOG_INFO,"[STATISTICS] Stats consolidation: key %s in %s (%s basic, %s normal), period %s - %s [%s - %s]",
 				$key,
 				sprintf('%.3fs',$timediffB),
 				$numStatsBasicConsolidated,
 				$numStatsConsolidated,
+				$consolidateFrom,
 				$consolidateUpTo,
+				scalar(localtime($consolidateFrom)),
 				scalar(localtime($consolidateUpTo))
 		);
 	}
