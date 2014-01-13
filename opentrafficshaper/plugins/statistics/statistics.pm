@@ -522,13 +522,18 @@ sub _session_tick
 		my $cleanUpTo = $now - ($statsConfig->{1}->{'precision'} * 3);
 
 		# Streamed stats is removed 3 time periods past the first precision
+		my $timerA = [gettimeofday];
 		if ($res = $sthStatsBasicCleanup->execute(0, $cleanUpTo)) {
+			my $timerB = [gettimeofday];
+			my $timerdiffA = tv_interval($timerA,$timerB);
+
 			# We get 0E0 for 0 when none were removed
 			if ($res ne "0E0") {
-				$logger->log(LOG_INFO,"[STATISTICS] Cleanup streamed stats_basic %s, up to %s [%s]",
+				$logger->log(LOG_INFO,"[STATISTICS] Cleanup streamed stats_basic, %s items in %s, up to %s [%s]",
 						$res,
+						sprintf('%.3fs',$timerdiffA),
 						$cleanUpTo,
-						scalar(localtime($cleanUpTo))
+						scalar(localtime($cleanUpTo)),
 				);
 			}
 		} else {
@@ -536,12 +541,18 @@ sub _session_tick
 					$sthStatsBasicCleanup->errstr()
 			);
 		}
+
 		# And the normal stats...
+		$timerA = [gettimeofday];
 		if ($res = $sthStatsCleanup->execute(0, $cleanUpTo)) {
+			my $timerB = [gettimeofday];
+			my $timerdiffA = tv_interval($timerA,$timerB);
+
 			# We get 0E0 for 0 when none were removed
 			if ($res ne "0E0") {
-				$logger->log(LOG_INFO,"[STATISTICS] Cleanup streamed stats %s, up to %s [%s]",
+				$logger->log(LOG_INFO,"[STATISTICS] Cleanup streamed stats, %s items in %s, up to %s [%s]",
 						$res,
+						sprintf('%.3fs',$timerdiffA),
 						$cleanUpTo,scalar(localtime($cleanUpTo))
 				);
 			}
@@ -557,11 +568,16 @@ sub _session_tick
 			$cleanUpTo = $now - ($statsConfig->{$key}->{'retention'} * 86400);
 
 			# Retention period is in # days
+			my $timerA = [gettimeofday];
 			if ($res = $sthStatsBasicCleanup->execute($key, $cleanUpTo)) {
 				# We get 0E0 for 0 when none were removed
 				if ($res ne "0E0") {
-					$logger->log(LOG_INFO,"[STATISTICS] Cleanup key %s stats_basic, %s items up to %s [%s]",
+					my $timerB = [gettimeofday];
+					my $timerdiffA = tv_interval($timerA,$timerB);
+
+					$logger->log(LOG_INFO,"[STATISTICS] Cleanup stats_basic key %s in %s, %s items up to %s [%s]",
 							$key,
+							sprintf('%.3fs',$timerdiffA),
 							$res,
 							$cleanUpTo,
 							scalar(localtime($cleanUpTo))
@@ -574,11 +590,16 @@ sub _session_tick
 				);
 			}
 			# And normal stats...
+			$timerA = [gettimeofday];
 			if ($res = $sthStatsCleanup->execute($key, $cleanUpTo)) {
 				# We get 0E0 for 0 when none were removed
 				if ($res ne "0E0") {
-					$logger->log(LOG_INFO,"[STATISTICS] Cleanup key %s stats %s, up to %s [%s]",
+					my $timerB = [gettimeofday];
+					my $timerdiffA = tv_interval($timerA,$timerB);
+
+					$logger->log(LOG_INFO,"[STATISTICS] Cleanup stats key %s in %s, %s items up to %s [%s]",
 							$key,
+							sprintf('%.3fs',$timerdiffA),
 							$res,
 							$cleanUpTo,
 							scalar(localtime($cleanUpTo))
@@ -597,7 +618,7 @@ sub _session_tick
 
 		my $timer4 = [gettimeofday];
 		my $timediff4 = tv_interval($timer3,$timer4);
-		$logger->log(LOG_INFO,"[STATISTICS] Stats cleanup time: %s",
+		$logger->log(LOG_INFO,"[STATISTICS] Total stats cleanup time: %s",
 				sprintf('%.3fs',$timediff4)
 		);
 	}
