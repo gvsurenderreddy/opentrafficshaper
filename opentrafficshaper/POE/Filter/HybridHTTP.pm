@@ -40,7 +40,7 @@ use POE::Filter::HybridHTTP::WebSocketFrame;
 
 use vars qw($VERSION @ISA);
 # NOTE - Should be #.### (three decimal places)
-$VERSION = '1.000';
+$VERSION = '1.100';
 @ISA = qw(POE::Filter);
 
 
