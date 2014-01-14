@@ -890,7 +890,7 @@ sub getConfigManagerCounters
 	foreach my $pid (@poolList) {
 		my $cid = getPoolTrafficClassID($pid);
 		# Bump the class counter
-		$counters{"ConfigManager:ClassLimits:$cid"}++;
+		$counters{"ConfigManager:ClassPools:$cid"}++;
 	}
 
 	return \%counters;
