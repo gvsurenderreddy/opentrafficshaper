@@ -35,6 +35,8 @@
 
 package POE::Filter::HybridHTTP::WebSocketFrame;
 
+use bytes;
+
 use strict;
 use warnings;
 
@@ -146,7 +148,7 @@ sub next_bytes {
 		$offset += 1;	# FIN,RSV[1-3],OPCODE
 
 		# Grab payload length
-		my $payload_len = unpack 'C', substr($self->{'buffer'}, $offset, 1);
+		my $payload_len = unpack('C',substr($self->{'buffer'}, $offset, 1));
 
 		# Check if the payload is masked, if it is flag it internally
 		my $masked = ($payload_len & 0b10000000) >> 7;
@@ -160,7 +162,7 @@ sub next_bytes {
 				return;
 			}
 			# Unpack the payload_len into its actual value & bump the offset
-			$payload_len = unpack 'n', substr($self->{'buffer'}, $offset, 2);
+			$payload_len = unpack('n',substr($self->{'buffer'},$offset,2));
 			$offset += 2;
 
 		} elsif ($payload_len > 126) {
@@ -258,6 +260,7 @@ sub next_bytes {
 	return;
 }
 
+
 sub to_bytes {
 	my $self = shift;
 
@@ -272,38 +275,40 @@ sub to_bytes {
 		$opcode = $self->opcode || 1;
 	}
 
-	$string .= pack 'C', ($opcode + 128);
+	# Set FIN + black RSV + set OPCODE in the first 8 bites
+	$string .= pack('C',($opcode | 0b10000000) & 0b10001111);
 
 	my $payload_len = length($self->{'buffer'});
 	if ($payload_len <= 125) {
+		# Flip masked bit if we're masked
 		$payload_len |= 0b10000000 if $self->masked;
-		$string .= pack 'C', $payload_len;
+		# Encode the payload length and add to string
+		$string .= pack('C',$payload_len);
 	}
 	elsif ($payload_len <= 0xffff) {
-		$string .= pack 'C', 126 + ($self->masked ? 128 : 0);
-		$string .= pack 'n', $payload_len;
+		my $bits = 0b01111110;
+		$bits |= 0b10000000 if $self->masked;
+
+		$string .= pack('C',$bits);
+		$string .= pack('n',$payload_len);
 	}
 	else {
-		$string .= pack 'C', 127 + ($self->masked ? 128 : 0);
+		my $bits = 0b01111111;
+		$bits |= 0b10000000 if $self->masked;
+
+		$string .= pack('C',$bits);
 
 		# Shifting by an amount >= to the system wordsize is undefined
-		$string .= pack 'N', $Config{'ivsize'} <= 4 ? 0 : $payload_len >> 32;
-		$string .= pack 'N', ($payload_len & 0xffffffff);
+		$string .= pack('N',$Config{'ivsize'} <= 4 ? 0 : $payload_len >> 32);
+		$string .= pack('N',($payload_len & 0xffffffff));
 	}
-
 	if ($self->masked) {
+		my $mask = $self->{mask} || ( MATH_RANDOM_SECURE ? Math::Random::Secure::irand(MAX_RAND_INT) : int(rand(MAX_RAND_INT)) );
 
-		my $mask = $self->{mask}
-		  || (
-			MATH_RANDOM_SECURE
-			? Math::Random::Secure::irand(MAX_RAND_INT)
-			: int(rand(MAX_RAND_INT))
-		  );
-
-		$mask = pack 'N', $mask;
+		$mask = pack('N',$mask);
 
 		$string .= $mask;
-		$string .= $self->_mask($self->{'buffer'}, $mask);
+		$string .= $self->_mask($self->{'buffer'},$mask);
 	}
 	else {
 		$string .= $self->{'buffer'};
@@ -314,6 +319,7 @@ sub to_bytes {
 
 	return $string;
 }
+
 
 sub _mask {
 	my $self = shift;
