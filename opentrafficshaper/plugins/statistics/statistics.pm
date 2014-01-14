@@ -60,7 +60,7 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 	getStatsByCounter
 
 	getSIDFromCID
-	getSIDFromLID
+	getSIDFromPID
 );
 
 use constant {
