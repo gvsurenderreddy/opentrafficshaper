@@ -122,10 +122,12 @@ sub parseURIQuery
 	# Loop with the components in sets of name & value
 	while (@components) {
 		my ($name,$value) = (shift(@components),shift(@components));
-
-		# Store values and the last value we go
-		push(@{$res{$name}->{'values'}},$value);
+		# Unescape name value pair
+		$name =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/eg;
+		$value =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/eg;
+		# Add to hash
 		$res{$name}->{'value'} = $value;
+		push(@{$res{$name}->{'values'}},$value);
 	}
 
 	return \%res;
