@@ -981,7 +981,7 @@ sub _getIdentifierFromPID
 		return undef;
 	}
 
-	return sprintf("Pool:%s",$pool->{'Name'});
+	return sprintf("Pool:%s/%s",$pool->{'InterfaceGroupID'},$pool->{'Name'});
 }
 
 
