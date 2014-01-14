@@ -430,7 +430,12 @@ sub _session_socket_read
 
 					my @txtChanges;
 					foreach my $item (keys %{$changes}) {
-						push(@txtChanges,sprintf("%s = %s",$item,$changes->{$item}));
+						# Make expires look nice
+						my $value = $changes->{$item};
+						if ($item eq "Expires") {
+							$value = sprintf("%s [%s]",$value,scalar(localtime($value)));
+						}
+						push(@txtChanges,sprintf("%s = %s",$item,$value));
 					}
 					if (@txtChanges) {
 						$logger->log(LOG_INFO,"[RADIUS] Pool '%s' updated: %s",$poolName,join(", ",@txtChanges));
@@ -487,7 +492,12 @@ sub _session_socket_read
 
 				my @txtChanges;
 				foreach my $item (keys %{$changes}) {
-					push(@txtChanges,sprintf("%s = %s",$item,$changes->{$item}));
+					# Make expires look nice
+					my $value = $changes->{$item};
+					if ($item eq "Expires") {
+						$value = sprintf("%s [%s]",$value,scalar(localtime($value)));
+					}
+					push(@txtChanges,sprintf("%s = %s",$item,$value));
 				}
 				if (@txtChanges) {
 					$logger->log(LOG_INFO,"[RADIUS] Pool '%s' member '%s' updated: %s",
