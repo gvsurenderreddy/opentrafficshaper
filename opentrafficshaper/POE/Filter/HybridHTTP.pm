@@ -154,18 +154,22 @@ sub put
 			push(@results,$self->_build_raw_response($response));
 		}
 
-
 	# Handle WebSocket data
 	} elsif ($self->{'state'} == ST_WEBSOCKET_STREAM) {
 		# Compile our list of results
 		foreach my $response (@{$responses}) {
-			# If we don't have a websocket write state, create one
-			if (!$self->{'state_websocket_write'}) {
-				$self->{'state_websocket_write'} = new POE::Filter::HybridHTTP::WebSocketFrame();
+			# If we don't have a websocket state, create one
+			if (!$self->{'websocket_state'}) {
+				$self->{'websocket_state'} = new POE::Filter::HybridHTTP::WebSocketFrame();
 			}
-			$self->{'state_websocket_write'}->append($response);
+			# Don't mask replies from server to client RFC6455 secion 5.1.
+			$self->{'websocket_state'}->masked(0);
+			# Consume the response with websockets...
+			$self->{'websocket_state'}->append($response);
+			# Spit out bytes...
+			my $payload = $self->{'websocket_state'}->to_bytes();
 
-			push(@results,$self->{'state_websocket_write'}->to_bytes());
+			push(@results,$payload);
 		}
 	}
 
@@ -187,8 +191,7 @@ sub _reset
 	# Reset our filter state
 	$self->{'buffer'} = '';
 	$self->{'state'} = ST_HTTP_HEADERS;
-	$self->{'state_websocket_read'} = undef;
-	$self->{'state_websocket_write'} = undef;
+	$self->{'websocket_state'} = undef;
 	$self->{'last_request'} = $self->{'request'};
 	$self->{'request'} = undef; # We want the last request always
 	$self->{'content_len'} = 0;
@@ -400,16 +403,16 @@ sub _get_one_websocket_record
 
 
 	# If we don't have a websocket state, create one
-	if (!$self->{'state_websocket_read'}) {
-		$self->{'state_websocket_read'} = new POE::Filter::HybridHTTP::WebSocketFrame();
+	if (!$self->{'websocket_state'}) {
+		$self->{'websocket_state'} = new POE::Filter::HybridHTTP::WebSocketFrame();
 	}
-	$self->{'state_websocket_read'}->append($self->{'buffer'});
+	$self->{'websocket_state'}->append($self->{'buffer'});
 	# Blank our buffer
 	$self->{'buffer'} = '';
 
 	# Loop with records and push onto result set
 	my @results;
-	while (my $item = $self->{'state_websocket_read'}->next()) {
+	while (my $item = $self->{'websocket_state'}->next()) {
 		push(@results,$item);
 	}
 
