@@ -35,8 +35,6 @@ package POE::Filter::TCStatistics;
 use warnings;
 use strict;
 
-use bytes;
-
 use POE::Filter;
 
 use vars qw($VERSION @ISA);
