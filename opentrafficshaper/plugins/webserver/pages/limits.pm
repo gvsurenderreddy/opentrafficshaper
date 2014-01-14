@@ -176,6 +176,7 @@ EOF
 		my $cirStr = sprintf('%s/%s',prettyUndef($pool->{'TrafficLimitTx'}),prettyUndef($pool->{'TrafficLimitRx'}));
 		my $limitStr = sprintf('%s/%s',prettyUndef($pool->{'TrafficLimitTxBurst'}),prettyUndef($pool->{'TrafficLimitRxBurst'}));
 
+		my $igidEscaped = uri_escape($pool->{'InterfaceGroupID'});
 		my $pidEscaped = uri_escape($pool->{'ID'});
 
 
@@ -184,6 +185,7 @@ EOF
 		my $friendlyNameEncoded = encode_entities($friendlyName);
 
 		my $nameEncoded = encode_entities($pool->{'Name'});
+		my $nameEscaped = uri_escape($pool->{'Name'});
 
 		my $expiresStr = ($pool->{'Expires'} > 0) ? DateTime->from_epoch( epoch => $pool->{'Expires'} )->iso8601() : '-never-';
 
@@ -219,7 +221,7 @@ EOF
 					<td>$cirStr</td>
 					<td>$limitStr</td>
 					<td>
-						<a href="/statistics/by-pool?pid=$pidEscaped"><span class="glyphicon glyphicon-stats"></span></a>
+						<a href="/statistics/by-pool?pool=$igidEscaped:$nameEscaped"><span class="glyphicon glyphicon-stats"></span></a>
 						<a href="/limits/pool-edit?pid=$pidEscaped"><span class="glyphicon glyphicon-wrench"></span></a>
 						<a href="/limits/poolmember-list?pid=$pidEscaped"><span class="glyphicon glyphicon-link"></span></a>
 						<a href="/limits/pool-remove?pid=$pidEscaped"><span class="glyphicon glyphicon-remove"></span></a>
