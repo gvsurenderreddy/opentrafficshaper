@@ -39,6 +39,7 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 @EXPORT_OK = qw(
 	parseFormContent
 	parseURIQuery
+	parseKeyPairString
 );
 
 
@@ -261,6 +262,29 @@ sub booleanize
 
 	# Invalid or unknown
 	return 0;
+}
+
+
+# Function to parse a keypair string and return a hash
+sub parseKeyPairString
+{
+	my $str = shift;
+
+
+	my %res;
+	# Grab components
+	my @keyPairs = split(/\s+/,$str);
+	# Loop with the components in sets of name & value
+	foreach my $item (@keyPairs) {
+		my ($name,$value) = split(/=/,$item);
+		# Unescape name value pair
+		$value =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/eg;
+		# Add to hash
+		$res{$name}->{'value'} = $value;
+		push(@{$res{$name}->{'values'}},$value);
+	}
+
+	return \%res;
 }
 
 
