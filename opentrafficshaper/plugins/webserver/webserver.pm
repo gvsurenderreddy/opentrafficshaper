@@ -275,7 +275,7 @@ sub server_request
 
 	# Its a websocket
 	} elsif ($conn->{'protocol'} eq "WebSocket") {
-		# XXX - this should call the callback
+		$response = _server_request_websocket($kernel,$client_session_id,$request);
 	}
 
 	# If there is a response send it
@@ -650,6 +650,40 @@ END:
 	);
 
 	return $response;
+}
+
+
+# Handle the websocket request
+sub _server_request_websocket
+{
+	my ($kernel,$client_session_id,$request) = @_;
+
+
+	my $conn = $connections->{$client_session_id};
+	my $handler = $conn->{'resource'}->{'handler'};
+
+	# Function we need to call
+	my $function = $handler;
+
+	# Check if we're a hash... override if we are
+	if (ref($handler) eq "HASH") {
+		$function = $handler->{'on_request'};
+	}
+	# If its something else, blow up
+	if (ref($function) ne "CODE") {
+		return '{status: "error", message: "Internal server error"}';
+	}
+
+	# Do the function call now
+	my ($res,$content,$extra) = $function->($kernel,$globals,$client_session_id,$request,$conn->{'socket'});
+
+	$logger->log(LOG_INFO,"[WEBSERVER] %s Request [%s/%s]",
+			$conn->{'protocol'},
+			$conn->{'resource'}->{'module'},
+			$conn->{'resource'}->{'action'},
+	);
+
+	return $content;
 }
 
 
