@@ -257,6 +257,7 @@ sub _session_pool_add
 	# Grab some things we need from the main pool
 	my $txInterface = getPoolTxInterface($pool->{'ID'});
 	my $rxInterface = getPoolRxInterface($pool->{'ID'});
+
 	# Grab effective config
 	my $classID = $effectivePool->{'ClassID'};
 	my $trafficLimitTx = $effectivePool->{'TrafficLimitTx'};
@@ -803,6 +804,9 @@ sub _tc_iface_init
 				'dev',$interface,
 				'root',
 	]);
+
+	# Initialize the major TC class
+	_reserveMajorTcClass($interface,"root");
 
 	# Reserve our parent TC classes
 	foreach my $classID (sort {$a <=> $b} keys %{$trafficClasses}) {
@@ -1522,6 +1526,8 @@ sub __reserveMinorTcClass
 	# Setup defaults if we don't have anything defined
 	if (!defined($tcClasses->{$interface}) || !defined($tcClasses->{$interface}->{$majorTcClass})) {
 		$tcClasses->{$interface}->{$majorTcClass} = {
+			# Skip 0 and 1
+			'counter' => 2,
 			'free' => [ ],
 			'track' => { },
 			'reverse' => { },
@@ -1533,8 +1539,7 @@ sub __reserveMinorTcClass
 
 	# Generate new number
 	if (!$minorTcClass) {
-		$minorTcClass = keys %{$tcClasses->{$interface}->{$majorTcClass}->{'track'}};
-		$minorTcClass += 2; # Skip 0 and 1
+		$minorTcClass = $tcClasses->{$interface}->{$majorTcClass}->{'counter'}++;
 		# Hex it
 		$minorTcClass = toHex($minorTcClass);
 	}
@@ -1555,6 +1560,8 @@ sub _reserveMajorTcClass
 	# Setup defaults if we don't have anything defined
 	if (!defined($tcClasses->{$interface})) {
 		$tcClasses->{$interface} = {
+			# Skip 0
+			'counter' => 1,
 			'free' => [ ],
 			'track' => { },
 			'reverse' => { },
@@ -1566,8 +1573,7 @@ sub _reserveMajorTcClass
 
 	# Generate new number
 	if (!$majorTcClass) {
-		$majorTcClass = keys %{$tcClasses->{$interface}->{'track'}};
-		$majorTcClass += 2; # Skip 0 and 1
+		$majorTcClass = $tcClasses->{$interface}->{'counter'}++;
 		# Hex it
 		$majorTcClass = toHex($majorTcClass);
 	}
@@ -1660,6 +1666,8 @@ sub _reserveTcFilter
 	# Setup defaults if we don't have anything defined
 	if (!defined($tcFilters->{$interface})) {
 		$tcFilters->{$interface} = {
+			# Skip 0 and 1
+			'counter' => 2,
 			'free' => [ ],
 			'track' => { },
 		};
@@ -1670,11 +1678,9 @@ sub _reserveTcFilter
 
 	# Generate new number
 	if (!$filterID) {
-		$filterID = keys %{$tcFilters->{$interface}->{'track'}};
-		# Bump ID
-		$filterID += 2; # Skip 0 and 1
+		$filterID = $tcFilters->{$interface}->{'counter'}++;
 		# We cannot use ID 800, its internal
-		$filterID = 801 if ($filterID == 800);
+		$filterID = $tcFilters->{$interface}->{'counter'}++ if ($filterID == 800);
 		# Hex it
 		$filterID = toHex($filterID);
 	}
