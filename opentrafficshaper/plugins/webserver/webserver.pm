@@ -614,17 +614,23 @@ sub _server_request_http
 
 	# Its a websocket upgrade request
 	} elsif ($protocol eq "HTTP=>WebSocket") {
+		# Make sure we have an upgrade path to WebSocket
+		my ($newHandler) = _parse_http_resource($request,"WebSocket");
+		if (!defined($newHandler)) {
+			return httpDisplayFault(HTTP_INTERNAL_SERVER_ERROR,"Internal server error","Cannot upgrade to websocket");
+		}
+
 		# Do the function call now
 		my ($res,$ret1,$ret2) = $function->($kernel,$globals,$client_session_id,$request,$conn->{'socket'});
-
 		# If we have a response defined, we rejected the upgrade
 		if (defined($res)) {
 			$response = httpDisplayFault($res,$ret1,$ret2);
 		} else {
 			# Return our upgrade response
 			$response = _server_request_http_wsupgrade($request,$module,$action);
-			# Upgrade the protocol
+			# Upgrade the protocol & handler
 			$connections->{$client_session_id}->{'protocol'} = 'WebSocket';
+			$connections->{$client_session_id}->{'resource'}->{'handler'} = $newHandler;
 		}
 	}
 
