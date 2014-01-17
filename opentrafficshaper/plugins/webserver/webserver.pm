@@ -246,6 +246,8 @@ sub server_client_disconnected
 sub server_request
 {
 	my ($kernel,$heap,$session,$request) = @_[KERNEL, HEAP, SESSION, ARG0];
+
+
 	my $client_session_id = $session->ID;
 	my $conn = $connections->{$client_session_id};
 
@@ -524,8 +526,9 @@ EOF
 sub _server_request_http
 {
 	my ($kernel,$client_session_id,$request) = @_;
-	my $conn = $connections->{$client_session_id};
 
+
+	my $conn = $connections->{$client_session_id};
 
 	my $protocol = "HTTP"; # By default we're HTTP
 
