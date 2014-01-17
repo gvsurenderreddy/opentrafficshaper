@@ -23,6 +23,7 @@ use warnings;
 
 use DBI;
 use POE;
+use Storable qw( dclone );
 
 use opentrafficshaper::constants;
 use opentrafficshaper::logger;
@@ -87,7 +88,6 @@ our $pluginInfo = {
 };
 
 
-
 # Copy of system globals
 my $globals;
 my $logger;
@@ -130,8 +130,11 @@ my $dbh;
 my $statsDBIdentifierMap = { };
 # Stats queue
 my $statsQueue = [ ];
-# Stats ubscribers
-my $subscribers;
+# Stats subscribers & counter
+my $sidSubscribers = {};
+my $ssidMap = {};
+my $ssidCounter = 0;
+my @ssidCounterFreeList = ();
 # Prepared statements we need...
 my $statsPreparedStatements = { };
 # Last cleanup time
@@ -177,10 +180,6 @@ sub plugin_init
 
 			# Stats update event
 			update => \&_session_update,
-			# Subscription events
-			subscribe => \&_session_subscribe,
-			unsubscribe => \&_session_unsubscribe,
-
 		}
 	);
 
@@ -325,7 +324,12 @@ sub _session_stop
 	$dbh = undef;
 	$statsDBIdentifierMap = { };
 	$statsQueue = [ ];
-	$subscribers = undef;
+
+	$sidSubscribers = {};
+	$ssidMap = {};
+	$ssidCounter = 0;
+	@ssidCounterFreeList = ();
+
 	$statsPreparedStatements = { };
 	$lastCleanup = { };
 	$lastConfigManagerStats = 0;
@@ -660,26 +664,67 @@ sub _session_update
 
 
 # Handle subscriptions to updates
-sub _session_subscribe
+sub subscribe
 {
-	my ($kernel, $handler, $handlerEvent, $item) = @_[KERNEL, ARG0, ARG1, ARG2];
+	my ($sid,$conversions,$handler,$event) = @_;
 
 
-	$logger->log(LOG_INFO,"[STATISTICS] Got subscription request from '%s' for '%s' via event '%s'",$handler,$item,$handlerEvent);
+	$logger->log(LOG_INFO,"[STATISTICS] Got subscription request for '%s': handler='%s', event='%s'",
+			$sid,
+			$handler,
+			$event
+	);
 
-	$subscribers->{$item}->{$handler}->{$handlerEvent} = $item;
+	# Grab next SSID
+	my $ssid = shift(@ssidCounterFreeList);
+	if (!defined($ssid)) {
+		$ssid = $ssidCounter++;
+	}
+
+	# Setup data and conversions
+	$ssidMap->{$ssid} = $sidSubscribers->{$sid}->{$ssid} = {
+		'sid' => $sid,
+		'ssid' => $ssid,
+		'conversions' => $conversions,
+		'handler' => $handler,
+		'event' => $event
+	};
+
+	# Return the SID we subscribed
+	return $ssid;
 }
 
 
 # Handle unsubscribes
-sub _session_unsubscribe
+sub unsubscribe
 {
-	my ($kernel, $handler, $handlerEvent, $item) = @_[KERNEL, ARG0, ARG1, ARG2];
+	my $ssid = shift;
 
 
-	$logger->log(LOG_INFO,"[STATISTICS] Got unsubscription request for '%s' regarding '%s'",$handler,$item);
+	# Grab item, and check if it doesnt exist
+	my $item = $ssidMap->{$ssid};
+	if (!defined($item)) {
+		$logger->log(LOG_ERR,"[STATISTICS] Got unsubscription request for SSID '%s' that doesn't exist",
+				$ssid
+		);
+		return
+	}
 
-	delete($subscribers->{$item}->{$handler}->{$handlerEvent});
+	$logger->log(LOG_INFO,"[STATISTICS] Got unsubscription request for SSID '%s'",
+			$ssid
+	);
+
+	# Remove subscriber
+	delete($sidSubscribers->{$item->{'sid'}}->{$ssid});
+	# If SID is now empty, remove it too
+	if (! keys %{$sidSubscribers->{$item->{'sid'}}}) {
+		delete($sidSubscribers->{$item->{'sid'}});
+	}
+	# Remove mapping
+	delete($ssidMap->{$ssid});
+
+	# Push onto list of free ID's
+	push(@ssidCounterFreeList,$ssid);
 }
 
 
@@ -717,18 +762,22 @@ sub getLastStats
 # Return stats by SID
 sub getStatsBySID
 {
-	my $sid = shift;
-
-	return _getStatsBySID($sid);
-}
+	my ($sid,$conversions) = @_;
 
 
-# Return basic stats by SID
-sub getStatsBasicBySID
-{
-	my $sid = shift;
+	my $statistics = _getStatsBySID($sid);
+	if (!defined($statistics)) {
+		return;
+	}
 
-	return _getStatsBasicBySID($sid);
+	# Loop and convert
+	foreach my $timestamp (keys %{$statistics}) {
+		my $stat = $statistics->{$timestamp};
+		# Use new item
+		$statistics->{$timestamp} = _convertStat($stat,$conversions);
+	}
+
+	return $statistics;
 }
 
 
@@ -879,18 +928,18 @@ sub getConfigManagerCounters
 	# Grab user count
 	my %counters;
 
-	$counters{"ConfigManager:TotalPools"} = @poolList;
+	$counters{"configmanager.totalpools"} = @poolList;
 
 	# Zero the number of pools in each class to start off with
 	foreach my $cid (keys %{$classes}) {
-		$counters{"ConfigManager:ClassPools:$cid"} = 0;
+		$counters{"configmanager.classpools.$cid"} = 0;
 	}
 
 	# Pull in each pool and bump up the class counter
 	foreach my $pid (@poolList) {
 		my $cid = getPoolTrafficClassID($pid);
 		# Bump the class counter
-		$counters{"ConfigManager:ClassPools:$cid"}++;
+		$counters{"configmanager.classpools.$cid"}++;
 	}
 
 	return \%counters;
@@ -907,31 +956,50 @@ sub _processStatistics
 	my ($kernel,$statsData) = @_;
 
 
+	my $queuedEvents;
+
 	# Loop through stats data we got
 	while ((my $sid, my $stat) = each(%{$statsData})) {
 
 		$stat->{'identifierid'} = $sid;
 		$stat->{'key'} = 0;
 
+		# Add to main queue
 		push(@{$statsQueue},$stat);
-#		# Check if we have an event handler subscriber for this item
-#		if (defined($subscribers->{$statsItem}) && %{$subscribers->{$statsItem}}) {
-#			# If we do, loop with them
-#			foreach my $handler (keys %{$subscribers->{$statsItem}}) {
-#
-#				# If no events are linked to this handler, continue
-#				if (!(keys %{$subscribers->{$statsItem}->{$handler}})) {
-#					next;
-#				}
-#
-#				# Or ... If we have events, process them
-#				foreach my $event (keys %{$subscribers->{$statsItem}->{$handler}}) {
-#
-#					$kernel->post($handler => $event => $statsItem => $stat);
-#				}
-#			}
-#		}
 
+		# Check if we have an event handler subscriber for this item
+		if (defined(my $subscribers = $sidSubscribers->{$sid})) {
+			# Build the stat that our conversions understands
+			my $eventStat;
+			$eventStat->{$stat->{'direction'}} = {
+				'rate' => $stat->{'rate'},
+				'pps' => $stat->{'pps'},
+				'cir' => $stat->{'cir'},
+				'limit' => $stat->{'limit'},
+			};
+
+			# If we do, loop with them
+			foreach my $ssid (keys %{$subscribers}) {
+				my $subscriber = $subscribers->{$ssid};
+				my $handler = $subscriber->{'handler'};
+				my $event = $subscriber->{'event'};
+				my $conversions = $subscriber->{'conversions'};
+
+				# Get temp stat, this still refs the original one
+				my $tempStat = _convertStat($eventStat,$conversions);
+				# Send a copy! so we don't send refs to data used elsewhere
+				$queuedEvents->{$handler}->{$event}->{$ssid}->{$stat->{'timestamp'}} = dclone($tempStat);
+			}
+		}
+	}
+
+	# Loop with events we need to dispatch
+	foreach my $handler (keys %{$queuedEvents}) {
+		my $events = $queuedEvents->{$handler};
+
+		foreach my $event (keys %{$events}) {
+			$kernel->post($handler => $event => $queuedEvents->{$handler}->{$event});
+		}
 	}
 }
 
@@ -1084,19 +1152,7 @@ sub _getStatsBySID
 
 	my $statistics;
 	while (my $item = $sth->fetchrow_hashref()) {
-		# Make direction a bit easier to use
-		my $direction;
-		if ($item->{'direction'} eq STATISTICS_DIR_TX) {
-			$direction = 'tx';
-		} elsif ($item->{'direction'} eq STATISTICS_DIR_RX) {
-			$direction = 'rx';
-		} else {
-			$logger->log(LOG_ERR,"[STATISTICS] Unknown direction when getting stats '%s'",$direction);
-			next;
-		}
-
-		# Loop with both directions
-		$statistics->{$item->{'timestamp'}}->{$direction} = {
+		$statistics->{$item->{'timestamp'}}->{$item->{'direction'}} = {
 			'rate' => $item->{'rate'},
 			'pps' => $item->{'pps'},
 			'cir' => $item->{'cir'},
@@ -1144,6 +1200,41 @@ sub _getStatsBasicBySID
 	return $statistics;
 }
 
+
+# Function to transform stats before sending them
+sub _convertStat
+{
+	my ($stat,$conversions) = @_;
+
+
+	# Pull in constants
+	my $tx = STATISTICS_DIR_TX; my $rx = STATISTICS_DIR_RX;
+
+	# Depending which direction, grab the key to use below
+	my $oldStat;
+	my $oldKey;
+	if (defined($oldStat = $stat->{$tx})) {
+		$oldKey = 'tx';
+	} elsif (defined($oldStat = $stat->{$rx})) {
+		$oldKey = 'rx';
+	}
+
+	# Loop and remove the direction, instead, adding it to the item
+	my $newStat;
+	foreach my $item (keys %{$oldStat}) {
+		# If we have conversions defined...
+		my $newKey;
+		if (defined($conversions) && defined($conversions->{'direction'})) {
+			$newKey = sprintf("%s.%s",$conversions->{'direction'},$item);
+		} else {
+			$newKey = sprintf("%s.%s",$oldKey,$item);
+		}
+		$newStat->{$newKey} = $oldStat->{$item};
+	}
+
+	# We need to refactor the stat keys
+	return $newStat;
+}
 
 
 1;
