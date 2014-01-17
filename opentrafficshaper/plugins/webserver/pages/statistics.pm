@@ -42,12 +42,12 @@ use opentrafficshaper::utils qw(
 );
 
 use opentrafficshaper::plugins::configmanager qw(
-	getLimit
+	getPoolByName
 
 	getInterfaceGroup
 	getInterface
 
-	isTrafficClassValid
+	isTrafficClassIDValid
 	getTrafficClassName
 );
 
@@ -55,8 +55,8 @@ use opentrafficshaper::plugins::statistics::statistics;
 
 
 
-# Graphs by limit
-sub bylimit
+# Graphs by pool
+sub byPool
 {
 	my ($kernel,$globals,$client_session_id,$request) = @_;
 
@@ -64,27 +64,39 @@ sub bylimit
 	# Header
 	my $content = <<EOF;
 		<div id="header">
-			<h2>Limit Stats View</h2>
+			<h2>Pool Stats View</h2>
 		</div>
 EOF
 
-	my $limit;
+	my $pool;
 
 	# Check request
 	if ($request->method eq "GET") {
 		# Parse GET data
 		my $queryParams = parseURIQuery($request);
-		# We need our LID
-		if (!defined($queryParams->{'lid'})) {
+		# We need our PID
+		if (!defined($queryParams->{'pool'})) {
 			$content .=<<EOF;
 				<tr class="info">
-					<td colspan="8"><p class="text-center">No LID in Query String</p></td>
+					<td colspan="8"><p class="text-center">No "pool" in Query String</p></td>
 				</tr>
 EOF
 			goto END;
 		}
-		# Check if we get some data back when pulling the limit from the backend
-		if (!defined($limit = getLimit($queryParams->{'lid'}->{'value'}))) {
+
+		# Check we have an interface group ID and pool name
+		my ($interfaceGroupID,$poolName) = split(/:/,$queryParams->{'pool'}->{'value'});
+		if (!defined($interfaceGroupID) || !defined($poolName)) {
+			$content .=<<EOF;
+				<tr class="info">
+					<td colspan="8"><p class="text-center">Format of "pool" option is invalid, use InterfaceID:PoolName</p></td>
+				</tr>
+EOF
+			goto END;
+		}
+
+		# Check if we get some data back when pulling in the pool from the backend
+		if (!defined($pool = getPoolByName($interfaceGroupID,$poolName))) {
 			$content .=<<EOF;
 				<tr class="info">
 					<td colspan="8"><p class="text-center">No Results</p></td>
@@ -94,19 +106,18 @@ EOF
 		}
 	}
 
-	my $name = (defined($limit->{'FriendlyName'}) && $limit->{'FriendlyName'} ne "") ? $limit->{'FriendlyName'} : $limit->{'Username'};
-	my $usernameEncoded = encode_entities($name);
+	my $name = (defined($pool->{'FriendlyName'}) && $pool->{'FriendlyName'} ne "") ? $pool->{'FriendlyName'} :
+			$pool->{'Name'};
+	my $nameEncoded = encode_entities($name);
 
+	my $canvasName = "flotCanvas";
 
 	# Build content
 	$content = <<EOF;
-		<h4 style="color:#8f8f8f;">Latest Data For: $usernameEncoded</h4>
+		<h4 style="color:#8f8f8f;">Latest Data For: $nameEncoded</h4>
 		<br/>
-		<div id="flotCanvas" class="flotCanvas" style="width: 1000px; height: 400px"></div>
+		<div id="$canvasName" class="flotCanvas" style="width: 1000px; height: 400px"></div>
 EOF
-
-	#$content .= statistics::do_test();
-#	$content .= opentrafficshaper::plugins::statistics::do_test();
 
 	# Files loaded at end of HTML document
 	my @javascripts = (
@@ -116,11 +127,11 @@ EOF
 #		'/static/awit-flot/jquery.flot.websockets.js'
 	);
 
-	# Build our data path using the URI module to make sure its nice and clean
-	my $dataPath = sprintf('/statistics/jsondata?limit=%s',$limit->{'ID'});
+	# Path to the json data
+	my $dataPath = sprintf('/statistics/jsondata?pool=%s:%s',$pool->{'InterfaceGroupID'},$pool->{'Name'});
 
 	# String put in <script> </script> tags after the above files are loaded
-	my $javascript = _getJavascript($dataPath);
+	my $javascript = _getJavascript($canvasName,$dataPath);
 
 END:
 
@@ -130,7 +141,7 @@ END:
 
 
 # Graphs by class
-sub byclass
+sub byClass
 {
 	my ($kernel,$globals,$client_session_id,$request) = @_;
 
@@ -177,7 +188,9 @@ EOF
 			goto END;
 		}
 		# Check if our traffic class is valid
-		if (!defined($cid = isTrafficClassValid($queryParams->{'class'}->{'value'})) && $queryParams->{'class'}->{'value'} ne "0") {
+		if (!defined($cid = isTrafficClassIDValid($queryParams->{'class'}->{'value'})) &&
+				$queryParams->{'class'}->{'value'} ne "0"
+		) {
 			$content .=<<EOF;
 				<tr class="info">
 					<td colspan="8"><p class="text-center">No Class Results</p></td>
@@ -196,6 +209,7 @@ EOF
 		$classNameEncoded = $interfaceNameEncoded;
 	}
 
+	my $canvasName = "flotCanvas";
 
 	# Build content
 	$content = <<EOF;
@@ -216,7 +230,7 @@ EOF
 
 
 	# String put in <script> </script> tags after the above files are loaded
-	my $javascript = _getJavascript($dataPath);
+	my $javascript = _getJavascript($canvasName,$dataPath);
 
 END:
 
@@ -229,15 +243,13 @@ END:
 #
 # Supported URLs:
 #
-#	limit=<limit-id>
+#	pool=<tag>:<interface-group-id>:<pool-name>
 #
-#	class=<interface-group-id>:<class-id>,...
-#	- must return both tx and rx sides
+#	class=<tag>:<interface-group-id>:<class-id>,...
 #
-#	interface-group=<interface-group>,...
-#	- must retun both tx and rx sides
+#	interface-group=<tag>:<interface-group>,...
 #
-#	counter=<counter>,...
+#	counter=<tag>:<counter>,...
 #
 #	max=<max number of entries to return, default 100>
 #
@@ -250,51 +262,92 @@ sub jsondata
 	# Parse GET data
 	my $queryParams = parseURIQuery($request);
 
-	my $jsonData = [ ];
+	my $rawData = { };
 
-	# Process limits
-	if (defined($queryParams->{'limit'})) {
-		# Lets get unique limits as keys
-		my %limits;
-		foreach my $lid (@{$queryParams->{'limit'}->{'values'}}) {
-			$limits{$lid} = 1;
+	# Process pools
+	if (defined($queryParams->{'pool'})) {
+		# Simple de-dupication
+		my %poolSpecs;
+		foreach my $poolSpec (@{$queryParams->{'pool'}->{'values'}}) {
+			$poolSpecs{$poolSpec} = 1;
 		}
 
 		# Then loop through the unique keys
-		foreach my $lid (keys %limits) {
-			# Grab limit
-			my $limit = getLimit($lid);
-			if (!defined($limit)) {
-				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Got request for non-existent limit ID '$lid'");
-				next;
+		foreach my $poolSpec (keys %poolSpecs) {
+			# Check we have a tag, interface group ID and pool name
+			my ($tag,$rawInterfaceGroupID,$rawPoolName) = split(/:/,$poolSpec);
+			if (!defined($tag)) {
+				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Invalid format for pool specification '%s'",
+						$poolSpec
+				);
+				return (HTTP_OK,{'status' => 'fail', 'message' => "Invalid format for pool specification '$poolSpec'"},
+						{ 'type' => 'json' });
+			}
+			if (!defined($rawInterfaceGroupID)) {
+				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has an invalid interface group ID '%s'",
+						$tag,
+						$poolSpec
+				);
+				return (HTTP_OK,{'status' => 'fail', 'message' => "Tag '$tag' has invalid interface group ID '$rawPoolName'"},
+						{ 'type' => 'json' });
+			}
+			# Check if we can grab the interface group
+			my $interfaceGroup = getInterfaceGroup($rawInterfaceGroupID);
+			if (!defined($interfaceGroup)) {
+				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has an invalid interface group ID '%s'",
+						$tag,
+						$rawInterfaceGroupID
+				);
+				return (HTTP_OK,{'status' => 'fail', 'message' => "Tag '$tag' has an invalid interface group ID ".
+						"'$rawInterfaceGroupID'"},
+						{ 'type' => 'json' });
+			}
+
+			if (!defined($rawPoolName)) {
+				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has an invalid pool name '%s'",
+						$tag,
+						$poolSpec
+				);
+				return (HTTP_OK,{'status' => 'fail', 'message' => "Tag '$tag' has an invalid pool name '$rawPoolName'"},
+						{ 'type' => 'json' });
+			}
+			# Grab pool
+			my $pool = getPoolByName($rawInterfaceGroupID,$rawPoolName);
+			if (!defined($pool)) {
+				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has an invalid pool name '%s'",
+						$tag,
+						$rawPoolName
+				);
+				return (HTTP_OK,{'status' => 'fail', 'message' => "Tag '$tag' has an invalid pool name '$rawPoolName'"},
+						{ 'type' => 'json' });
+			}
+
+			# Grab SID
+			my $sid = opentrafficshaper::plugins::statistics::getSIDFromPID($pool->{'ID'});
+			if (!defined($sid)) {
+				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' stats data cannot be found for pool ".
+						"'%s'",
+						$tag,
+						$rawPoolName
+				);
+				return (HTTP_OK,{'status' => 'fail', 'message' => "Tag '$tag' stats data cannot be found for pool '$rawPoolName'"},
+						{ 'type' => 'json' });
 			}
 
 			# Pull in stats data
-			my $sid = opentrafficshaper::plugins::statistics::getSIDFromLID($limit->{'ID'});
 			my $statsData = opentrafficshaper::plugins::statistics::getStatsBySID($sid);
 
-			# First stage, pull in the data items we want
-			my $rawData;
+			# Loop with timestamps
 			foreach my $timestamp (sort keys %{$statsData}) {
-				foreach my $direction (keys %{$statsData->{$timestamp}}) {
-					foreach my $stat ('cir','limit','pps','rate') {
-						# Flow of traffic is always in tx direction
-						push(  @{$rawData->{"$direction.$stat"}->{'data'}} , [ $timestamp , $statsData->{$timestamp}->{$direction}->{$stat} ] );
-					}
-				}
-			}
-
-			# JSON stuff we looking for
-			foreach my $direction ('tx','rx') {
-				foreach my $stat ('cir','limit','rate') {
-					# Make it looks nice:  Tx Rate
-					my $label = uc($direction) . " " . ucfirst($stat);
-					# And set it as the label
-					$rawData->{"$direction.$stat"}->{'label'} = $label;
-					# Push the data to return...
-					if (defined($rawData->{"$direction.$stat"}->{'data'})) {
-							push(@{$jsonData},$rawData->{"$direction.$stat"});
-					}
+				# Grab the stat
+				my $tstat = $statsData->{$timestamp};
+				# Loop with its keys
+				foreach my $item (keys $tstat) {
+					# Add the keys to the data to return
+					push(@{$rawData->{$tag}->{$item}->{'data'}},[
+							$timestamp,
+							$tstat->{$item}
+					]);
 				}
 			}
 		}
@@ -302,55 +355,91 @@ sub jsondata
 
 	# Process classes
 	if (defined($queryParams->{'class'})) {
-		# Lets get unique counters as keys
-		my %classes;
-		foreach my $rawClass (@{$queryParams->{'class'}->{'values'}}) {
-			$classes{$rawClass} = 1;
+		# Simple de-dupication
+		my %classIDSpecs;
+		foreach my $rawClassID (@{$queryParams->{'class'}->{'values'}}) {
+			$classIDSpecs{$rawClassID} = 1;
 		}
 		# Then loop through the unique keys
-		foreach my $rawClass (keys %classes) {
-			# Split off based on :
-			my ($rawInterfaceGroup,$rawClass) = split(/:/,$rawClass);
+		foreach my $classIDSpec (keys %classIDSpecs) {
+			# Check we have a tag, interface group ID and class
+			my ($tag,$rawInterfaceGroupID,$rawClassID) = split(/:/,$classIDSpec);
+			if (!defined($tag)) {
+				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Invalid format for class ID specification '%s'",
+						$classIDSpec
+				);
+				return (HTTP_OK,{'status' => 'fail', 'message' => "Invalid format for class ID specification '$classIDSpec'"},
+						{ 'type' => 'json' });
+			}
+			if (!defined($rawInterfaceGroupID)) {
+				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has an invalid interface group ID '%s'",
+						$tag,
+						$classIDSpec
+				);
+				return (HTTP_OK,{'status' => 'fail', 'message' => "Tag '$tag' has an invalid interface group ID '$classIDSpec'"},
+						{ 'type' => 'json' });
+			}
+			if (!defined($rawClassID)) {
+				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has an invalid class ID '%s'",
+						$tag,
+						$classIDSpec
+				);
+				return (HTTP_OK,{'status' => 'fail', 'message' => "Tag '$tag' has an invalid class ID '$classIDSpec'"},
+						{ 'type' => 'json' });
+			}
 
 			# Get more sane values...
-			my $interfaceGroup = getInterfaceGroup($rawInterfaceGroup);
+			my $interfaceGroup = getInterfaceGroup($rawInterfaceGroupID);
 			if (!defined($interfaceGroup)) {
-				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Got request for non-existent interface group '$rawInterfaceGroup'");
-				next;
+				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has a non-existent interface group ID ".
+						"'%s'",
+						$tag,
+						$rawInterfaceGroupID
+				);
+				return (HTTP_OK,{'status' => 'fail', 'message' => "Tag '$tag' has a non-existent interface group ID ".
+						"'$rawInterfaceGroupID'"},
+						{ 'type' => 'json' });
 			}
-			my $class = isTrafficClassValid($rawClass);
-			if (!defined($class)) {
-				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Got request for non-existent traffic class '$rawClass'");
-				next;
+			my $classID = isTrafficClassIDValid($rawClassID);
+			if (!defined($classID)) {
+				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has a non-existent class ID '%s'",
+						$tag,
+						$rawClassID
+				);
+				return (HTTP_OK,{'status' => 'fail', 'message' => "Tag '$tag' has a non-existent class ID '$rawClassID'"},
+						{ 'type' => 'json' });
 			}
 
-			# Second stage - add labels
+			# Grab data for each direction associated with a class ID on an inteface group
 			foreach my $direction ('tx','rx') {
-				my $rawData;
+				# Grab stats ID
+				my $sid = opentrafficshaper::plugins::statistics::getSIDFromCID($interfaceGroup->{"${direction}iface"},$classID);
+				if (!defined($sid)) {
+					$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' stats data cannot be found for ".
+							"class ID '%s'",
+							$tag,
+							$classID
+					);
+					return (HTTP_OK,{'status' => 'fail', 'message' => "Tag '$tag' stats data cannot be found for class ID "
+							."'$classID'"},
+							{ 'type' => 'json' });
+				}
+				# Pull in stats data, override direction used
+				my $statsData = opentrafficshaper::plugins::statistics::getStatsBySID($sid,{
+						'direction' => $direction
+				});
 
-				# Pull in stats data
-				my $sid = opentrafficshaper::plugins::statistics::getSIDFromCID($interfaceGroup->{"${direction}iface"},$class);
-				my $statsData = opentrafficshaper::plugins::statistics::getStatsBySID($sid);
-
-				# First stage, pull in the data items we want
+				# Loop with timestamps
 				foreach my $timestamp (sort keys %{$statsData}) {
-					foreach my $stat ('cir','limit','pps','rate') {
-						# Flow of traffic is always in tx direction
-						push(  @{$rawData->{"$direction.$stat"}->{'data'}} , [ $timestamp , $statsData->{$timestamp}->{"tx"}->{$stat} ] );
-					}
-				}
-				# Second state, add labels
-				foreach my $stat ('cir','limit','pps','rate') {
-					# Make it looks nice:  Tx Rate
-					my $label = uc($direction) . " " . ucfirst($stat);
-					# And set it as the label
-					$rawData->{"$direction.$stat"}->{'label'} = $label;
-				}
-
-				# JSON stuff we looking for
-				foreach my $stat ('cir','limit','rate') {
-					if (defined($rawData->{"$direction.$stat"}->{'data'})) {
-							push(@{$jsonData},$rawData->{"$direction.$stat"});
+					# Grab the stat
+					my $tstat = $statsData->{$timestamp};
+					# Loop with its keys
+					foreach my $item (keys $tstat) {
+						# Add the keys to the data to return
+						push(@{$rawData->{$tag}->{$item}->{'data'}},[
+								$timestamp,
+								$tstat->{$item}
+						]);
 					}
 				}
 			}
@@ -359,45 +448,77 @@ sub jsondata
 
 	# Process interface groups
 	if (defined($queryParams->{'interface-group'})) {
-		# Lets get unique counters as keys
-		my %interfaceGroups;
-		foreach my $group (@{$queryParams->{'interface-group'}->{'values'}}) {
-			$interfaceGroups{$group} = 1;
+		# Simple de-dupication
+		my %interfaceGroupIDSpecs;
+		foreach my $rawInterfaceGroupID (@{$queryParams->{'interface-group'}->{'values'}}) {
+			$interfaceGroupIDSpecs{$rawInterfaceGroupID} = 1;
 		}
 		# Then loop through the unique keys
-		foreach my $group (keys %interfaceGroups) {
-			my $interfaceGroup = getInterfaceGroup($group);
-			if (!defined($interfaceGroup)) {
-				next;
+		foreach my $interfaceGroupIDSpec (keys %interfaceGroupIDSpecs) {
+			# Check we have a tag, interface group ID and class
+			my ($tag,$rawInterfaceGroupID) = split(/:/,$interfaceGroupIDSpec);
+			if (!defined($tag)) {
+				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Invalid format for interface group ".
+						"specification '%s'",
+						$interfaceGroupIDSpec
+				);
+				return (HTTP_OK,{'status' => 'fail', 'message' => "Invalid format for interface group specification ".
+						"'$interfaceGroupIDSpec'"},
+						{ 'type' => 'json' });
+			}
+			if (!defined($rawInterfaceGroupID)) {
+				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has an invalid interface group ID '%s'",
+						$tag,
+						$interfaceGroupIDSpec
+				);
+				return (HTTP_OK,{'status' => 'fail', 'message' => "Tag '$tag' has an invalid interface group ID ".
+						"'$interfaceGroupIDSpec'"},
+						{ 'type' => 'json' });
 			}
 
-			# Second stage - add labels
+			my $interfaceGroupID = getInterfaceGroup($rawInterfaceGroupID);
+			if (!defined($interfaceGroupID)) {
+				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has a non-existent interface group ID ".
+						"'%s'",
+						$tag,
+						$rawInterfaceGroupID
+				);
+				return (HTTP_OK,{'status' => 'fail', 'message' => "Tag '$tag' has a non-existent interface group ID ".
+						"'$rawInterfaceGroupID'"},
+						{ 'type' => 'json' });
+			}
+
+			# Loop with both directions
 			foreach my $direction ('tx','rx') {
-				my $rawData;
+				# Grab stats ID
+				my $sid = opentrafficshaper::plugins::statistics::getSIDFromCID($interfaceGroupID->{"${direction}iface"},0);
+				if (!defined($sid)) {
+					$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' stats data cannot be found for ".
+							"interface group ID '%s'",
+							$tag,
+							$rawInterfaceGroupID
+					);
+					return (HTTP_OK,{'status' => 'fail', 'message' => "Tag '$tag' stats data cannot be found for interface group ".
+							"ID '$rawInterfaceGroupID'"},
+							{ 'type' => 'json' });
+				}
 
-				# Pull in stats data
-				my $sid = opentrafficshaper::plugins::statistics::getSIDFromCID($interfaceGroup->{"${direction}iface"},0);
-				my $statsData = opentrafficshaper::plugins::statistics::getStatsBySID($sid);
+				# Pull in stats data, override direction used
+				my $statsData = opentrafficshaper::plugins::statistics::getStatsBySID($sid,{
+						'direction' => $direction
+				});
 
-				# First stage, pull in the data items we want
+				# Loop with timestamps
 				foreach my $timestamp (sort keys %{$statsData}) {
-					foreach my $stat ('cir','limit','pps','rate') {
-						# Flow of traffic is always in tx direction
-						push(  @{$rawData->{"$direction.$stat"}->{'data'}} , [ $timestamp , $statsData->{$timestamp}->{"tx"}->{$stat} ] );
-					}
-				}
-				# Second state, add labels
-				foreach my $stat ('cir','limit','pps','rate') {
-					# Make it looks nice:  Tx Rate
-					my $label = uc($direction) . " " . ucfirst($stat);
-					# And set it as the label
-					$rawData->{"$direction.$stat"}->{'label'} = $label;
-				}
-
-				# JSON stuff we looking for
-				foreach my $stat ('cir','limit','rate') {
-					if (defined($rawData->{"$direction.$stat"}->{'data'})) {
-							push(@{$jsonData},$rawData->{"$direction.$stat"});
+					# Grab the stat
+					my $tstat = $statsData->{$timestamp};
+					# Loop with its keys
+					foreach my $item (keys $tstat) {
+						# Add the keys to the data to return
+						push(@{$rawData->{$tag}->{$item}->{'data'}},[
+								$timestamp,
+								$tstat->{$item}
+						]);
 					}
 				}
 			}
@@ -407,66 +528,114 @@ sub jsondata
 	# If we need to return a counter, lets see what there is we can return...
 	if (defined($queryParams->{'counter'})) {
 		# Lets get unique counters as keys
-		my %counters;
-		foreach my $counter (@{$queryParams->{'counter'}->{'values'}}) {
-			$counters{$counter} = 1;
+		my %counterSpecs;
+		foreach my $rawCounterSpec (@{$queryParams->{'counter'}->{'values'}}) {
+			$counterSpecs{$rawCounterSpec} = 1;
 		}
 		# Then loop through the unique keys
-		foreach my $counter (keys %counters) {
+		foreach my $counterSpec (keys %counterSpecs) {
+			# Check we have a tag and counter
+			my ($tag,$rawCounter) = split(/:/,$counterSpec);
+			if (!defined($tag)) {
+				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Invalid format for counter specification '%s'",
+						$counterSpec
+				);
+				return (HTTP_OK,{'status' => 'fail', 'message' => "Invalid format for counter specification '$counterSpec'"},
+						{ 'type' => 'json' });
+			}
+			if (!defined($rawCounter)) {
+				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has an invalid interface group ID '%s'",
+						$tag,
+						$counterSpec
+				);
+				return (HTTP_OK,{'status' => 'fail', 'message' => "Tag '$tag' has an invalid interface group ID ".
+						"'$counterSpec'"},
+						{ 'type' => 'json' });
+			}
 			# Grab the SID
-			if (my $sid = opentrafficshaper::plugins::statistics::getSIDFromCounter($counter)) {
-				my $rawData;
+			my $sid = opentrafficshaper::plugins::statistics::getSIDFromCounter($rawCounter);
+			if (!defined($sid)) {
+				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has a non-existent counter '%s'",
+						$tag,
+						$counterSpec
+				);
+				return (HTTP_OK,{'status' => 'fail', 'message' => "Tag '$tag' has a non-existent counter ".
+						"'$counterSpec'"},
+						{ 'type' => 'json' });
+			}
+			# Pull in stats data
+			my $statsData = opentrafficshaper::plugins::statistics::getStatsBySID($sid);
 
-				# Grab stats
-				my $statsData = opentrafficshaper::plugins::statistics::getStatsBasicBySID($sid);
-
-				# First stage refinement
-				foreach my $timestamp (sort keys %{$statsData}) {
-					# Flow of traffic is always in tx direction
-					push(  @{$rawData->{'data'}} , [ $timestamp , $statsData->{$timestamp}->{'counter'} ] );
+			# Loop with timestamps
+			foreach my $timestamp (sort keys %{$statsData}) {
+				# Grab the stat
+				my $tstat = $statsData->{$timestamp};
+				# Loop with its keys
+				foreach my $item (keys $tstat) {
+					# Add the keys to the data to return
+					push(@{$rawData->{$tag}->{$item}->{'data'}},[
+							$timestamp,
+							$tstat->{$item}
+					]);
 				}
-
-				# We need to give it a funky name ...
-				$rawData->{'label'} = "Unknown";
-				if ($counter eq "ConfigManager:TotalLimits") {
-					$rawData->{'label'} = "Total Limits";
-				}
-
-				# Push it onto our data stack...
-				push(@{$jsonData},$rawData);
-
-			} else {
-				return (HTTP_OK,{ 'error' => 'Invalid Counter' },{ 'type' => 'json' });
 			}
 		}
 	}
 
-	return (HTTP_OK,$jsonData,{ 'type' => 'json' });
+	return (HTTP_OK,{'status' => 'success', 'data' => $rawData},{ 'type' => 'json' });
 }
 
 
 # Return javascript for the graph
 sub _getJavascript
 {
-	my $graphData = shift;
+	my ($canvasName,$dataPath) = @_;
 
+
+	# Encode canvasname
+	my $encodedCanvasName = encode_entities($canvasName);
 	# Build our data path using the URI module to make sure its nice and clean
-	my $dataPath = URI->new($graphData);
-	my $dataPathStr = $dataPath->as_string();
+	my $dataPathURI = URI->new($dataPath);
+	my $dataPathStr = $dataPathURI->as_string();
 
 	my $javascript =<<EOF;
 	awit_flot_draw_graph({
-		url: '$dataPathStr',
-		yaxes: [
-			{
-				labels: ['Total Limits'],
-				position: 'right',
-				tickDecimals: 0,
-				min: 0	
+		id: '$encodedCanvasName',
+		url: '$dataPathStr'
+
+		NKxaxis: {
+			'tag1': {
+				'tx.cir': 'TX Cir',
+				'tx.limit': 'TX Limit',
+				'tx.rate': 'TX Rate'
+			},
+			'tag2': {
+				'tx.rate': 'Client2 Rate'
 			}
-		]
+		},
+		NKyaxis: {
+			'tag3': {
+				'total.pools': 'Total pools'
+			}
+		}
+
+
+
 	});
 EOF
+#	my $javascript =<<EOF;
+#	awit_flot_draw_graph({
+#		url: '$dataPathStr',
+#		yaxes: [
+#			{
+#				labels: ['Total Pools'],
+#				position: 'right',
+#				tickDecimals: 0,
+#				min: 0
+#			}
+#		]
+#	});
+#EOF
 
 	return $javascript;
 }
