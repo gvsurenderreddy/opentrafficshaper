@@ -167,8 +167,8 @@ sub plugin_init
 		} else {
 			# Load resources
 			$resources->{'HTTP'}->{'statistics'} = {
-				'by-limit' => \&opentrafficshaper::plugins::webserver::pages::statistics::bylimit,
-				'by-class' => \&opentrafficshaper::plugins::webserver::pages::statistics::byclass,
+				'by-pool' => \&opentrafficshaper::plugins::webserver::pages::statistics::byPool,
+				'by-class' => \&opentrafficshaper::plugins::webserver::pages::statistics::byClass,
 
 				'jsondata' => \&opentrafficshaper::plugins::webserver::pages::statistics::jsondata
 			};
