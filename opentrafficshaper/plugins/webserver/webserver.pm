@@ -21,6 +21,8 @@ package opentrafficshaper::plugins::webserver;
 use strict;
 use warnings;
 
+use bytes;
+
 use HTML::Entities;
 use HTTP::Response;
 use HTTP::Status qw( :constants :is );
@@ -51,7 +53,12 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 );
 
 use constant {
-	VERSION => '0.1.1'
+	VERSION => '0.1.1',
+
+	# WebSocket return status
+	WS_OK => 0,
+	WS_ERROR => -1,
+	WS_FAIL => -2
 };
 
 
@@ -656,7 +663,7 @@ END:
 # Handle the websocket request
 sub _server_request_websocket
 {
-	my ($kernel,$client_session_id,$request) = @_;
+	my ($kernel,$client_session_id,$rawRequest) = @_;
 
 
 	my $conn = $connections->{$client_session_id};
@@ -671,8 +678,43 @@ sub _server_request_websocket
 	}
 	# If its something else, blow up
 	if (ref($function) ne "CODE") {
-		return '{status: "error", message: "Internal server error"}';
+		$logger->log(LOG_ERR,"[WEBSERVER] No 'on_request' handler for websocket");
+		return encode_json({'status' => "error", 'message' => "Internal server error"});
 	}
+
+	# Safely decode JSON
+	my $request;
+	eval { $request = decode_json($rawRequest); };
+	if ($@) {
+		$logger->log(LOG_NOTICE,"[WEBSERVER] Failed to decode JSON request '%s'",$rawRequest);
+		return encode_json({'status' => "error", 'message' => "Failed to decode JSON"});
+	}
+
+	# Save the command id
+	my $rCode = $request->{'id'};
+
+	# Check the function and args are present
+	if (!defined($request->{'function'}) || !defined($request->{'args'})) {
+		return encode_json({
+			'status' => "error",
+			'message' => "Invalid format for JSON request, must have 'function' and 'args' properties"
+		});
+	}
+	# Check function is a string
+	if (!(ref($request->{'function'}) eq "" && length($request->{'function'}) > 0)) {
+		return encode_json({
+			'status' => "error",
+			'message' => "The 'function' property must contain a function name"
+		});
+	}
+	# And the args is an array ref
+	if (!ref($request->{'args'}) eq "ARRAY") {
+		return encode_json({
+			'status' => "error",
+			'message' => "The 'args' property must contain an array of arguments"
+		});
+	}
+
 
 	# Do the function call now
 	my ($res,$content,$extra) = $function->($kernel,$globals,$client_session_id,$request,$conn->{'socket'});
@@ -683,7 +725,27 @@ sub _server_request_websocket
 			$conn->{'resource'}->{'action'},
 	);
 
-	return $content;
+	# Check if its a success or failure
+	my $ret;
+	if ($res == WS_OK) {
+		$ret->{'status'} = "success";
+		$ret->{'data'} = $content;
+	} elsif ($res == WS_ERROR) {
+		$ret->{'status'} = "error";
+		$ret->{'message'} = $content;
+	} elsif ($res == WS_FAIL) {
+		$ret->{'status'} = "fail";
+		$ret->{'message'} = $content;
+	} else {
+		$ret->{'status'} = "error";
+		$ret->{'message'} = "Internal server error";
+	}
+	# Add ID if we have one
+	if (defined($request->{'id'})) {
+		$ret->{'id'} = $request->{'id'};
+	}
+
+	return encode_json($ret);
 }
 
 
