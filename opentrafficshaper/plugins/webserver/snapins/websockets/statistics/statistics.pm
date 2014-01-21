@@ -184,7 +184,7 @@ sub _session_websocket_send
 		my $socket = $subscriberMap->{$ssid}->{'socket'};
 		my $tag = $subscriberMap->{$ssid}->{'tag'};
 
-		$socket->put(_json_success({ $tag => $rawData }));
+		$socket->put(_json_data({ $tag => $rawData }));
 	}
 
 }
@@ -254,48 +254,70 @@ sub graphdata_websocket_onrequest
 
 	my $logger = $globals->{'logger'};
 
-
-	# Rip off tag
-	my $tag;
-	if ($request =~ s/^([a-zA-Z0-9]+) //) {
-		$tag = $1;
-	} else {
-		return (0,_json_error("Invalid command format, use: <tag> <command> ..."));
-	}
-
 	# Parse the command we got...
-	if ($request =~ /^subscribe\s+(.*)/i) {
-		my $params = parseKeyPairString($1);
+	if ($request->{'function'} eq "subscribe") {
 
-		# Parse params
+		# Grab the first parameter as our tag
+		my $tag = shift($request->{'args'});
+		if (!defined($tag) || ref($tag) ne "") {
+			return (
+					opentrafficshaper::plugins::webserver::WS_ERROR,
+					"The first parameter of 'subscribe' must be a text based tag"
+			);
+		}
+
+		# Pull off our datasets
+		my $datasets = { };
+		foreach my $arg (@{$request->{'args'}}) {
+			my ($item,$params) = split(/=/,$arg);
+			push(@{$datasets->{$item}},$params);
+
+		}
+
+		# Parse dataset data
 		my @sidList;
-		if (defined($params->{'pool'})) {
+		if (defined($datasets->{'pool'})) {
 			# Loop with pool specifications
-			foreach my $poolSpec (@{$params->{'pool'}->{'values'}}) {
+			foreach my $poolSpec (@{$datasets->{'pool'}}) {
 				# Split interface group id and pool name
 				my ($rawInterfaceGroupID,$rawPoolName) = split(/:/,$poolSpec);
 				if (!defined($rawInterfaceGroupID)) {
-					return (0,_json_error("Tag '$tag' datasource has invalid format '$poolSpec'"));
+					return (
+							opentrafficshaper::plugins::webserver::WS_FAIL,
+							"Datasource for pool has invalid format '$poolSpec'"
+					);
 				}
 				if (!defined($rawPoolName)) {
-					return (0,_json_error("Tag '$tag' datasource has invalid format '$poolSpec'"));
+					return (
+							opentrafficshaper::plugins::webserver::WS_FAIL,
+							"Datasource for pool has invalid format '$poolSpec'"
+					);
 				}
 
 				# Check if we can grab the interface group
 				my $interfaceGroup = getInterfaceGroup($rawInterfaceGroupID);
 				if (!defined($interfaceGroup)) {
-					return (0,_json_error("Tag '$tag' datasource has invalid interface ID '$rawInterfaceGroupID'"));
+					return (
+							opentrafficshaper::plugins::webserver::WS_FAIL,
+							"Datasource has invalid interface group '$rawInterfaceGroupID'"
+					);
 				}
 
 				# Check if the pool name exists
 				my $pool = getPoolByName($rawInterfaceGroupID,$rawPoolName);
 				if (!defined($pool)) {
-					return (0,_json_error("Tag '$tag' datasource pool not found '$rawPoolName'"));
+					return (
+							opentrafficshaper::plugins::webserver::WS_FAIL,
+							"Datasource has invalid pool '$rawPoolName'"
+					);
 				}
 				# Check if we have a stats ID
 				my $sid = opentrafficshaper::plugins::statistics::getSIDFromPID($pool->{'ID'});
 				if (!defined($sid)) {
-					return (0,_json_error("Tag '$tag' datasource stats for pool not found '$rawPoolName'"));
+					return (
+							opentrafficshaper::plugins::webserver::WS_FAIL,
+							"Datasource stats for pool not found '$rawPoolName'"
+					);
 				}
 
 				# Add SID to SID list that we need to subscribe to
@@ -303,26 +325,38 @@ sub graphdata_websocket_onrequest
 			}
 		}
 
-		if (defined($params->{'class'})) {
+		if (defined($datasets->{'class'})) {
 			# Loop with class specifications
-			foreach my $classIDSpec (@{$params->{'class'}->{'values'}}) {
+			foreach my $classIDSpec (@{$datasets->{'class'}}) {
 				# Check we have a tag, interface group ID and class ID
 				my ($rawInterfaceGroupID,$rawClassID) = split(/:/,$classIDSpec);
 				if (!defined($rawInterfaceGroupID)) {
-					return (0,_json_error("Tag '$tag' datasource has invalid format '$classIDSpec'"));
+					return (
+							opentrafficshaper::plugins::webserver::WS_FAIL,
+							"Datasource for class has invalid format '$classIDSpec'"
+					);
 				}
 				if (!defined($rawClassID)) {
-					return (0,_json_error("Tag '$tag' datasource has invalid format '$classIDSpec'"));
+					return (
+							opentrafficshaper::plugins::webserver::WS_FAIL,
+							"Datasource for class has invalid format '$classIDSpec'"
+					);
 				}
 
 				# Get more sane values...
 				my $interfaceGroup = getInterfaceGroup($rawInterfaceGroupID);
 				if (!defined($interfaceGroup)) {
-					return (0,_json_error("Tag '$tag' datasource has invalid interface ID '$rawInterfaceGroupID'"));
+					return (
+							opentrafficshaper::plugins::webserver::WS_FAIL,
+							"Datasource has invalid interface group '$rawInterfaceGroupID'"
+					);
 				}
 				my $classID = isTrafficClassIDValid($rawClassID);
 				if (!defined($classID)) {
-					return (0,_json_error("Tag '$tag' datasource has invalid class ID '$rawClassID'"));
+					return (
+							opentrafficshaper::plugins::webserver::WS_FAIL,
+							"Datasource has invalid class '$rawClassID'"
+					);
 				}
 
 				# Loop with both directions
@@ -331,7 +365,10 @@ sub graphdata_websocket_onrequest
 					my $sid = opentrafficshaper::plugins::statistics::getSIDFromCID($interfaceGroup->{"${direction}iface"},
 							$classID);
 					if (!defined($sid)) {
-						return (0,_json_error("Tag '$tag' datasource stats for class ID not found '$classID'"));
+						return (
+								opentrafficshaper::plugins::webserver::WS_FAIL,
+								"Datasource stats for class not found '$classID'"
+						);
 					}
 					# Add SID to SID list that we need to subscribe to
 					push(@sidList,{'sid' => $sid, 'conversions' => { 'direction' => $direction }});
@@ -339,19 +376,25 @@ sub graphdata_websocket_onrequest
 			}
 		}
 
-		if (defined($params->{'interface-group'})) {
+		if (defined($datasets->{'interface-group'})) {
 			# Loop with interface-group specifications
-			foreach my $interfaceGroupSpec (@{$params->{'interface-group'}->{'values'}}) {
+			foreach my $interfaceGroupSpec (@{$datasets->{'interface-group'}}) {
 				# Check we have a tag, interface group ID and class ID
 				my ($rawInterfaceGroupID) = split(/:/,$interfaceGroupSpec);
 				if (!defined($rawInterfaceGroupID)) {
-					return (0,_json_error("Tag '$tag' atasource has invalid format '$interfaceGroupSpec'"));
+					return (
+							opentrafficshaper::plugins::webserver::WS_FAIL,
+							"Datasource for interface group has invalid format '$interfaceGroupSpec'"
+					);
 				}
 
 				# Get more sane values...
 				my $interfaceGroup = getInterfaceGroup($rawInterfaceGroupID);
 				if (!defined($interfaceGroup)) {
-					return (0,_json_error("Tag '$tag' Datasource has invalid interface ID '$rawInterfaceGroupID'"));
+					return (
+							opentrafficshaper::plugins::webserver::WS_FAIL,
+							"Datasource has invalid interface group '$rawInterfaceGroupID'"
+					);
 				}
 
 				# Loop with both directions
@@ -359,8 +402,10 @@ sub graphdata_websocket_onrequest
 					# Grab stats ID using a small direction hack
 					my $sid = opentrafficshaper::plugins::statistics::getSIDFromCID($interfaceGroup->{"${direction}iface"},0);
 					if (!defined($sid)) {
-						return (0,_json_error("Tag '$tag' Datasource stats for interface group ID not found ".
-									"'$rawInterfaceGroupID'"));
+						return (
+								opentrafficshaper::plugins::webserver::WS_FAIL,
+								"Datasource stats for interface group not found '$rawInterfaceGroupID'"
+						);
 					}
 					# Add SID to SID list that we need to subscribe to
 					push(@sidList,{'sid' => $sid, 'conversions' => { 'direction' => $direction }});
@@ -368,18 +413,24 @@ sub graphdata_websocket_onrequest
 			}
 		}
 
-		if (defined($params->{'counter'})) {
+		if (defined($datasets->{'counter'})) {
 			# Loop with counter specifications
-			foreach my $counterSpec (@{$params->{'counter'}->{'values'}}) {
+			foreach my $counterSpec (@{$datasets->{'counter'}}) {
 				# Check we have a tag and counter
 				my ($rawCounter) = split(/:/,$counterSpec);
 				if (!defined($rawCounter)) {
-					return (0,_json_error("Tag '$tag' datasource has invalid format '$counterSpec'"));
+					return (
+							opentrafficshaper::plugins::webserver::WS_FAIL,
+							"Datasource for counter has invalid format '$counterSpec'"
+					);
 				}
 				# Grab the SID
 				my $sid = opentrafficshaper::plugins::statistics::getSIDFromCounter($rawCounter);
 				if (!defined($sid)) {
-					return (0,_json_error("Tag '$tag' datasource stats for counter not found '$rawCounter'"));
+					return (
+							opentrafficshaper::plugins::webserver::WS_FAIL,
+							"Datasource stats for counter not found '$rawCounter'"
+					);
 				}
 				# Add SID to SID list that we need to subscribe to
 				push(@sidList,{'sid' => $sid});
@@ -388,7 +439,10 @@ sub graphdata_websocket_onrequest
 
 		# No datasources?
 		if (!@sidList) {
-			return (0,_json_error("Tag '$tag' invalid subscribe command, use: <tag> subscribe <pool|class>=<id>"));
+			return (
+					opentrafficshaper::plugins::webserver::WS_FAIL,
+					"Failed to identify any subscription requests"
+			);
 		}
 
 		# Loop wiht subscription list
@@ -407,14 +461,14 @@ sub graphdata_websocket_onrequest
 			};
 		}
 
-		return (0,_json_success("$tag Subscription completed"));
+		return (opentrafficshaper::plugins::webserver::WS_OK,"Subscribed");
 
 	# No command at all
 	} else {
-		return (0,_json_error("$tag Invalid command: $request"));
+		return (opentrafficshaper::plugins::webserver::WS_ERROR,"Function '$request->{'function'}' does not exist");
 	}
 
-	return (0,"ERM");
+	return (opentrafficshaper::plugins::webserver::WS_OK,"Function not found");
 }
 
 
@@ -423,26 +477,8 @@ sub graphdata_websocket_onrequest
 #
 
 
-# Return a json error
-sub _json_error
-{
-	my ($message,$data) = @_;
-
-
-	# Build the structure we're going to encode
-	my $res;
-	$res->{'status'} = "error";
-	$res->{'message'} = $message;
-	if (defined($data)) {
-		$res->{'data'} = $data;
-	}
-
-	return encode_json($res);
-}
-
-
-# Return a json error
-sub _json_success
+# Return a json dataset
+sub _json_data
 {
 	my $data = shift;
 
@@ -451,6 +487,8 @@ sub _json_success
 	my $res;
 	$res->{'status'} = "success";
 	$res->{'data'} = $data;
+	# Use ID of 0 to signify out of band data
+	$res->{'id'} = -1;
 
 	return encode_json($res);
 }
