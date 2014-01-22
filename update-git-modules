@@ -7,4 +7,9 @@ git checkout v0.1.x
 git pull
 popd
 
+pushd opentrafficshaper/plugins/webserver/pages/static/awit-flot-toolkit
+git checkout
+git pull
+popd
+
 git submodule update
