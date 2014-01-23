@@ -510,7 +510,7 @@ $content
 	</body>
 
 
-	<script type="text/javascript" src="/static/jquery/js/jquery-1.10.2.js"></script>
+	<script type="text/javascript" src="/static/jquery/js/jquery.min.js"></script>
 	<script type="text/javascript" src="/static/jquery-ui/js/jquery-ui.min.js"></script>
 	<script type="text/javascript" src="/static/bootstrap/js/bootstrap.min.js"></script>
 $javascriptStr

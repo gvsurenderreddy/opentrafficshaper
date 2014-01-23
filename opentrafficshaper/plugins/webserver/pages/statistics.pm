@@ -125,7 +125,7 @@ EOF
 
 	# Files loaded at end of HTML document
 	my @javascripts = (
-		'/static/flot/jquery.flot.js',
+		'/static/flot/jquery.flot.min.js',
 		'/static/flot/jquery.flot.time.min.js',
 		'/static/js/flot-functions.js',
 		'/static/awit-flot-toolkit/js/jquery.flot.awitds.js'
