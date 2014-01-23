@@ -433,7 +433,7 @@ sub graphdata_websocket_onrequest
 					);
 				}
 				# Add SID to SID list that we need to subscribe to
-				push(@sidList,{'sid' => $sid});
+				push(@sidList,{'sid' => $sid, 'conversions' => { 'name' => $rawCounter }});
 			}
 		}
 
