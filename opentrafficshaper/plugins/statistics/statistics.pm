@@ -57,8 +57,8 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 @EXPORT_OK = qw(
 	getLastStats
 
-	getStatsByClass
-	getStatsByCounter
+	getStatsBySID
+	getStatsBasicBySID
 
 	getSIDFromCID
 	getSIDFromPID
@@ -775,6 +775,28 @@ sub getStatsBySID
 		my $stat = $statistics->{$timestamp};
 		# Use new item
 		$statistics->{$timestamp} = _convertStat($stat,$conversions);
+	}
+
+	return $statistics;
+}
+
+
+# Return basic stats by SID
+sub getStatsBasicBySID
+{
+	my ($sid,$conversions) = @_;
+
+
+	my $statistics = _getStatsBasicBySID($sid);
+	if (!defined($statistics)) {
+		return;
+	}
+
+	# Loop and convert
+	foreach my $timestamp (keys %{$statistics}) {
+		my $stat = $statistics->{$timestamp};
+		# Use new item
+		$statistics->{$timestamp} = _fixCounterName($stat,$conversions);
 	}
 
 	return $statistics;
