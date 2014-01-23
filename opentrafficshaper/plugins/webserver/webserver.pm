@@ -360,15 +360,11 @@ sub httpCreateResponse
 		my $mainCols = 12;
 
 		# Check if we have a menu structure, if we do, display the sidebar
-		my $styleStr = "";
 		my $menuStr = "";
+		my $stylesheetsStr = "";
+		my $stylesheetStr = "";
 		my $javascriptStr = "";
 		if (defined($options)) {
-			# Check if style snippet exists
-			if (defined(my $style = $options->{'style'})) {
-				$styleStr .= $style;
-			}
-
 			# Check if menu exists
 			if (my $menu = $options->{'menu'}) {
 				$menuStr =<<EOF;
@@ -415,6 +411,20 @@ EOF
 				$mainCols = 10;
 			}
 
+			# Check if we have a list of style assets
+			if (defined(my $stylesheets = $options->{'stylesheets'})) {
+				foreach my $script (@{$stylesheets}) {
+					$stylesheetsStr .=<<EOF;
+						<link href="$script" rel="stylesheet"></script>
+EOF
+				}
+			}
+			# Check if stylesheet snippet exists
+			if (defined(my $stylesheet = $options->{'stylesheet'})) {
+				$stylesheetStr .=<<EOF;
+$stylesheet
+EOF
+			}
 			# Check if we have a list of javascript assets
 			if (defined(my $javascripts = $options->{'javascripts'})) {
 				foreach my $script (@{$javascripts}) {
@@ -444,15 +454,17 @@ EOF
 		<meta name="viewport" content="width=device-width, initial-scale=1.0">
 		<!-- Assets -->
 		<link href="/static/favicon.ico" rel="icon" />
-		<link href="/static/jquery-ui/css/ui-lightness/jquery-ui.min.css" rel="stylesheet">
-		<link href="/static/bootstrap/css/bootstrap.min.css" rel="stylesheet">
+		<link href="/static/jquery-ui/css/ui-lightness/jquery-ui.min.css" rel="stylesheet" />
+		<link href="/static/bootstrap/css/bootstrap.min.css" rel="stylesheet" />
+$stylesheetsStr
 
 		<style type="text/css">
 			body {
 				padding-top: 50px;
 			}
-$styleStr
+$stylesheetStr
 		</style>
+
 		<!-- End Assets -->
 	</head>
 
@@ -498,7 +510,7 @@ $content
 	</body>
 
 
-	<script type="text/javascript" src="/static/jquery/js/jquery.min.js"></script>
+	<script type="text/javascript" src="/static/jquery/js/jquery-1.10.2.js"></script>
 	<script type="text/javascript" src="/static/jquery-ui/js/jquery-ui.min.js"></script>
 	<script type="text/javascript" src="/static/bootstrap/js/bootstrap.min.js"></script>
 $javascriptStr
