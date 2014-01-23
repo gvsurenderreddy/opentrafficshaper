@@ -774,7 +774,7 @@ sub getStatsBySID
 	foreach my $timestamp (keys %{$statistics}) {
 		my $stat = $statistics->{$timestamp};
 		# Use new item
-		$statistics->{$timestamp} = _convertStat($stat,$conversions);
+		$statistics->{$timestamp} = _fixStatDirection($stat,$conversions);
 	}
 
 	return $statistics;
@@ -991,14 +991,22 @@ sub _processStatistics
 
 		# Check if we have an event handler subscriber for this item
 		if (defined(my $subscribers = $sidSubscribers->{$sid})) {
+
 			# Build the stat that our conversions understands
 			my $eventStat;
-			$eventStat->{$stat->{'direction'}} = {
-				'rate' => $stat->{'rate'},
-				'pps' => $stat->{'pps'},
-				'cir' => $stat->{'cir'},
-				'limit' => $stat->{'limit'},
-			};
+			# This is a basic counter
+			if (defined($stat->{'counter'})) {
+				$eventStat = {
+					'counter' => $stat->{'counter'}
+				};
+			} else {
+				$eventStat->{$stat->{'direction'}} = {
+					'rate' => $stat->{'rate'},
+					'pps' => $stat->{'pps'},
+					'cir' => $stat->{'cir'},
+					'limit' => $stat->{'limit'}
+				};
+			}
 
 			# If we do, loop with them
 			foreach my $ssid (keys %{$subscribers}) {
@@ -1008,7 +1016,13 @@ sub _processStatistics
 				my $conversions = $subscriber->{'conversions'};
 
 				# Get temp stat, this still refs the original one
-				my $tempStat = _convertStat($eventStat,$conversions);
+				my $tempStat;
+				# This is a basic counter
+				if (defined($eventStat->{'counter'})) {
+					$tempStat = _fixCounterName($eventStat,$conversions);
+				} else {
+					$tempStat = _fixStatDirection($eventStat,$conversions);
+				}
 				# Send a copy! so we don't send refs to data used elsewhere
 				$queuedEvents->{$handler}->{$event}->{$ssid}->{$stat->{'timestamp'}} = dclone($tempStat);
 			}
@@ -1224,7 +1238,7 @@ sub _getStatsBasicBySID
 
 
 # Function to transform stats before sending them
-sub _convertStat
+sub _fixStatDirection
 {
 	my ($stat,$conversions) = @_;
 
@@ -1254,7 +1268,27 @@ sub _convertStat
 		$newStat->{$newKey} = $oldStat->{$item};
 	}
 
-	# We need to refactor the stat keys
+	return $newStat;
+}
+
+
+# Function to transform stats before sending them
+sub _fixCounterName
+{
+	my ($stat,$conversions) = @_;
+
+
+	# Loop and set the identifier
+	my $newStat;
+
+	# If we have conversions defined...
+	my $newKey = 'counter';
+	if (defined($conversions) && defined($conversions->{'name'})) {
+		$newKey = sprintf('%s',$conversions->{'name'});
+	}
+
+	$newStat->{$newKey} = $stat->{'counter'};
+
 	return $newStat;
 }
 
