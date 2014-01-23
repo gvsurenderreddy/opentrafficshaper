@@ -29,6 +29,7 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 @EXPORT_OK = qw(
 );
 
+use HTTP::Status qw( :constants );
 
 use opentrafficshaper::plugins;
 
@@ -39,98 +40,20 @@ sub _catchall
 	my ($kernel,$globals,$client_session_id,$request) = @_;
 
 
-	# Build content
-	my $content = "";
+	my ($res,$content,$opts);
 
 	if (!isPluginLoaded('statistics')) {
 		$content .= "No Statistics Plugin";
+		$res = HTTP_OK;
 		goto END;
 	}
 
-	my @leftGraphs;
-	my @rightGraphs;
-
-
-	for (my $i = 0; $i < 7; $i++) {
-		push(@leftGraphs,"Class $i");
-	}
-	for (my $i = 0; $i < 2; $i++) {
-		push(@rightGraphs,"Main $i");
-	}
-
-	# Loop while we have graphs to output
-	while (@leftGraphs || @rightGraphs) {
-		# Layout Begin
-		$content .= <<EOF;
-			<div class="row">
-EOF
-		# LHS - Begin
-		$content .= <<EOF;
-				<div class="col-xs-8">
-EOF
-		# Loop with 2 sets of normal graphs per row
-		for (my $row = 0; $row < 2; $row++) {
-			# LHS - Begin Row
-			$content .= <<EOF;
-					<div class="row">
-						<div class="col-xs-6">
-EOF
-			# Graph 1
-			if (defined(my $graph = shift(@leftGraphs))) {
-				$content .= <<EOF;
-							<h4 style="color:#8f8f8f;">Latest Data For: $graph</h4>
-							<div id="flotCanvas" class="flotCanvas" style="width: 520px; height: 150px; border: 1px dashed black">
-							</div>
-EOF
-			}
-			# LHS - Spacer
-			$content .= <<EOF;
-						</div>
-						<div class="col-xs-6">
-EOF
-			# Graph 2
-			if (defined(my $graph = shift(@leftGraphs))) {
-				$content .= <<EOF;
-							<h4 style="color:#8f8f8f;">Latest Data For: $graph</h4>
-							<div id="flotCanvas" class="flotCanvas" style="width: 520px; height: 150px; border: 1px dashed black">
-							</div>
-EOF
-			}
-			# LHS - End Row
-			$content .= <<EOF;
-						</div>
-					</div>
-EOF
-		}
-		# LHS - End
-		$content .= <<EOF;
-			</div>
-EOF
-
-		# RHS - Begin Row
-		$content .= <<EOF;
-				<div class="col-xs-4">
-EOF
-		# Graph
-		if (defined(my $graph = shift(@rightGraphs))) {
-			$content .= <<EOF;
-					<h4 style="color:#8f8f8f;">Latest Data For: $graph</h4>
-					<div id="flotCanvas" class="flotCanvas" style="width: 520px; height: 340px; border: 1px dashed black"></div>
-EOF
-		}
-		# RHS - End Row
-		$content .= <<EOF;
-				</div>
-EOF
-
-		# Layout End
-		$content .= <<EOF;
-			</div>
-EOF
-	}
+	($res,$content,$opts) = opentrafficshaper::plugins::webserver::pages::statistics::_dashboard($kernel,$globals,
+			$client_session_id,$request
+	);
 
 END:
-	return (200,$content);
+	return ($res,$content,$opts);
 }
 
 

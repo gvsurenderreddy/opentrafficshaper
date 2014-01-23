@@ -34,6 +34,7 @@ use DateTime;
 use HTML::Entities;
 use HTTP::Status qw( :constants );
 use JSON;
+use URI::Escape qw( uri_escape );
 
 use opentrafficshaper::logger;
 use opentrafficshaper::plugins;
@@ -45,7 +46,10 @@ use opentrafficshaper::plugins::configmanager qw(
 	getPoolByName
 
 	getInterfaceGroup
+	getInterfaceGroups
 	getInterface
+
+	getAllTrafficClasses
 
 	isTrafficClassIDValid
 	getTrafficClassName
@@ -121,14 +125,14 @@ EOF
 
 	# Files loaded at end of HTML document
 	my @javascripts = (
-		'/static/flot/jquery.flot.min.js',
+		'/static/flot/jquery.flot.js',
 		'/static/flot/jquery.flot.time.min.js',
-		'/static/awit-flot/functions.js',
-#		'/static/awit-flot/jquery.flot.websockets.js'
+		'/static/js/flot-functions.js',
+		'/static/awit-flot-toolkit/js/jquery.flot.awitds.js'
 	);
 
-	# Path to the json data
-	my $dataPath = sprintf('/statistics/jsondata?pool=%s:%s',$pool->{'InterfaceGroupID'},$pool->{'Name'});
+	# Path to the json data, just use "data" as the tag
+	my $dataPath = sprintf('/statistics/jsondata?pool=%s:%s:%s',"tag1",$pool->{'InterfaceGroupID'},$pool->{'Name'});
 
 	# String put in <script> </script> tags after the above files are loaded
 	my $javascript = _getJavascript($canvasName,$dataPath);
@@ -222,7 +226,8 @@ EOF
 	my @javascripts = (
 		'/static/flot/jquery.flot.min.js',
 		'/static/flot/jquery.flot.time.min.js',
-		'/static/awit-flot/functions.js',
+		'/static/js/flot-functions.js',
+		'/static/awit-flot-toolkit/js/jquery.flot.awitds.js'
 	);
 
 	# Build our data path using the URI module to make sure its nice and clean
@@ -235,6 +240,236 @@ EOF
 END:
 
 	return (HTTP_OK,$content,{ 'javascripts' => \@javascripts, 'javascript' => $javascript });
+}
+
+
+
+# Dashboard display
+sub _dashboard
+{
+	my ($kernel,$globals,$client_session_id,$request) = @_;
+
+
+	# Header
+	my $content = <<EOF;
+		<div id="header">
+			<h2>Dashboard View</h2>
+		</div>
+EOF
+
+	# Left and right graphs are added to the main graph list
+	my @graphs = ();
+	# Left and right graphs
+	my @leftGraphs = ();
+	my @rightGraphs = ();
+
+	# Build list of graphs for the left hand side
+	my $interfaceGroups = getInterfaceGroups();
+	my $trafficClasses = getAllTrafficClasses();
+
+	foreach my $interfaceGroupID (keys %{$interfaceGroups}) {
+		my $interfaceGroup = $interfaceGroups->{$interfaceGroupID};
+
+		foreach my $trafficClassID (sort keys %{$trafficClasses}) {
+			my $trafficClassName = $trafficClasses->{$trafficClassID};
+
+			push(@leftGraphs,{
+				'type' => 'graph',
+				'title' => sprintf("%s: %s",$interfaceGroup->{'name'},$trafficClassName),
+				'datasources' => [
+					sprintf('class=%s:%s',$interfaceGroupID,$trafficClassID),
+					sprintf('counter=configmanager.classpools.%s',$trafficClassID)
+				],
+				'xidentifiers' => [
+					{ 'name' => 'tx.cir', 'label' => "TX Cir" },
+					{ 'name' => 'tx.limit', 'label' => "TX Limit" },
+					{ 'name' => 'tx.rate', 'label' => "TX Rate" },
+					{ 'name' => 'rx.cir', 'label' => "RX Cir" },
+					{ 'name' => 'rx.limit', 'label' => "RX Limit" },
+					{ 'name' => 'rx.rate', 'label' => "RX Rate" }
+				],
+				'yidentifiers' => [
+					{ 'name' => sprintf('configmanager.classpools.%s',$trafficClassID), 'label' => "Pool Count" },
+				]
+			});
+		}
+	}
+
+	# Pool distribution
+	my @datasources = ();
+	my @xidentifiers = ();
+	foreach my $trafficClassID (sort keys %{$trafficClasses}) {
+		my $trafficClassName = $trafficClasses->{$trafficClassID};
+
+		push(@datasources,sprintf('counter=configmanager.classpools.%s',$trafficClassID));
+		push(@xidentifiers,{ 'name' => sprintf('configmanager.classpools.%s',$trafficClassID), 'label' => $trafficClassName });
+	}
+	push(@rightGraphs,{
+		'type' => 'pie',
+		'title' => "Pool Distribution",
+		'datasources' => \@datasources,
+		'xidentifiers' => \@xidentifiers
+	});
+
+
+	# Loop while we have graphs to output
+	my $graphCounter = 0;
+	while (@leftGraphs || @rightGraphs) {
+		# Layout Begin
+		$content .= <<EOF;
+			<div class="row">
+EOF
+		# LHS - Begin
+		$content .= <<EOF;
+				<div class="col-xs-8">
+EOF
+		# Loop with 2 sets of normal graphs per row
+		for (my $row = 0; $row < 2; $row++) {
+			# LHS - Begin Row
+			$content .= <<EOF;
+					<div class="row">
+						<div class="col-xs-6">
+EOF
+			# Graph 1
+			if (defined(my $graph = shift(@leftGraphs))) {
+				# Assign this graph a tag
+				$graph->{'tag'} = "tag".$graphCounter++;
+
+				$content .= <<EOF;
+							<h4 style="color:#8f8f8f;">$graph->{'title'}</h4>
+							<div id="$graph->{'tag'}" class="flotCanvas"
+									style="width: 520px; height: 150px; border: 1px dashed black">
+							</div>
+EOF
+				push(@graphs,$graph);
+			}
+			# LHS - Spacer
+			$content .= <<EOF;
+						</div>
+						<div class="col-xs-6">
+EOF
+			# Graph 2
+			if (defined(my $graph = shift(@leftGraphs))) {
+				# Assign this graph a tag
+				$graph->{'tag'} = "tag".$graphCounter++;
+
+				$content .= <<EOF;
+							<h4 style="color:#8f8f8f;">$graph->{'title'}</h4>
+							<div id="$graph->{'tag'}" class="flotCanvas"
+									style="width: 520px; height: 150px; border: 1px dashed black">
+							</div>
+EOF
+				push(@graphs,$graph);
+			}
+			# LHS - End Row
+			$content .= <<EOF;
+						</div>
+					</div>
+EOF
+		}
+		# LHS - End
+		$content .= <<EOF;
+			</div>
+EOF
+
+		# RHS - Begin Row
+		$content .= <<EOF;
+				<div class="col-xs-4">
+EOF
+		# Graph
+		if (defined(my $graph = shift(@rightGraphs))) {
+			# Assign this graph a tag
+			$graph->{'tag'} = "tag".$graphCounter++;
+
+			$content .= <<EOF;
+					<h4 style="color:#8f8f8f;">$graph->{'title'}</h4>
+					<div id="$graph->{'tag'}" class="flotCanvas"
+							style="width: 520px; height: 340px; border: 1px dashed black">
+					</div>
+EOF
+			push(@graphs,$graph);
+		}
+		# RHS - End Row
+		$content .= <<EOF;
+				</div>
+EOF
+
+		# Layout End
+		$content .= <<EOF;
+			</div>
+EOF
+	}
+
+
+	# Files loaded at end of HTML document
+	my @javascripts = (
+		'/static/flot/jquery.flot.min.js',
+		'/static/flot/jquery.flot.time.min.js',
+		'/static/flot/jquery.flot.pie.min.js',
+		'/static/js/flot-functions.js',
+		'/static/awit-flot-toolkit/js/jquery.flot.awitds.js'
+	);
+	my @stylesheets = (
+		'/static/awit-flot-toolkit/css/awit-flot-toolkit.css'
+	);
+
+	my $javascript = "";
+
+	foreach my $graph (@graphs) {
+		my $encodedCanvasName = encode_entities($graph->{'tag'});
+
+		# Items we going to need...
+		my @datasources = ();
+		my $axesIdentifiers = { 'x' => [ ], 'y' => [ ] };
+		my @axesStrList;
+		# Loop with and build the JS for our datasources
+		foreach my $datasource (@{$graph->{'datasources'}}) {
+			my $encodedDatasource = encode_entities($datasource);
+
+			push(@datasources,"{ 'function': 'subscribe', args: ['$encodedCanvasName','$encodedDatasource'] }");
+		}
+		# Loop with axes and build our axes structure
+		foreach my $axis (keys %{$axesIdentifiers}) {
+			foreach my $identifier (@{$graph->{"${axis}identifiers"}}) {
+				my $encodedName = encode_entities($identifier->{'name'});
+				my $encodedLabel = encode_entities($identifier->{'label'});
+				push(@{$axesIdentifiers->{$axis}},"'$encodedName': { label: '$encodedLabel' }");
+			}
+			push(@axesStrList,sprintf("%saxis: { '%s': { %s } }",$axis,$encodedCanvasName,join(',',@{$axesIdentifiers->{$axis}})));
+		}
+		# Build final JS
+		my $datasourceStr = join(',',@datasources);
+		my $axesStr = join(',',@axesStrList);
+
+		$javascript .=<<EOF;
+			awit_flot_draw_$graph->{'type'}({
+				id: '$encodedCanvasName',
+				awitds: {
+					sources: [
+						{
+							type: 'websocket',
+							uri: 'ws://ots-devel:8088/statistics/graphdata',
+							shared: true,
+							// Websocket specific
+							onconnect: [
+								$datasourceStr
+							]
+						}
+					],
+					$axesStr
+				}
+			});
+EOF
+	}
+
+use Data::Dumper; print Dumper($javascript);
+END:
+
+	return (HTTP_OK,$content,{
+			'javascripts' => \@javascripts,
+			'javascript' => $javascript,
+			'stylesheets' => \@stylesheets
+	});
 }
 
 
@@ -564,7 +799,7 @@ sub jsondata
 						{ 'type' => 'json' });
 			}
 			# Pull in stats data
-			my $statsData = opentrafficshaper::plugins::statistics::getStatsBySID($sid);
+			my $statsData = opentrafficshaper::plugins::statistics::getStatsBasicBySID($sid,{ 'name' => $rawCounter });
 
 			# Loop with timestamps
 			foreach my $timestamp (sort keys %{$statsData}) {
@@ -601,26 +836,37 @@ sub _getJavascript
 	my $javascript =<<EOF;
 	awit_flot_draw_graph({
 		id: '$encodedCanvasName',
-		url: '$dataPathStr'
 
-		NKxaxis: {
-			'tag1': {
-				'tx.cir': 'TX Cir',
-				'tx.limit': 'TX Limit',
-				'tx.rate': 'TX Rate'
-			},
-			'tag2': {
-				'tx.rate': 'Client2 Rate'
-			}
-		},
-		NKyaxis: {
-			'tag3': {
-				'total.pools': 'Total pools'
+		awitds: {
+			sources: [
+				{
+					type: 'ajax',
+					url: '$dataPathStr'
+				}
+			],
+			xaxis: {
+				'tag1': {
+					'tx.cir': {
+						label: 'TX Cir'
+					},
+					'tx.limit': {
+						label: 'TX Limit'
+					},
+					'tx.rate': {
+						label: 'TX Rate'
+					},
+					'rx.cir': {
+						label: 'RX Cir'
+					},
+					'rx.limit': {
+						label: 'RX Limit'
+					},
+					'rx.rate': {
+						label: 'RX Rate'
+					}
+				}
 			}
 		}
-
-
-
 	});
 EOF
 #	my $javascript =<<EOF;
