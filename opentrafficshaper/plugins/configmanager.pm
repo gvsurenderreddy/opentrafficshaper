@@ -41,9 +41,6 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 );
 @EXPORT_OK = qw(
 	createLimit
-	getLimit
-	getLimits
-	getLimitUsername
 
 	getOverride
 	getOverrides
