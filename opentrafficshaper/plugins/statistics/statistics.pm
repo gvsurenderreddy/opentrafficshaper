@@ -945,23 +945,36 @@ sub getTrafficDirection
 sub getConfigManagerCounters
 {
 	my @poolList = getPools();
+	my @poolMemberList = getAllPoolMembers();
 	my $classes = getAllTrafficClasses();
+
 
 	# Grab user count
 	my %counters;
 
 	$counters{"configmanager.totalpools"} = @poolList;
 
+	# Zero this counter
+	$counters{"configmanager.totalpoolmembers"} = 0;
+
 	# Zero the number of pools in each class to start off with
 	foreach my $cid (keys %{$classes}) {
 		$counters{"configmanager.classpools.$cid"} = 0;
+		$counters{"configmanager.classpoolmembers.$cid"} = 0;
 	}
 
 	# Pull in each pool and bump up the class counter
 	foreach my $pid (@poolList) {
+		my $pool = getPool($pid);
 		my $cid = getPoolTrafficClassID($pid);
-		# Bump the class counter
+		my @poolMembers = getPoolMembers($pid);
+		# Bump the class counters
 		$counters{"configmanager.classpools.$cid"}++;
+		$counters{"configmanager.classpoolmembers.$cid"} += @poolMembers;
+		# Bump the pool member counter
+		$counters{"configmanager.totalpoolmembers"} += @poolMembers;
+		# Set pool member count
+		$counters{"configmanager.poolmembers.$pool->{'InterfaceGroupID'}/$pool->{'Name'}"} = @poolMembers;
 	}
 
 	return \%counters;
