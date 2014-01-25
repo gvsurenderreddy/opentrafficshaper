@@ -1,6 +1,6 @@
+[submodule "awitpt"]
+	path = awitpt
+	url = https://gitlab.devlabs.linuxassist.net/awit-frameworks/awit-perl-toolkit.git
 [submodule "opentrafficshaper/plugins/webserver/pages/static/awit-flot-toolkit"]
 	path = opentrafficshaper/plugins/webserver/pages/static/awit-flot-toolkit
 	url = https://gitlab.devlabs.linuxassist.net/awit-frameworks/awit-flot-toolkit.git
-[submodule "opentrafficshaper/awitpt"]
-	path = opentrafficshaper/awitpt
-	url = https://gitlab.devlabs.linuxassist.net/awit-frameworks/awit-perl-toolkit.git
