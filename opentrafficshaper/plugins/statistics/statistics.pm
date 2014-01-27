@@ -27,11 +27,11 @@ use Storable qw( dclone );
 
 use opentrafficshaper::constants;
 use opentrafficshaper::logger;
-use opentrafficshaper::utils;
 
 use opentrafficshaper::plugins::configmanager qw(
 		getPool
 		getPools
+		getPoolMembers
 
 		getPoolTxInterface
 		getPoolRxInterface
@@ -125,22 +125,26 @@ my $statsConfig = {
 
 
 # Handle of DBI
-my $dbh;
-# DB user mappings
-my $statsDBIdentifierMap = { };
+#
+# $globals->{'DBHandle'}
+# $globals->{'DBPreparedStatements'}
+
+# DB identifier map
+#
+# $globals->{'IdentifierMap'}
+
 # Stats queue
-my $statsQueue = [ ];
+#
+# $globals->{'StatsQueue'}
+# $globals->{'LastCleanup'}
+# $globals->{'LastConfigManagerStats'}
+
 # Stats subscribers & counter
-my $sidSubscribers = {};
-my $ssidMap = {};
-my $ssidCounter = 0;
-my @ssidCounterFreeList = ();
-# Prepared statements we need...
-my $statsPreparedStatements = { };
-# Last cleanup time
-my $lastCleanup = { };
-# Last config manager stats pull
-my $lastConfigManagerStats = 0;
+# $globals->{'SIDSubscribers'}
+# $globals->{'SSIDMap'}
+# $globals->{'SSIDCounter'}
+# $globals->{'SSIDCounterFreeList'}
+
 
 
 # Initialize plugin
@@ -153,6 +157,21 @@ sub plugin_init
 	$logger = $globals->{'logger'};
 
 	$logger->log(LOG_NOTICE,"[STATISTICS] OpenTrafficShaper Statistics v%s - Copyright (c) 2007-2014, AllWorldIT",VERSION);
+
+	# Initialize
+	$globals->{'DBHandle'} = undef;
+	$globals->{'DBPreparedStatements'} = { };
+
+	$globals->{'IdentifierMap'} = { };
+
+	$globals->{'StatsQueue'} = [ ];
+	$globals->{'LastCleanup'} = { };
+	$globals->{'LastConfigManagerStats'} = { };
+
+	$globals->{'SIDSubscribers'} = { };
+	$globals->{'SSIDMap'} = { };
+	$globals->{'SSIDCounter'} = 0;
+	$globals->{'SSIDCounterFreeList'} = [ ];
 
 
 	# Check our interfaces
@@ -185,7 +204,7 @@ sub plugin_init
 
 	# Create DBI agent
 	if (defined($config->{'db_dsn'})) {
-		$dbh = DBI->connect(
+		$globals->{'DBHandle'} = DBI->connect(
 				$config->{'db_dsn'}, $config->{'db_username'}, $config->{'db_password'},
 				{
 					'AutoCommit' => 1,
@@ -193,29 +212,29 @@ sub plugin_init
 					'FetchHashKeyName' => 'NAME_lc'
 				}
 		);
-		if (!defined($dbh)) {
+		if (!defined($globals->{'DBHandle'})) {
 			$logger->log(LOG_ERR,"[STATISTICS] Failed to connect to database: %s",$DBI::errstr);
 		}
 
 		# Prepare identifier add statement
-		if ($dbh && (my $res = $dbh->prepare('INSERT INTO identifiers (`Identifier`) VALUES (?)'))) {
-			$statsPreparedStatements->{'identifier_add'} = $res;
+		if ($globals->{'DBHandle'} && (my $res = $globals->{'DBHandle'}->prepare('INSERT INTO identifiers (`Identifier`) VALUES (?)'))) {
+			$globals->{'DBPreparedStatements'}->{'identifier_add'} = $res;
 		} else {
 			$logger->log(LOG_ERR,"[STATISTICS] Failed to prepare statement 'identifier_add': %s",$DBI::errstr);
-			$dbh->disconnect();
-			$dbh = undef;
+			$globals->{'DBHandle'}->disconnect();
+			$globals->{'DBHandle'} = undef;
 		}
 		# Prepare identifier get statement
-		if ($dbh && (my $res = $dbh->prepare('SELECT ID FROM identifiers WHERE `Identifier` = ?'))) {
-			$statsPreparedStatements->{'identifier_get'} = $res;
+		if ($globals->{'DBHandle'} && (my $res = $globals->{'DBHandle'}->prepare('SELECT ID FROM identifiers WHERE `Identifier` = ?'))) {
+			$globals->{'DBPreparedStatements'}->{'identifier_get'} = $res;
 		} else {
 			$logger->log(LOG_ERR,"[STATISTICS] Failed to prepare statement 'identifier_get': %s",$DBI::errstr);
-			$dbh->disconnect();
-			$dbh = undef;
+			$globals->{'DBHandle'}->disconnect();
+			$globals->{'DBHandle'} = undef;
 		}
 
 		# Prepare stats consolidation statements
-		if ($dbh && (my $res = $dbh->prepare('
+		if ($globals->{'DBHandle'} && (my $res = $globals->{'DBHandle'}->prepare('
 			SELECT
 				`IdentifierID`, `Timestamp` - (`Timestamp` % ?) AS TimestampM,
 				`Direction`,
@@ -231,13 +250,13 @@ sub plugin_init
 			GROUP BY
 				`IdentifierID`, `TimestampM`, `Direction`
 		'))) {
-			$statsPreparedStatements->{'stats_consolidate'} = $res;
+			$globals->{'DBPreparedStatements'}->{'stats_consolidate'} = $res;
 		} else {
 			$logger->log(LOG_ERR,"[STATISTICS] Failed to prepare statement 'stats_consolidate': %s",$DBI::errstr);
-			$dbh->disconnect();
-			$dbh = undef;
+			$globals->{'DBHandle'}->disconnect();
+			$globals->{'DBHandle'} = undef;
 		}
-		if ($dbh && (my $res = $dbh->prepare('
+		if ($globals->{'DBHandle'} && (my $res = $globals->{'DBHandle'}->prepare('
 			SELECT
 				`IdentifierID`, `Timestamp` - (`Timestamp` % ?) AS TimestampM,
 				MAX(`Counter`) AS `Counter`
@@ -250,36 +269,36 @@ sub plugin_init
 			GROUP BY
 				`IdentifierID`, `TimestampM`
 		'))) {
-			$statsPreparedStatements->{'stats_basic_consolidate'} = $res;
+			$globals->{'DBPreparedStatements'}->{'stats_basic_consolidate'} = $res;
 		} else {
 			$logger->log(LOG_ERR,"[STATISTICS] Failed to prepare statement 'stats_basic_consolidate': %s",$DBI::errstr);
-			$dbh->disconnect();
-			$dbh = undef;
+			$globals->{'DBHandle'}->disconnect();
+			$globals->{'DBHandle'} = undef;
 		}
 
 		# Prepare stats cleanup statements
-		if ($dbh && (my $res = $dbh->prepare('DELETE FROM stats WHERE `Key` = ? AND `Timestamp` < ?'))) {
-			$statsPreparedStatements->{'stats_cleanup'} = $res;
+		if ($globals->{'DBHandle'} && (my $res = $globals->{'DBHandle'}->prepare('DELETE FROM stats WHERE `Key` = ? AND `Timestamp` < ?'))) {
+			$globals->{'DBPreparedStatements'}->{'stats_cleanup'} = $res;
 		} else {
 			$logger->log(LOG_ERR,"[STATISTICS] Failed to prepare statement 'stats_cleanup': %s",$DBI::errstr);
-			$dbh->disconnect();
-			$dbh = undef;
+			$globals->{'DBHandle'}->disconnect();
+			$globals->{'DBHandle'} = undef;
 		}
-		if ($dbh && (my $res = $dbh->prepare('DELETE FROM stats_basic WHERE `Key` = ? AND `Timestamp` < ?'))) {
-			$statsPreparedStatements->{'stats_basic_cleanup'} = $res;
+		if ($globals->{'DBHandle'} && (my $res = $globals->{'DBHandle'}->prepare('DELETE FROM stats_basic WHERE `Key` = ? AND `Timestamp` < ?'))) {
+			$globals->{'DBPreparedStatements'}->{'stats_basic_cleanup'} = $res;
 		} else {
 			$logger->log(LOG_ERR,"[STATISTICS] Failed to prepare statement 'stats_basic_cleanup': %s",$DBI::errstr);
-			$dbh->disconnect();
-			$dbh = undef;
+			$globals->{'DBHandle'}->disconnect();
+			$globals->{'DBHandle'} = undef;
 		}
 
 		# Set last cleanup to now
 		my $now = time();
 		foreach my $key (keys %{$statsConfig}) {
 			# Get aligned time so we cleanup sooner
-			$lastCleanup->{$key} = _getAlignedTime($now,$statsConfig->{$key}->{'precision'});
+			$globals->{'LastCleanup'}->{$key} = _getAlignedTime($now,$statsConfig->{$key}->{'precision'});
 		}
-		$lastConfigManagerStats = $now;
+		$globals->{'LastConfigManagerStats'} = $now;
 	}
 
 	return 1;
@@ -324,18 +343,6 @@ sub _session_stop
 
 	# Tear down data
 	$globals = undef;
-	$dbh = undef;
-	$statsDBIdentifierMap = { };
-	$statsQueue = [ ];
-
-	$sidSubscribers = {};
-	$ssidMap = {};
-	$ssidCounter = 0;
-	@ssidCounterFreeList = ();
-
-	$statsPreparedStatements = { };
-	$lastCleanup = { };
-	$lastConfigManagerStats = 0;
 
 	$logger->log(LOG_DEBUG,"[STATISTICS] Shutdown");
 
@@ -351,7 +358,7 @@ sub _session_tick
 
 
 	# If we don't have a DB handle, just skip...
-	if (!$dbh) {
+	if (!$globals->{'DBHandle'}) {
 		return;
 	}
 
@@ -359,13 +366,13 @@ sub _session_tick
 	my $timer1 = [gettimeofday];
 
 	# Pull in statements
-	my $sthStatsConsolidate = $statsPreparedStatements->{'stats_consolidate'};
-	my $sthStatsCleanup = $statsPreparedStatements->{'stats_cleanup'};
-	my $sthStatsBasicConsolidate = $statsPreparedStatements->{'stats_basic_consolidate'};
-	my $sthStatsBasicCleanup = $statsPreparedStatements->{'stats_basic_cleanup'};
+	my $sthStatsConsolidate = $globals->{'DBPreparedStatements'}->{'stats_consolidate'};
+	my $sthStatsCleanup = $globals->{'DBPreparedStatements'}->{'stats_cleanup'};
+	my $sthStatsBasicConsolidate = $globals->{'DBPreparedStatements'}->{'stats_basic_consolidate'};
+	my $sthStatsBasicCleanup = $globals->{'DBPreparedStatements'}->{'stats_basic_cleanup'};
 
 	# Even out flushing over 10s to absorb spikes
-	my $totalFlush = @{$statsQueue};
+	my $totalFlush = @{$globals->{'StatsQueue'}};
 	my $maxFlush = int($totalFlush / 10) + 100;
 	my $numFlush = 0;
 
@@ -377,22 +384,22 @@ sub _session_tick
 	# Loop and build the data to create our multi-insert
 	my (@insertHolders,@insertBasicHolders);
 	my (@insertData,@insertBasicData);
-	while (defined(my $stat = shift(@{$statsQueue})) && $numFlush < $maxFlush) {
+	while (defined(my $stat = shift(@{$globals->{'StatsQueue'}})) && $numFlush < $maxFlush) {
 		# This is a basic counter
-		if (defined($stat->{'counter'})) {
+		if (defined($stat->{'Counter'})) {
 			push(@insertBasicHolders,"(?,?,?,?)");
 			push(@insertBasicData,
-				$stat->{'identifierid'}, $stat->{'key'}, $stat->{'timestamp'},
-				$stat->{'counter'}
+				$stat->{'IdentifierID'}, $stat->{'Key'}, $stat->{'Timestamp'},
+				$stat->{'Counter'}
 			);
 		# Full stats counter
 		} else {
 			push(@insertHolders,"(?,?,?,?,?,?,?,?,?,?,?,?,?)");
 			push(@insertData,
-				$stat->{'identifierid'}, $stat->{'key'}, $stat->{'timestamp'},
-				$stat->{'direction'},
-				$stat->{'cir'}, $stat->{'limit'}, $stat->{'rate'}, $stat->{'pps'}, $stat->{'queue_len'},
-				$stat->{'total_bytes'}, $stat->{'total_packets'}, $stat->{'total_overlimits'}, $stat->{'total_dropped'}
+				$stat->{'IdentifierID'}, $stat->{'Key'}, $stat->{'Timestamp'},
+				$stat->{'Direction'},
+				$stat->{'CIR'}, $stat->{'Limit'}, $stat->{'Rate'}, $stat->{'PPS'}, $stat->{'QueueLen'},
+				$stat->{'TotalBytes'}, $stat->{'TotalPackets'}, $stat->{'TotalOverlimits'}, $stat->{'TotalDropped'}
 			);
 		}
 
@@ -401,7 +408,7 @@ sub _session_tick
 
 	# If we got things to insert, do it
 	if (@insertBasicHolders > 0) {
-		my $res = $dbh->do('
+		my $res = $globals->{'DBHandle'}->do('
 			INSERT DELAYED INTO stats_basic
 				(
 					`IdentifierID`, `Key`, `Timestamp`,
@@ -417,7 +424,7 @@ sub _session_tick
 	}
 	# And normal stats...
 	if (@insertHolders > 0) {
-		my $res = $dbh->do('
+		my $res = $globals->{'DBHandle'}->do('
 			INSERT DELAYED INTO stats
 				(
 					`IdentifierID`, `Key`, `Timestamp`,
@@ -456,7 +463,7 @@ sub _session_tick
 		my $lastPeriod = $thisPeriod - $precision;
 		my $prevKey = $key - 1;
 		# If we havn't exited the last period, then skip
-		if ($lastCleanup->{$key} > $lastPeriod) {
+		if ($globals->{'LastCleanup'}->{$key} > $lastPeriod) {
 			next;
 		}
 
@@ -472,11 +479,11 @@ sub _session_tick
 		if ($res) {
 			# Loop with items returned
 			while (my $item = $sthStatsBasicConsolidate->fetchrow_hashref()) {
-				$item->{'key'} = $key;
-				$item->{'timestamp'} = $item->{'timestampm'};
+				$item->{'Key'} = $key;
+				$item->{'Timestamp'} = $item->{'timestampm'};
 
 				# Queue for insert
-				push(@{$statsQueue},$item);
+				push(@{$globals->{'StatsQueue'}},$item);
 
 				$numStatsBasicConsolidated++;
 			}
@@ -491,11 +498,11 @@ sub _session_tick
 		if ($res) {
 			# Loop with items returned
 			while (my $item = $sthStatsConsolidate->fetchrow_hashref()) {
-				$item->{'key'} = $key;
-				$item->{'timestamp'} = $item->{'timestampm'};
+				$item->{'Key'} = $key;
+				$item->{'Timestamp'} = $item->{'timestampm'};
 
 				# Queue for insert
-				push(@{$statsQueue},$item);
+				push(@{$globals->{'StatsQueue'}},$item);
 
 				$numStatsConsolidated++;
 			}
@@ -507,7 +514,7 @@ sub _session_tick
 		}
 
 		# Set last cleanup to now
-		$lastCleanup->{$key} = $now;
+		$globals->{'LastCleanup'}->{$key} = $now;
 
 		my $timerB = [gettimeofday];
 		my $timediffB = tv_interval($timerA,$timerB);
@@ -530,7 +537,7 @@ sub _session_tick
 	# We only need to run as often as the first precision
 	# - If cleanup has not yet run?
 	# - or if the 0 cleanup plus precision of the first key is in the past (data is now stale?)
-	if (!defined($lastCleanup->{'0'}) || $lastCleanup->{'0'} + $statsConfig->{1}->{'precision'} < $now) {
+	if (!defined($globals->{'LastCleanup'}->{'0'}) || $globals->{'LastCleanup'}->{'0'} + $statsConfig->{1}->{'precision'} < $now) {
 		# We're going to clean up for the first stats precision * 3, which should be enough
 		my $cleanUpTo = $now - ($statsConfig->{1}->{'precision'} * 3);
 
@@ -627,7 +634,7 @@ sub _session_tick
 		}
 
 		# Set last main cleanup to now
-		$lastCleanup->{'0'} = $now;
+		$globals->{'LastCleanup'}->{'0'} = $now;
 
 		my $timer4 = [gettimeofday];
 		my $timediff4 = tv_interval($timer3,$timer4);
@@ -637,10 +644,10 @@ sub _session_tick
 	}
 
 	# Check if we need to pull config manager stats
-	if ($now - $lastConfigManagerStats > STATISTICS_PERIOD) {
+	if ($now - $globals->{'LastConfigManagerStats'} > STATISTICS_PERIOD) {
 		my $configManagerStats = _getConfigManagerStats();
 		_processStatistics($kernel,$configManagerStats);
-		$lastConfigManagerStats = $now;
+		$globals->{'LastConfigManagerStats'} = $now;
 	}
 
 	# Set delay on config updates
@@ -660,7 +667,7 @@ sub _session_update
 
 
 	# TODO? This requires DB access
-	if (!$dbh) {
+	if (!$globals->{'DBHandle'}) {
 		return;
 	}
 
@@ -682,18 +689,18 @@ sub subscribe
 	);
 
 	# Grab next SSID
-	my $ssid = shift(@ssidCounterFreeList);
+	my $ssid = shift(@{$globals->{'SSIDCounterFreeList'}});
 	if (!defined($ssid)) {
-		$ssid = $ssidCounter++;
+		$ssid = $globals->{'SSIDCounter'}++;
 	}
 
 	# Setup data and conversions
-	$ssidMap->{$ssid} = $sidSubscribers->{$sid}->{$ssid} = {
-		'sid' => $sid,
-		'ssid' => $ssid,
-		'conversions' => $conversions,
-		'handler' => $handler,
-		'event' => $event
+	$globals->{'SSIDMap'}->{$ssid} = $globals->{'SIDSubscribers'}->{$sid}->{$ssid} = {
+		'SID' => $sid,
+		'SSID' => $ssid,
+		'Conversions' => $conversions,
+		'Handler' => $handler,
+		'Event' => $event
 	};
 
 	# Return the SID we subscribed
@@ -709,7 +716,7 @@ sub unsubscribe
 
 
 	# Grab item, and check if it doesnt exist
-	my $item = $ssidMap->{$ssid};
+	my $item = $globals->{'SSIDMap'}->{$ssid};
 	if (!defined($item)) {
 		$logger->log(LOG_ERR,"[STATISTICS] Got unsubscription request for SSID '%s' that doesn't exist",
 				$ssid
@@ -722,16 +729,16 @@ sub unsubscribe
 	);
 
 	# Remove subscriber
-	delete($sidSubscribers->{$item->{'sid'}}->{$ssid});
+	delete($globals->{'SIDSubscribers'}->{$item->{'SID'}}->{$ssid});
 	# If SID is now empty, remove it too
-	if (! keys %{$sidSubscribers->{$item->{'sid'}}}) {
-		delete($sidSubscribers->{$item->{'sid'}});
+	if (! keys %{$globals->{'SIDSubscribers'}->{$item->{'SID'}}}) {
+		delete($globals->{'SIDSubscribers'}->{$item->{'SID'}});
 	}
 	# Remove mapping
-	delete($ssidMap->{$ssid});
+	delete($globals->{'SSIDMap'}->{$ssid});
 
 	# Push onto list of free ID's
-	push(@ssidCounterFreeList,$ssid);
+	push(@{$globals->{'SSIDCounterFreeList'}},$ssid);
 }
 
 
@@ -957,12 +964,12 @@ sub getTrafficDirection
 }
 
 
+
 # Generate ConfigManager counters
 sub getConfigManagerCounters
 {
 	my @poolList = getPools();
-	my @poolMemberList = getAllPoolMembers();
-	my $classes = getAllTrafficClasses();
+	my @classes = getAllTrafficClasses();
 
 
 	# Grab user count
@@ -974,7 +981,7 @@ sub getConfigManagerCounters
 	$counters{"configmanager.totalpoolmembers"} = 0;
 
 	# Zero the number of pools in each class to start off with
-	foreach my $cid (keys %{$classes}) {
+	foreach my $cid (@classes) {
 		$counters{"configmanager.classpools.$cid"} = 0;
 		$counters{"configmanager.classpoolmembers.$cid"} = 0;
 	}
@@ -1013,37 +1020,37 @@ sub _processStatistics
 	# Loop through stats data we got
 	while ((my $sid, my $stat) = each(%{$statsData})) {
 
-		$stat->{'identifierid'} = $sid;
-		$stat->{'key'} = 0;
+		$stat->{'IdentifierID'} = $sid;
+		$stat->{'Key'} = 0;
 
 		# Add to main queue
-		push(@{$statsQueue},$stat);
+		push(@{$globals->{'StatsQueue'}},$stat);
 
 		# Check if we have an event handler subscriber for this item
-		if (defined(my $subscribers = $sidSubscribers->{$sid})) {
+		if (defined(my $subscribers = $globals->{'SIDSubscribers'}->{$sid})) {
 
 			# Build the stat that our conversions understands
 			my $eventStat;
 			# This is a basic counter
-			if (defined($stat->{'counter'})) {
+			if (defined($stat->{'Counter'})) {
 				$eventStat = {
-					'counter' => $stat->{'counter'}
+					'counter' => $stat->{'Counter'}
 				};
 			} else {
-				$eventStat->{$stat->{'direction'}} = {
-					'rate' => $stat->{'rate'},
-					'pps' => $stat->{'pps'},
-					'cir' => $stat->{'cir'},
-					'limit' => $stat->{'limit'}
+				$eventStat->{$stat->{'Direction'}} = {
+					'rate' => $stat->{'Rate'},
+					'pps' => $stat->{'PPS'},
+					'cir' => $stat->{'CIR'},
+					'limit' => $stat->{'Limit'}
 				};
 			}
 
 			# If we do, loop with them
 			foreach my $ssid (keys %{$subscribers}) {
 				my $subscriber = $subscribers->{$ssid};
-				my $handler = $subscriber->{'handler'};
-				my $event = $subscriber->{'event'};
-				my $conversions = $subscriber->{'conversions'};
+				my $handler = $subscriber->{'Handler'};
+				my $event = $subscriber->{'Event'};
+				my $conversions = $subscriber->{'Conversions'};
 
 				# Get temp stat, this still refs the original one
 				my $tempStat;
@@ -1054,7 +1061,7 @@ sub _processStatistics
 					$tempStat = _fixStatDirection($eventStat,$conversions);
 				}
 				# Send a copy! so we don't send refs to data used elsewhere
-				$queuedEvents->{$handler}->{$event}->{$ssid}->{$stat->{'timestamp'}} = dclone($tempStat);
+				$queuedEvents->{$handler}->{$event}->{$ssid}->{$stat->{'Timestamp'}} = dclone($tempStat);
 			}
 		}
 	}
@@ -1084,9 +1091,9 @@ sub _getConfigManagerStats
 	foreach my $item (keys %{$counters}) {
 		my $identifierID = setSIDFromCounter($item);
 		my $stat = {
-			'identifierid' => $identifierID,
-			'timestamp' => $now,
-			'counter' => $counters->{$item}
+			'IdentifierID' => $identifierID,
+			'Timestamp' => $now,
+			'Counter' => $counters->{$item}
 		};
 		$statsData->{$identifierID} = $stat;
 	}
@@ -1139,7 +1146,7 @@ sub _getCachedSIDFromIdentifier
 	my $identifier = shift;
 
 
-	return $statsDBIdentifierMap->{$identifier};
+	return $globals->{'IdentifierMap'}->{$identifier};
 }
 
 
@@ -1156,11 +1163,11 @@ sub _getSIDFromIdentifier
 	}
 
 	# Try grab it from DB
-	my $identifierGetSTH = $statsPreparedStatements->{'identifier_get'};
+	my $identifierGetSTH = $globals->{'DBPreparedStatements'}->{'identifier_get'};
 	if (my $res = $identifierGetSTH->execute($identifier)) {
 		# Grab first row and return
 		if (my $row = $identifierGetSTH->fetchrow_hashref()) {
-			return $statsDBIdentifierMap->{$identifier} = $row->{'id'};
+			return $globals->{'IdentifierMap'}->{$identifier} = $row->{'id'};
 		}
 	} else {
 		$logger->log(LOG_ERR,"[STATISTICS] Failed to get SID from identifier '%s': %s",$identifier,$identifierGetSTH->errstr);
@@ -1178,9 +1185,9 @@ sub _setSIDFromIdentifier
 
 
 	# Try add it to the DB
-	my $identifierAddSTH = $statsPreparedStatements->{'identifier_add'};
+	my $identifierAddSTH = $globals->{'DBPreparedStatements'}->{'identifier_add'};
 	if (my $res = $identifierAddSTH->execute($identifier)) {
-		return $statsDBIdentifierMap->{$identifier} = $dbh->last_insert_id("","","","");
+		return $globals->{'IdentifierMap'}->{$identifier} = $globals->{'DBHandle'}->last_insert_id("","","","");
 	} else {
 		$logger->log(LOG_ERR,"[STATISTICS] Failed to get SID from identifier '%s': %s",$identifier,$identifierAddSTH->errstr);
 	}
@@ -1208,7 +1215,7 @@ sub _getStatsBySID
 	my $now = time();
 
 	# Prepare query
-	my $sth = $dbh->prepare('
+	my $sth = $globals->{'DBHandle'}->prepare('
 		SELECT
 			`Timestamp`, `Direction`, `Rate`, `PPS`, `CIR`, `Limit`
 		FROM
@@ -1249,7 +1256,7 @@ sub _getStatsBasicBySID
 	my $now = time();
 
 	# Prepare query
-	my $sth = $dbh->prepare('
+	my $sth = $globals->{'DBHandle'}->prepare('
 		SELECT
 			`Timestamp`, `Counter`
 		FROM
@@ -1301,8 +1308,8 @@ sub _fixStatDirection
 	foreach my $item (keys %{$oldStat}) {
 		# If we have conversions defined...
 		my $newKey;
-		if (defined($conversions) && defined($conversions->{'direction'})) {
-			$newKey = sprintf("%s.%s",$conversions->{'direction'},$item);
+		if (defined($conversions) && defined($conversions->{'Direction'})) {
+			$newKey = sprintf("%s.%s",$conversions->{'Direction'},$item);
 		} else {
 			$newKey = sprintf("%s.%s",$oldKey,$item);
 		}
@@ -1325,8 +1332,8 @@ sub _fixCounterName
 
 	# If we have conversions defined...
 	my $newKey = 'counter';
-	if (defined($conversions) && defined($conversions->{'name'})) {
-		$newKey = sprintf('%s',$conversions->{'name'});
+	if (defined($conversions) && defined($conversions->{'Name'})) {
+		$newKey = sprintf('%s',$conversions->{'Name'});
 	}
 
 	$newStat->{$newKey} = $stat->{'counter'};

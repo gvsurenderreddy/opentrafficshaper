@@ -28,9 +28,9 @@ use POE::Filter::TCStatistics;
 
 use opentrafficshaper::constants;
 use opentrafficshaper::logger;
-use opentrafficshaper::utils;
 
 use opentrafficshaper::plugins::configmanager qw(
+	getInterface
 	getInterfaces
 );
 
@@ -47,7 +47,7 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 use constant {
 	VERSION => '0.1.2',
 
-	# How often our config check ticks
+	# How often we tick
 	TICK_PERIOD => 5,
 };
 
@@ -64,27 +64,33 @@ our $pluginInfo = {
 };
 
 
-# Copy of system globals
+# Our globals
 my $globals;
+# Copy of system logger
 my $logger;
 
 
 # Last stats pulls
-my $lastStats = { };
+#
+# $globals->{'LastStats'}
+
 
 
 # Initialize plugin
 sub plugin_init
 {
-	$globals = shift;
+	my $system = shift;
 
 
 	# Setup our environment
-	$logger = $globals->{'logger'};
+	$logger = $system->{'logger'};
 
 	$logger->log(LOG_NOTICE,"[TCSTATS] OpenTrafficShaper tc Statistics Integration v%s - Copyright (c) 2013-2014, AllWorldIT",
 			VERSION
 	);
+
+	# Initialize
+	$globals->{'LastStats'} = { };
 
 	# This session is our main session, its alias is "shaper"
 	POE::Session->create(
@@ -158,21 +164,24 @@ sub _session_tick
 	# Now
 	my $now = time();
 
+	my @interfaces = getInterfaces();
+
 	# Loop with interfaces that need stats
 	my $interfaceCount = 0;
-	foreach my $interface (@{getInterfaces()})	{
+	foreach my $interfaceID (@interfaces)	{
+		my $interface = getInterface($interfaceID);
 
 		# Skip to next if we've already run for this interface
-		if (defined($lastStats->{$interface}) &&
-				$lastStats->{$interface} + opentrafficshaper::plugins::statistics::STATISTICS_PERIOD > $now
+		if (defined($globals->{'LastStats'}->{$interfaceID}) &&
+				$globals->{'LastStats'}->{$interfaceID} + opentrafficshaper::plugins::statistics::STATISTICS_PERIOD > $now
 		) {
 			next;
 		}
 
-		$logger->log(LOG_INFO,"[TCSTATS] Generating stats for '%s'",$interface);
+		$logger->log(LOG_INFO,"[TCSTATS] Generating stats for '%s'",$interfaceID);
 
 		# TC commands to run
-		my $cmd = [ '/sbin/tc', '-s', 'class', 'show', 'dev', $interface, 'parent', '1:' ];
+		my $cmd = [ '/sbin/tc', '-s', 'class', 'show', 'dev', $interface->{'Device'}, 'parent', '1:' ];
 
 		# Create task
 		my $task = POE::Wheel::Run->new(
@@ -194,9 +203,9 @@ sub _session_tick
 		$heap->{task_by_pid}->{$task->PID} = $task;
 		# Signal events include the process ID.
 		$heap->{task_data}->{$task->ID} = {
-			'timestamp' => $now,
-			'interface' => $interface,
-			'current_stat' => { }
+			'Timestamp' => $now,
+			'Interface' => $interfaceID,
+			'CurrentStat' => { }
 		};
 
 		# Build commandline string
@@ -204,7 +213,7 @@ sub _session_tick
 		$logger->log(LOG_DEBUG,"[TCSTATS] TASK/%s: Starting '%s' as %s with PID %s",$task->ID,$cmdStr,$task->ID,$task->PID);
 
 		# Set last time we were run to now
-		$lastStats->{$interface} = $now;
+		$globals->{'LastStats'}->{$interface} = $now;
 
 		# NK: Space the stats out, this will cause TICK_PERIOD to elapse before we do another interface
 		$interfaceCount++;
@@ -230,8 +239,8 @@ sub _task_child_stdout
 	# Grab task data
 	my $taskData = $heap->{'task_data'}->{$task_id};
 
-	my $interface = $taskData->{'interface'};
-	my $timestamp = $taskData->{'timestamp'};
+	my $interface = $taskData->{'Interface'};
+	my $timestamp = $taskData->{'Timestamp'};
 
 	# Stats ID to update
 	my $sid;
@@ -239,18 +248,18 @@ sub _task_child_stdout
 	my $direction = opentrafficshaper::plugins::statistics::STATISTICS_DIR_TX;
 
 	# Is this a system class?
-	my $classChildDec = hex($stat->{'_class_child'});
+	my $classChildDec = hex($stat->{'TCClassChild'});
 	# Check if this is a limit class...
-	if (opentrafficshaper::plugins::tc::isPoolTcClass($interface,$stat->{'_class_parent'},$stat->{'_class_child'})) {
+	if (opentrafficshaper::plugins::tc::isPoolTcClass($interface,$stat->{'TCClassParent'},$stat->{'TCClassChild'})) {
 
-		if (defined(my $pid = opentrafficshaper::plugins::tc::getPIDFromTcClass($interface,$stat->{'_class_parent'},
-						$stat->{'_class_child'}))
+		if (defined(my $pid = opentrafficshaper::plugins::tc::getPIDFromTcClass($interface,$stat->{'TCClassParent'},
+						$stat->{'TCClassChild'}))
 		) {
 			$sid = opentrafficshaper::plugins::statistics::setSIDFromPID($pid);
 			$direction = opentrafficshaper::plugins::statistics::getTrafficDirection($pid,$interface);
 		} else {
-			$logger->log(LOG_WARN,"[TCSTATS] Pool traffic class '%s:%s' NOT FOUND",$stat->{'_class_parent'},
-					$stat->{'_class_child'}
+			$logger->log(LOG_WARN,"[TCSTATS] Pool traffic class '%s:%s' NOT FOUND",$stat->{'TCClassParent'},
+					$stat->{'TCClassChild'}
 			);
 		}
 
@@ -264,12 +273,12 @@ sub _task_child_stdout
 		} else {
 			# Save the class with the decimal number
 			if (my $classID = opentrafficshaper::plugins::tc::getCIDFromTcClass($interface,
-						opentrafficshaper::plugins::tc::TC_ROOT_CLASS,$stat->{'_class_child'})
+						opentrafficshaper::plugins::tc::TC_ROOT_CLASS,$stat->{'TCClassChild'})
 			) {
 				$sid = opentrafficshaper::plugins::statistics::setSIDFromCID($interface,$classID);
 			} else {
-				$logger->log(LOG_WARN,"[TCSTATS] System traffic class '%s:%s' NOT FOUND",$stat->{'_class_parent'},
-						$stat->{'_class_child'}
+				$logger->log(LOG_WARN,"[TCSTATS] System traffic class '%s:%s' NOT FOUND",$stat->{'TCClassParent'},
+						$stat->{'TCClassChild'}
 				);
 			}
 		}
@@ -278,10 +287,10 @@ sub _task_child_stdout
 	# Make sure we have the lid now
 	if (defined($sid)) {
 		# Build our submission
-		$stat->{'timestamp'} = $timestamp;
-		$stat->{'direction'} = $direction;
+		$stat->{'Timestamp'} = $timestamp;
+		$stat->{'Direction'} = $direction;
 
-		$taskData->{'stats'}->{$sid} = $stat;
+		$taskData->{'Stats'}->{$sid} = $stat;
 	}
 }
 
@@ -316,7 +325,7 @@ sub _task_child_close
 	}
 
 	# Push consolidated update through
-	$kernel->post("statistics" => "update" => $taskData->{'stats'});
+	$kernel->post("statistics" => "update" => $taskData->{'Stats'});
 
 	$logger->log(LOG_DEBUG,"[TCSTATS] TASK/%s: Closed PID %s",$task_id,$task->PID);
 

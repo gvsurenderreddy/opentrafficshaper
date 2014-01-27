@@ -62,8 +62,7 @@ our $pluginInfo = {
 	Init => \&plugin_init,
 };
 
-# Copy of system globals
-my $globals;
+# Logger
 my $logger;
 
 # Stats subscriptsions
@@ -74,11 +73,11 @@ my $subscriberMap = {}; # Index of connections by ssid
 # Initialize plugin
 sub plugin_init
 {
-	$globals = shift;
+	my $system = shift;
 
 
 	# Setup our environment
-	$logger = $globals->{'logger'};
+	$logger = $system->{'logger'};
 
 	$logger->log(LOG_NOTICE,"[WEBSERVER] OpenTrafficShaper Snapin [WebSockets/Statistics] Module v%s - Copyright (c) 2013-2014".
 			", AllWorldIT",
@@ -136,9 +135,6 @@ sub _session_stop
 	# Remove our alias
 	$kernel->alias_remove("plugin.webserver.websockets.statistics");
 
-	# Destroy data
-	$globals = undef;
-
 	$subscribers = {};
 	$subscriberMap = {};
 
@@ -180,8 +176,8 @@ sub _session_websocket_send
 			}
 		}
 
-		my $socket = $subscriberMap->{$ssid}->{'socket'};
-		my $tag = $subscriberMap->{$ssid}->{'tag'};
+		my $socket = $subscriberMap->{$ssid}->{'Socket'};
+		my $tag = $subscriberMap->{$ssid}->{'Tag'};
 
 		$socket->put(_json_data({ $tag => $rawData }));
 	}
@@ -194,8 +190,6 @@ sub graphdata_websocket_disconnect
 {
 	my ($kernel,$globals,$client_session_id) = @_;
 
-
-	my $logger = $globals->{'logger'};
 
 	$logger->log(LOG_INFO,"[WEBSERVER] Snapin/WebSockets/Statistics - Client '$client_session_id' disconnected");
 
@@ -216,8 +210,6 @@ sub graphdata_http2websocket
 {
 	my ($kernel,$globals,$client_session_id,$request,$socket) = @_;
 
-
-	my $logger = $globals->{'logger'};
 
 	# Grab the query string
 #	my %queryForm = $request->uri->query_form();
@@ -320,7 +312,7 @@ sub graphdata_websocket_onrequest
 				}
 
 				# Add SID to SID list that we need to subscribe to
-				push(@sidList,{'sid' => $sid});
+				push(@sidList,{'SID' => $sid});
 			}
 		}
 
@@ -359,18 +351,18 @@ sub graphdata_websocket_onrequest
 				}
 
 				# Loop with both directions
-				foreach my $direction ('tx','rx') {
+				foreach my $direction ('Tx','Rx') {
+					my $interfaceDevice = $interfaceGroup->{"${direction}Interface"};
 					# Grab stats ID
-					my $sid = opentrafficshaper::plugins::statistics::getSIDFromCID($interfaceGroup->{"${direction}iface"},
-							$classID);
+					my $sid = opentrafficshaper::plugins::statistics::getSIDFromCID($interfaceDevice,$classID);
 					if (!defined($sid)) {
 						return (
 								opentrafficshaper::plugins::webserver::WS_FAIL,
-								"Datasource stats for class not found '$classID'"
+								"Datasource stats for class '$classID' on interface '$interfaceDevice' not found"
 						);
 					}
 					# Add SID to SID list that we need to subscribe to
-					push(@sidList,{'sid' => $sid, 'conversions' => { 'direction' => $direction }});
+					push(@sidList,{'SID' => $sid, 'Conversions' => { 'Direction' => lc($direction) }});
 				}
 			}
 		}
@@ -397,17 +389,18 @@ sub graphdata_websocket_onrequest
 				}
 
 				# Loop with both directions
-				foreach my $direction ('tx','rx') {
+				foreach my $direction ('Tx','Rx') {
+					my $interfaceDevice = $interfaceGroup->{"${direction}Interface"};
 					# Grab stats ID using a small direction hack
-					my $sid = opentrafficshaper::plugins::statistics::getSIDFromCID($interfaceGroup->{"${direction}iface"},0);
+					my $sid = opentrafficshaper::plugins::statistics::getSIDFromCID($interfaceDevice,0);
 					if (!defined($sid)) {
 						return (
 								opentrafficshaper::plugins::webserver::WS_FAIL,
-								"Datasource stats for interface group not found '$rawInterfaceGroupID'"
+								"Datasource stats for interface '$interfaceDevice' not found"
 						);
 					}
 					# Add SID to SID list that we need to subscribe to
-					push(@sidList,{'sid' => $sid, 'conversions' => { 'direction' => $direction }});
+					push(@sidList,{'SID' => $sid, 'Conversions' => { 'Direction' => lc($direction) }});
 				}
 			}
 		}
@@ -432,7 +425,7 @@ sub graphdata_websocket_onrequest
 					);
 				}
 				# Add SID to SID list that we need to subscribe to
-				push(@sidList,{'sid' => $sid, 'conversions' => { 'name' => $rawCounter }});
+				push(@sidList,{'SID' => $sid, 'Conversions' => { 'Name' => $rawCounter }});
 			}
 		}
 
@@ -447,16 +440,16 @@ sub graphdata_websocket_onrequest
 		# Loop wiht subscription list
 		foreach my $item (@sidList) {
 			my $ssid = opentrafficshaper::plugins::statistics::subscribe(
-					$item->{'sid'},
-					$item->{'conversions'},
+					$item->{'SID'},
+					$item->{'Conversions'},
 					'plugin.webserver.websockets.statistics',
 					'websocket.send'
 			);
 			# Save this client and the streaming id (ssid) we got back
 			$subscriberMap->{$ssid} = $subscribers->{$client_session_id}->{$ssid} = {
-				'tag' => $tag,
-				'sid' => $item->{'sid'},
-				'socket' => $socket
+				'Tag' => $tag,
+				'SID' => $item->{'SID'},
+				'Socket' => $socket
 			};
 		}
 

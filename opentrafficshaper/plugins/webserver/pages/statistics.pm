@@ -52,10 +52,10 @@ use opentrafficshaper::plugins::configmanager qw(
 	getInterfaceGroups
 	getInterface
 
+	getTrafficClass
 	getAllTrafficClasses
 
 	isTrafficClassIDValid
-	getTrafficClassName
 );
 
 use opentrafficshaper::plugins::statistics::statistics;
@@ -65,7 +65,7 @@ use opentrafficshaper::plugins::statistics::statistics;
 # Graphs by pool
 sub byPool
 {
-	my ($kernel,$globals,$client_session_id,$request) = @_;
+	my ($kernel,$system,$client_session_id,$request) = @_;
 
 
 	# Header
@@ -150,7 +150,7 @@ END:
 # Graphs by class
 sub byClass
 {
-	my ($kernel,$globals,$client_session_id,$request) = @_;
+	my ($kernel,$system,$client_session_id,$request) = @_;
 
 
 	# Header
@@ -207,20 +207,22 @@ EOF
 		}
 	}
 
-	my $interfaceNameEncoded = encode_entities($interface->{'name'});
+	my $trafficClass = getTrafficClass($cid);
 
-	my $classNameEncoded;
+	my $interfaceNameEncoded = encode_entities($interface->{'Name'});
+
+	my $trafficClassNameEncoded;
 	if ($cid) {
-		$classNameEncoded = encode_entities(getTrafficClassName($cid));
+		$trafficClassNameEncoded = encode_entities($trafficClass->{'Name'});
 	} else {
-		$classNameEncoded = $interfaceNameEncoded;
+		$trafficClassNameEncoded = $interfaceNameEncoded;
 	}
 
 	my $canvasName = "flotCanvas";
 
 	# Build content
 	$content = <<EOF;
-			<h4 style="color:#8f8f8f;">Latest Data For: $classNameEncoded on $interfaceNameEncoded</h4>
+			<h4 style="color:#8f8f8f;">Latest Data For: $trafficClassNameEncoded on $interfaceNameEncoded</h4>
 			<br/>
 			<div id="flotCanvas" class="flotCanvas" style="width: 1000px; height: 400px"></div>
 EOF
@@ -250,7 +252,7 @@ END:
 # Dashboard display
 sub _dashboard
 {
-	my ($kernel,$globals,$client_session_id,$request) = @_;
+	my ($kernel,$system,$client_session_id,$request) = @_;
 
 
 	# Header
@@ -267,32 +269,32 @@ EOF
 	my @rightGraphs = ();
 
 	# Build list of graphs for the left hand side
-	my $interfaceGroups = getInterfaceGroups();
-	my $trafficClasses = getAllTrafficClasses();
+	my @interfaceGroups = sort(getInterfaceGroups());
+	my @trafficClasses = sort(getAllTrafficClasses());
 
-	foreach my $interfaceGroupID (keys %{$interfaceGroups}) {
-		my $interfaceGroup = $interfaceGroups->{$interfaceGroupID};
+	foreach my $interfaceGroupID (@interfaceGroups) {
+		my $interfaceGroup = getInterfaceGroup($interfaceGroupID);
 
-		foreach my $trafficClassID (sort keys %{$trafficClasses}) {
-			my $trafficClassName = $trafficClasses->{$trafficClassID};
+		foreach my $trafficClassID (@trafficClasses) {
+			my $trafficClass = getTrafficClass($trafficClassID);
 
 			push(@leftGraphs,{
-				'type' => 'graph',
-				'title' => sprintf("%s: %s",$interfaceGroup->{'name'},$trafficClassName),
-				'datasources' => [
+				'Type' => 'graph',
+				'Title' => sprintf("%s: %s",$interfaceGroup->{'Name'},$trafficClass->{'Name'}),
+				'Datasources' => [
 					sprintf('class=%s:%s',$interfaceGroupID,$trafficClassID),
 					sprintf('counter=configmanager.classpools.%s',$trafficClassID)
 				],
-				'xidentifiers' => [
-					{ 'name' => 'tx.cir', 'label' => "TX Cir" },
-					{ 'name' => 'tx.limit', 'label' => "TX Limit" },
-					{ 'name' => 'tx.rate', 'label' => "TX Rate" },
-					{ 'name' => 'rx.cir', 'label' => "RX Cir" },
-					{ 'name' => 'rx.limit', 'label' => "RX Limit" },
-					{ 'name' => 'rx.rate', 'label' => "RX Rate" }
+				'XIdentifiers' => [
+					{ 'Name' => 'tx.cir', 'Label' => "TX Cir" },
+					{ 'Name' => 'tx.limit', 'Label' => "TX Limit" },
+					{ 'Name' => 'tx.rate', 'Label' => "TX Rate" },
+					{ 'Name' => 'rx.cir', 'Label' => "RX Cir" },
+					{ 'Name' => 'rx.limit', 'Label' => "RX Limit" },
+					{ 'Name' => 'rx.rate', 'Label' => "RX Rate" }
 				],
-				'yidentifiers' => [
-					{ 'name' => sprintf('configmanager.classpools.%s',$trafficClassID), 'label' => "Pool Count" },
+				'YIdentifiers' => [
+					{ 'Name' => sprintf('configmanager.classpools.%s',$trafficClassID), 'Label' => "Pool Count" },
 				]
 			});
 		}
@@ -301,17 +303,20 @@ EOF
 	# Pool distribution
 	my @datasources = ();
 	my @xidentifiers = ();
-	foreach my $trafficClassID (sort keys %{$trafficClasses}) {
-		my $trafficClassName = $trafficClasses->{$trafficClassID};
+	foreach my $trafficClassID (@trafficClasses) {
+		my $trafficClass = getTrafficClass($trafficClassID);
 
 		push(@datasources,sprintf('counter=configmanager.classpools.%s',$trafficClassID));
-		push(@xidentifiers,{ 'name' => sprintf('configmanager.classpools.%s',$trafficClassID), 'label' => $trafficClassName });
+		push(@xidentifiers,{
+				'Name' => sprintf('configmanager.classpools.%s',$trafficClassID),
+				'Label' => $trafficClass->{'Name'}
+		});
 	}
 	push(@rightGraphs,{
-		'type' => 'pie',
-		'title' => "Pool Distribution",
-		'datasources' => \@datasources,
-		'xidentifiers' => \@xidentifiers
+		'Type' => 'pie',
+		'Title' => "Pool Distribution",
+		'Datasources' => \@datasources,
+		'XIdentifiers' => \@xidentifiers
 	});
 
 
@@ -336,11 +341,11 @@ EOF
 			# Graph 1
 			if (defined(my $graph = shift(@leftGraphs))) {
 				# Assign this graph a tag
-				$graph->{'tag'} = "tag".$graphCounter++;
+				$graph->{'Tag'} = "tag".$graphCounter++;
 
 				$content .= <<EOF;
-							<h4 style="color:#8f8f8f;">$graph->{'title'}</h4>
-							<div id="$graph->{'tag'}" class="flotCanvas"
+							<h4 style="color:#8f8f8f;">$graph->{'Title'}</h4>
+							<div id="$graph->{'Tag'}" class="flotCanvas"
 									style="width: 520px; height: 150px; border: 1px dashed black">
 							</div>
 EOF
@@ -354,11 +359,11 @@ EOF
 			# Graph 2
 			if (defined(my $graph = shift(@leftGraphs))) {
 				# Assign this graph a tag
-				$graph->{'tag'} = "tag".$graphCounter++;
+				$graph->{'Tag'} = "tag".$graphCounter++;
 
 				$content .= <<EOF;
-							<h4 style="color:#8f8f8f;">$graph->{'title'}</h4>
-							<div id="$graph->{'tag'}" class="flotCanvas"
+							<h4 style="color:#8f8f8f;">$graph->{'Title'}</h4>
+							<div id="$graph->{'Tag'}" class="flotCanvas"
 									style="width: 520px; height: 150px; border: 1px dashed black">
 							</div>
 EOF
@@ -382,11 +387,11 @@ EOF
 		# Graph
 		if (defined(my $graph = shift(@rightGraphs))) {
 			# Assign this graph a tag
-			$graph->{'tag'} = "tag".$graphCounter++;
+			$graph->{'Tag'} = "tag".$graphCounter++;
 
 			$content .= <<EOF;
-					<h4 style="color:#8f8f8f;">$graph->{'title'}</h4>
-					<div id="$graph->{'tag'}" class="flotCanvas"
+					<h4 style="color:#8f8f8f;">$graph->{'Title'}</h4>
+					<div id="$graph->{'Tag'}" class="flotCanvas"
 							style="width: 520px; height: 340px; border: 1px dashed black">
 					</div>
 EOF
@@ -419,33 +424,35 @@ EOF
 	my $javascript = "";
 
 	foreach my $graph (@graphs) {
-		my $encodedCanvasName = encode_entities($graph->{'tag'});
+		my $encodedCanvasName = encode_entities($graph->{'Tag'});
 
 		# Items we going to need...
 		my @datasources = ();
-		my $axesIdentifiers = { 'x' => [ ], 'y' => [ ] };
+		my $axesIdentifiers = { 'X' => [ ], 'Y' => [ ] };
 		my @axesStrList;
 		# Loop with and build the JS for our datasources
-		foreach my $datasource (@{$graph->{'datasources'}}) {
+		foreach my $datasource (@{$graph->{'Datasources'}}) {
 			my $encodedDatasource = encode_entities($datasource);
 
 			push(@datasources,"{ 'function': 'subscribe', args: ['$encodedCanvasName','$encodedDatasource'] }");
 		}
 		# Loop with axes and build our axes structure
 		foreach my $axis (keys %{$axesIdentifiers}) {
-			foreach my $identifier (@{$graph->{"${axis}identifiers"}}) {
-				my $encodedName = encode_entities($identifier->{'name'});
-				my $encodedLabel = encode_entities($identifier->{'label'});
+			foreach my $identifier (@{$graph->{"${axis}Identifiers"}}) {
+				my $encodedName = encode_entities($identifier->{'Name'});
+				my $encodedLabel = encode_entities($identifier->{'Label'});
 				push(@{$axesIdentifiers->{$axis}},"'$encodedName': { label: '$encodedLabel' }");
 			}
-			push(@axesStrList,sprintf("%saxis: { '%s': { %s } }",$axis,$encodedCanvasName,join(',',@{$axesIdentifiers->{$axis}})));
+			push(@axesStrList,
+					sprintf("%saxis: { '%s': { %s } }",lc($axis),$encodedCanvasName,join(',',@{$axesIdentifiers->{$axis}}))
+			);
 		}
 		# Build final JS
 		my $datasourceStr = join(',',@datasources);
 		my $axesStr = join(',',@axesStrList);
 
 		$javascript .=<<EOF;
-			awit_flot_draw_$graph->{'type'}({
+			awit_flot_draw_$graph->{'Type'}({
 				id: '$encodedCanvasName',
 				awitds: {
 					sources: [
@@ -465,7 +472,6 @@ EOF
 EOF
 	}
 
-use Data::Dumper; print Dumper($javascript);
 END:
 
 	return (HTTP_OK,$content,{
@@ -494,7 +500,7 @@ END:
 #	key=<data key to return>
 sub jsondata
 {
-	my ($kernel,$globals,$client_session_id,$request) = @_;
+	my ($kernel,$system,$client_session_id,$request) = @_;
 
 
 	# Parse GET data
@@ -515,14 +521,14 @@ sub jsondata
 			# Check we have a tag, interface group ID and pool name
 			my ($tag,$rawInterfaceGroupID,$rawPoolName) = split(/:/,$poolSpec);
 			if (!defined($tag)) {
-				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Invalid format for pool specification '%s'",
+				$system->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Invalid format for pool specification '%s'",
 						$poolSpec
 				);
 				return (HTTP_OK,{'status' => 'fail', 'message' => "Invalid format for pool specification '$poolSpec'"},
 						{ 'type' => 'json' });
 			}
 			if (!defined($rawInterfaceGroupID)) {
-				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has an invalid interface group ID '%s'",
+				$system->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has an invalid interface group ID '%s'",
 						$tag,
 						$poolSpec
 				);
@@ -532,7 +538,7 @@ sub jsondata
 			# Check if we can grab the interface group
 			my $interfaceGroup = getInterfaceGroup($rawInterfaceGroupID);
 			if (!defined($interfaceGroup)) {
-				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has an invalid interface group ID '%s'",
+				$system->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has an invalid interface group ID '%s'",
 						$tag,
 						$rawInterfaceGroupID
 				);
@@ -542,7 +548,7 @@ sub jsondata
 			}
 
 			if (!defined($rawPoolName)) {
-				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has an invalid pool name '%s'",
+				$system->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has an invalid pool name '%s'",
 						$tag,
 						$poolSpec
 				);
@@ -552,7 +558,7 @@ sub jsondata
 			# Grab pool
 			my $pool = getPoolByName($rawInterfaceGroupID,$rawPoolName);
 			if (!defined($pool)) {
-				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has an invalid pool name '%s'",
+				$system->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has an invalid pool name '%s'",
 						$tag,
 						$rawPoolName
 				);
@@ -563,7 +569,7 @@ sub jsondata
 			# Grab SID
 			my $sid = opentrafficshaper::plugins::statistics::getSIDFromPID($pool->{'ID'});
 			if (!defined($sid)) {
-				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' stats data cannot be found for pool ".
+				$system->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' stats data cannot be found for pool ".
 						"'%s'",
 						$tag,
 						$rawPoolName
@@ -594,42 +600,50 @@ sub jsondata
 	# Process classes
 	if (defined($queryParams->{'class'})) {
 		# Simple de-dupication
-		my %classIDSpecs;
+		my %trafficClassIDSpecs;
 		foreach my $rawClassID (@{$queryParams->{'class'}->{'values'}}) {
-			$classIDSpecs{$rawClassID} = 1;
+			$trafficClassIDSpecs{$rawClassID} = 1;
 		}
 		# Then loop through the unique keys
-		foreach my $classIDSpec (keys %classIDSpecs) {
+		foreach my $trafficClassIDSpec (keys %trafficClassIDSpecs) {
 			# Check we have a tag, interface group ID and class
-			my ($tag,$rawInterfaceGroupID,$rawClassID) = split(/:/,$classIDSpec);
+			my ($tag,$rawInterfaceGroupID,$rawClassID) = split(/:/,$trafficClassIDSpec);
 			if (!defined($tag)) {
-				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Invalid format for class ID specification '%s'",
-						$classIDSpec
+				$system->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Invalid format for class ID specification '%s'",
+						$trafficClassIDSpec
 				);
-				return (HTTP_OK,{'status' => 'fail', 'message' => "Invalid format for class ID specification '$classIDSpec'"},
-						{ 'type' => 'json' });
+				return (HTTP_OK,{
+							'status' => 'fail',
+							'message' => "Invalid format for class ID specification '$trafficClassIDSpec'"
+						},
+						{ 'type' => 'json' }
+				);
 			}
 			if (!defined($rawInterfaceGroupID)) {
-				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has an invalid interface group ID '%s'",
+				$system->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has an invalid interface group ID '%s'",
 						$tag,
-						$classIDSpec
+						$trafficClassIDSpec
 				);
-				return (HTTP_OK,{'status' => 'fail', 'message' => "Tag '$tag' has an invalid interface group ID '$classIDSpec'"},
-						{ 'type' => 'json' });
+				return (HTTP_OK,{
+						'status' => 'fail',
+						'message' => "Tag '$tag' has an invalid interface group ID '$trafficClassIDSpec'"
+					},
+					{ 'type' => 'json' }
+				);
 			}
 			if (!defined($rawClassID)) {
-				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has an invalid class ID '%s'",
+				$system->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has an invalid class ID '%s'",
 						$tag,
-						$classIDSpec
+						$trafficClassIDSpec
 				);
-				return (HTTP_OK,{'status' => 'fail', 'message' => "Tag '$tag' has an invalid class ID '$classIDSpec'"},
+				return (HTTP_OK,{'status' => 'fail', 'message' => "Tag '$tag' has an invalid class ID '$trafficClassIDSpec'"},
 						{ 'type' => 'json' });
 			}
 
 			# Get more sane values...
 			my $interfaceGroup = getInterfaceGroup($rawInterfaceGroupID);
 			if (!defined($interfaceGroup)) {
-				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has a non-existent interface group ID ".
+				$system->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has a non-existent interface group ID ".
 						"'%s'",
 						$tag,
 						$rawInterfaceGroupID
@@ -638,9 +652,9 @@ sub jsondata
 						"'$rawInterfaceGroupID'"},
 						{ 'type' => 'json' });
 			}
-			my $classID = isTrafficClassIDValid($rawClassID);
-			if (!defined($classID)) {
-				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has a non-existent class ID '%s'",
+			my $trafficClassID = isTrafficClassIDValid($rawClassID);
+			if (!defined($trafficClassID)) {
+				$system->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has a non-existent class ID '%s'",
 						$tag,
 						$rawClassID
 				);
@@ -651,20 +665,21 @@ sub jsondata
 			# Grab data for each direction associated with a class ID on an inteface group
 			foreach my $direction ('tx','rx') {
 				# Grab stats ID
-				my $sid = opentrafficshaper::plugins::statistics::getSIDFromCID($interfaceGroup->{"${direction}iface"},$classID);
+				my $sid = opentrafficshaper::plugins::statistics::getSIDFromCID($interfaceGroup->{"${direction}Interface"},
+						$trafficClassID);
 				if (!defined($sid)) {
-					$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' stats data cannot be found for ".
+					$system->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' stats data cannot be found for ".
 							"class ID '%s'",
 							$tag,
-							$classID
+							$trafficClassID
 					);
 					return (HTTP_OK,{'status' => 'fail', 'message' => "Tag '$tag' stats data cannot be found for class ID "
-							."'$classID'"},
+							."'$trafficClassID'"},
 							{ 'type' => 'json' });
 				}
 				# Pull in stats data, override direction used
 				my $statsData = opentrafficshaper::plugins::statistics::getStatsBySID($sid,{
-						'direction' => $direction
+						'direction' => lc($direction)
 				});
 
 				# Loop with timestamps
@@ -696,7 +711,7 @@ sub jsondata
 			# Check we have a tag, interface group ID and class
 			my ($tag,$rawInterfaceGroupID) = split(/:/,$interfaceGroupIDSpec);
 			if (!defined($tag)) {
-				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Invalid format for interface group ".
+				$system->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Invalid format for interface group ".
 						"specification '%s'",
 						$interfaceGroupIDSpec
 				);
@@ -705,7 +720,7 @@ sub jsondata
 						{ 'type' => 'json' });
 			}
 			if (!defined($rawInterfaceGroupID)) {
-				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has an invalid interface group ID '%s'",
+				$system->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has an invalid interface group ID '%s'",
 						$tag,
 						$interfaceGroupIDSpec
 				);
@@ -716,7 +731,7 @@ sub jsondata
 
 			my $interfaceGroupID = getInterfaceGroup($rawInterfaceGroupID);
 			if (!defined($interfaceGroupID)) {
-				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has a non-existent interface group ID ".
+				$system->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has a non-existent interface group ID ".
 						"'%s'",
 						$tag,
 						$rawInterfaceGroupID
@@ -727,11 +742,11 @@ sub jsondata
 			}
 
 			# Loop with both directions
-			foreach my $direction ('tx','rx') {
+			foreach my $direction ('Tx','Rx') {
 				# Grab stats ID
-				my $sid = opentrafficshaper::plugins::statistics::getSIDFromCID($interfaceGroupID->{"${direction}iface"},0);
+				my $sid = opentrafficshaper::plugins::statistics::getSIDFromCID($interfaceGroupID->{"${direction}Interface"},0);
 				if (!defined($sid)) {
-					$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' stats data cannot be found for ".
+					$system->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' stats data cannot be found for ".
 							"interface group ID '%s'",
 							$tag,
 							$rawInterfaceGroupID
@@ -743,7 +758,7 @@ sub jsondata
 
 				# Pull in stats data, override direction used
 				my $statsData = opentrafficshaper::plugins::statistics::getStatsBySID($sid,{
-						'direction' => $direction
+						'direction' => lc($direction)
 				});
 
 				# Loop with timestamps
@@ -775,14 +790,14 @@ sub jsondata
 			# Check we have a tag and counter
 			my ($tag,$rawCounter) = split(/:/,$counterSpec);
 			if (!defined($tag)) {
-				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Invalid format for counter specification '%s'",
+				$system->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Invalid format for counter specification '%s'",
 						$counterSpec
 				);
 				return (HTTP_OK,{'status' => 'fail', 'message' => "Invalid format for counter specification '$counterSpec'"},
 						{ 'type' => 'json' });
 			}
 			if (!defined($rawCounter)) {
-				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has an invalid interface group ID '%s'",
+				$system->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has an invalid interface group ID '%s'",
 						$tag,
 						$counterSpec
 				);
@@ -793,7 +808,7 @@ sub jsondata
 			# Grab the SID
 			my $sid = opentrafficshaper::plugins::statistics::getSIDFromCounter($rawCounter);
 			if (!defined($sid)) {
-				$globals->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has a non-existent counter '%s'",
+				$system->{'logger'}->log(LOG_INFO,"[WEBSERVER/PAGES/STATISTICS] Tag '%s' has a non-existent counter '%s'",
 						$tag,
 						$counterSpec
 				);
@@ -802,7 +817,7 @@ sub jsondata
 						{ 'type' => 'json' });
 			}
 			# Pull in stats data
-			my $statsData = opentrafficshaper::plugins::statistics::getStatsBasicBySID($sid,{ 'name' => $rawCounter });
+			my $statsData = opentrafficshaper::plugins::statistics::getStatsBasicBySID($sid,{ 'Name' => $rawCounter });
 
 			# Loop with timestamps
 			foreach my $timestamp (sort keys %{$statsData}) {

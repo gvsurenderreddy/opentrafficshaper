@@ -49,10 +49,16 @@ use opentrafficshaper::logger;
 use opentrafficshaper::plugins;
 use opentrafficshaper::plugins::configmanager qw(
 	getInterfaces
-	getInterfaceTrafficClasses
-	getInterfaceRate
+	getInterfaceTrafficClass
+	getInterface
 
-	getTrafficClassName
+	getTrafficClass
+	getAllTrafficClasses
+
+	isInterfaceIDValid
+
+	changeTrafficClass
+	isTrafficClassIDValid
 );
 
 
@@ -259,9 +265,6 @@ EOF
 EOF
 
 	$content .=<<EOF;
-			<div class="tab-pane" id="system">
-				Work In Progress
-			</div>
 		</div>
 EOF
 

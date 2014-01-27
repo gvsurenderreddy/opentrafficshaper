@@ -86,8 +86,9 @@ our $pluginInfo = {
 };
 
 
-# Copy of system globals
+# Our globals
 my $globals;
+# Copy of system logger
 my $logger;
 
 
@@ -101,32 +102,34 @@ my $config = {
 	'group' => 1,
 };
 
-my $dictionary;
 
 
 # Initialize plugin
 sub plugin_init
 {
-	$globals = shift;
+	my $system = shift;
 
 
 	# Setup our environment
-	$logger = $globals->{'logger'};
+	$logger = $system->{'logger'};
 
 	$logger->log(LOG_NOTICE,"[RADIUS] OpenTrafficShaper Radius Module v%s - Copyright (c) 2013-2014, AllWorldIT",VERSION);
 
+	# Inititalize
+	$globals->{'Dictionary'} = undef;
+
 	# Split off dictionaries to load
-	my @dicts = ref($globals->{'file.config'}->{'plugin.radius'}->{'dictionary'}) eq "ARRAY" ?
-			@{$globals->{'file.config'}->{'plugin.radius'}->{'dictionary'}} :
-			( $globals->{'file.config'}->{'plugin.radius'}->{'dictionary'} );
+	my @dicts = ref($system->{'file.config'}->{'plugin.radius'}->{'dictionary'}) eq "ARRAY" ?
+			@{$system->{'file.config'}->{'plugin.radius'}->{'dictionary'}} :
+			( $system->{'file.config'}->{'plugin.radius'}->{'dictionary'} );
 
 	foreach my $dict (@dicts) {
 		$dict =~ s/\s+//g;
  		# Skip comments
  		next if ($dict =~ /^#/);
 		# Check if we have a path, if we do use it
-		if (defined($globals->{'file.config'}->{'plugin.radius'}->{'dictionary_path'})) {
-			$dict = $globals->{'file.config'}->{'plugin.radius'}->{'dictionary_path'} . "/$dict";
+		if (defined($system->{'file.config'}->{'plugin.radius'}->{'dictionary_path'})) {
+			$dict = $system->{'file.config'}->{'plugin.radius'}->{'dictionary_path'} . "/$dict";
 		}
 		push(@{$config->{'config.dictionaries'}},$dict);
 	}
@@ -144,22 +147,22 @@ sub plugin_init
 	}
 	$logger->log(LOG_DEBUG,"[RADIUS] Loading dictionaries completed.");
 	# Store the dictionary
-	$dictionary = $dict;
+	$globals->{'Dictionary'} = $dict;
 
 	# Check if we must override the expiry time
-	if (defined(my $expiry = $globals->{'file.config'}->{'plugin.radius'}->{'expiry_period'})) {
+	if (defined(my $expiry = $system->{'file.config'}->{'plugin.radius'}->{'expiry_period'})) {
 		$logger->log(LOG_INFO,"[RADIUS] Set expiry_period to '%s'",$expiry);
 		$config->{'expiry_period'} = $expiry;
 	}
 
 	# Check if we got a username to pool transform
-	if (defined(my $userPoolTransform = $globals->{'file.config'}->{'plugin.radius'}->{'username_to_pool_transform'})) {
+	if (defined(my $userPoolTransform = $system->{'file.config'}->{'plugin.radius'}->{'username_to_pool_transform'})) {
 		$logger->log(LOG_INFO,"[RADIUS] Set username_to_pool_transform to '%s'",$userPoolTransform);
 		$config->{'username_to_pool_transform'} = $userPoolTransform;
 	}
 
 	# Default interface group to use
-	if (defined(my $interfaceGroup = $globals->{'file.config'}->{'plugin.radius'}->{'default_interface_group'})) {
+	if (defined(my $interfaceGroup = $system->{'file.config'}->{'plugin.radius'}->{'default_interface_group'})) {
 		if (isInterfaceGroupIDValid($interfaceGroup)) {
 			$logger->log(LOG_INFO,"[RADIUS] Set interface_group to '%s'",$interfaceGroup);
 			$config->{'interface_group'} = $interfaceGroup;
@@ -171,7 +174,7 @@ sub plugin_init
 	}
 
 	# Default match priority to use
-	if (defined(my $matchPriority = $globals->{'file.config'}->{'plugin.radius'}->{'default_match_priority'})) {
+	if (defined(my $matchPriority = $system->{'file.config'}->{'plugin.radius'}->{'default_match_priority'})) {
 		if (isMatchPriorityIDValid($matchPriority)) {
 			$logger->log(LOG_INFO,"[RADIUS] Set match_priority to '%s'",$matchPriority);
 			$config->{'match_priority'} = $matchPriority;
@@ -181,7 +184,7 @@ sub plugin_init
 	}
 
 	# Default traffic class to use
-	if (defined(my $trafficClassID = $globals->{'file.config'}->{'plugin.radius'}->{'default_traffic_class'})) {
+	if (defined(my $trafficClassID = $system->{'file.config'}->{'plugin.radius'}->{'default_traffic_class'})) {
 		if (isTrafficClassIDValid($trafficClassID)) {
 			$logger->log(LOG_INFO,"[RADIUS] Set traffic_class to '%s'",$trafficClassID);
 			$config->{'traffic_class'} = $trafficClassID;
@@ -191,7 +194,7 @@ sub plugin_init
 	}
 
 	# Default group to use
-	if (defined(my $group = $globals->{'file.config'}->{'plugin.radius'}->{'default_group'})) {
+	if (defined(my $group = $system->{'file.config'}->{'plugin.radius'}->{'default_group'})) {
 		if (isGroupIDValid($group)) {
 			$logger->log(LOG_INFO,"[RADIUS] Set group to '%s'",$group);
 			$config->{'group'} = $group;
@@ -263,7 +266,6 @@ sub _session_stop
 
 	# Blow everything away
 	$globals = undef;
-	$dictionary = undef;
 
 	$logger->log(LOG_DEBUG,"[RADIUS] Shutdown");
 
@@ -291,7 +293,7 @@ sub _session_socket_read
 	my $peer_addr_h = inet_ntoa($peer_addr);
 
 	# Parse packet
-	my $pkt = opentrafficshaper::plugins::radius::Radius::Packet->new($dictionary,$udp_packet);
+	my $pkt = opentrafficshaper::plugins::radius::Radius::Packet->new($globals->{'Dictionary'},$udp_packet);
 
 	# Build log line
 	my $logLine = sprintf("Remote: %s:%s, Code: %s, Identifier: %s => ",$peer_addr_h,$peer_port,$pkt->code,$pkt->identifier);
@@ -361,15 +363,15 @@ sub _session_socket_read
 		$trafficLimit = @{ $attrRawVal }[0];
 	}
 	# Grab rate limits from the string we got
-	my $trafficLimitRx; my $trafficLimitTx;
-	my $trafficLimitRxBurst; my $trafficLimitTxBurst;
+	my $rxCIR; my $txCIR;
+	my $rxLimit; my $txLimit;
 	if (defined($trafficLimit)) {
 		# Match rx-rate[/tx-rate] rx-burst-rate[/tx-burst-rate]
 		if ($trafficLimit =~ /^(\d+)([km])(?:\/(\d+)([km]))?(?: (\d+)([km])(?:\/(\d+)([km]))?)?/) {
-			$trafficLimitRx = getKbit($1,$2);
-			$trafficLimitTx = getKbit($3,$4);
-			$trafficLimitRxBurst = getKbit($5,$6);
-			$trafficLimitTxBurst = getKbit($7,$8);
+			$rxCIR = getKbit($1,$2);
+			$txCIR = getKbit($3,$4);
+			$rxLimit = getKbit($5,$6);
+			$txLimit = getKbit($7,$8);
 		} else {
 			$logger->log(LOG_DEBUG,"[RADIUS] The 'OpenTrafficShaper-Traffic-Limit' attribute appears to be invalid for user '%s'".
 					": '%s'",
@@ -407,10 +409,10 @@ sub _session_socket_read
 			$config->{'match_priority'},
 			$group,
 			$trafficClassID,
-			prettyUndef($trafficLimitTx),
-			prettyUndef($trafficLimitRx),
-			prettyUndef($trafficLimitTxBurst),
-			prettyUndef($trafficLimitRxBurst)
+			prettyUndef($txCIR),
+			prettyUndef($rxCIR),
+			prettyUndef($txLimit),
+			prettyUndef($rxLimit)
 	);
 
 	# Check if user is new or online
@@ -427,10 +429,10 @@ sub _session_socket_read
 					my $changes = changePool({
 							'ID' => $pid,
 							'ClassID' => $trafficClassID,
-							'TrafficLimitTx' => $trafficLimitTx,
-							'TrafficLimitRx' => $trafficLimitRx,
-							'TrafficLimitTxBurst' => $trafficLimitTxBurst,
-							'TrafficLimitRxBurst' => $trafficLimitRxBurst,
+							'TxCIR' => $txCIR,
+							'RxCIR' => $rxCIR,
+							'TxLimit' => $txLimit,
+							'RxLimit' => $rxLimit,
 							'Expires' => $now + DEFAULT_EXPIRY_PERIOD
 					});
 
@@ -456,12 +458,12 @@ sub _session_socket_read
 		# No pool, time to create one
 		} else {
 			# If we don't have rate limits, short circuit
-			if (!defined($trafficLimitTx)) {
-				$logger->log(LOG_NOTICE,"[RADIUS] Pool '%s' has no 'TrafficLimitTx', aborting",$poolName);
+			if (!defined($txCIR)) {
+				$logger->log(LOG_NOTICE,"[RADIUS] Pool '%s' has no 'TxCIR', aborting",$poolName);
 				return;
 			}
-			if (!defined($trafficLimitRx)) {
-				$logger->log(LOG_NOTICE,"[RADIUS] Pool '%s' has no 'TrafficLimitRx', aborting",$poolName);
+			if (!defined($rxCIR)) {
+				$logger->log(LOG_NOTICE,"[RADIUS] Pool '%s' has no 'RxCIR', aborting",$poolName);
 				return;
 			}
 
@@ -471,10 +473,10 @@ sub _session_socket_read
 					'Name' => $poolName,
 					'InterfaceGroupID' => $config->{'interface_group'},
 					'ClassID' => $trafficClassID,
-					'TrafficLimitTx' => $trafficLimitTx,
-					'TrafficLimitRx' => $trafficLimitRx,
-					'TrafficLimitTxBurst' => $trafficLimitTxBurst,
-					'TrafficLimitRxBurst' => $trafficLimitRxBurst,
+					'TxCIR' => $txCIR,
+					'RxCIR' => $rxCIR,
+					'TxLimit' => $txLimit,
+					'RxLimit' => $rxLimit,
 					'Expires' => $now + $config->{'expiry_period'},
 					'Source' => "plugin.radius",
 			});

@@ -72,13 +72,15 @@ our $pluginInfo = {
 };
 
 
-# Copy of system globals
+# Our globals
 my $globals;
+# Copy of system logger
 my $logger;
 
-
 # Client connections open
-my $connections = { };
+#
+# $globals->{'Connections'}
+
 
 # Web resources
 my $resources = {
@@ -95,10 +97,10 @@ my $resources = {
 			'pool-list' => \&opentrafficshaper::plugins::webserver::pages::limits::pool_list,
 
 
-			'override-add' => \&opentrafficshaper::plugins::webserver::pages::limits::override_addedit,
-			'override-list' => \&opentrafficshaper::plugins::webserver::pages::limits::override_list,
-			'override-remove' => \&opentrafficshaper::plugins::webserver::pages::limits::override_remove,
-			'override-edit' => \&opentrafficshaper::plugins::webserver::pages::limits::override_addedit,
+			'pool-override-add' => \&opentrafficshaper::plugins::webserver::pages::limits::pool_override_addedit,
+			'pool-override-list' => \&opentrafficshaper::plugins::webserver::pages::limits::pool_override_list,
+			'pool-override-remove' => \&opentrafficshaper::plugins::webserver::pages::limits::pool_override_remove,
+			'pool-override-edit' => \&opentrafficshaper::plugins::webserver::pages::limits::pool_override_addedit,
 
 			'pool-add' => \&opentrafficshaper::plugins::webserver::pages::limits::pool_addedit,
 			'pool-list' => \&opentrafficshaper::plugins::webserver::pages::limits::pool_list,
@@ -110,9 +112,7 @@ my $resources = {
 			'poolmember-remove' => \&opentrafficshaper::plugins::webserver::pages::limits::poolmember_remove,
 			'poolmember-edit' => \&opentrafficshaper::plugins::webserver::pages::limits::poolmember_addedit,
 
-			'limit-add' => \&opentrafficshaper::plugins::webserver::pages::limits::limit_add,
-			'limit-remove' => \&opentrafficshaper::plugins::webserver::pages::limits::limit_remove,
-			'limit-edit' => \&opentrafficshaper::plugins::webserver::pages::limits::limit_addedit,
+			'limit-add' => \&opentrafficshaper::plugins::webserver::pages::limits::limit_add
 
 		},
 		'configmanager' => {
@@ -138,17 +138,19 @@ sub snapin_register
 
 
 
-
 # Initialize plugin
 sub plugin_init
 {
-	$globals = shift;
+	my $system = shift;
 
 
 	# Setup our environment
-	$logger = $globals->{'logger'};
+	$logger = $system->{'logger'};
 
 	$logger->log(LOG_NOTICE,"[WEBSERVER] OpenTrafficShaper Webserver Module v%s - Copyright (c) 2013-2014, AllWorldIT",VERSION);
+
+	# Initialize
+	$globals->{'Connections'} = { };
 
 	# Spawn a web server on port 8088 of all interfaces.
 	POE::Component::Server::TCP->new(
@@ -171,6 +173,7 @@ sub plugin_init
 		eval("use opentrafficshaper::plugins::webserver::pages::statistics");
 		if ($@) {
 			$logger->log(LOG_INFO,"[WEBSERVER] Failed to load statistics pages: %s",$@);
+			exit;
 		} else {
 			# Load resources
 			$resources->{'HTTP'}->{'statistics'} = {
@@ -211,6 +214,9 @@ sub server_session_stop
 {
 	my $kernel = $_[KERNEL];
 
+	# Tear down data
+	$globals = undef;
+
 	$logger->log(LOG_DEBUG,"[WEBSERVER] Shutdown");
 }
 
@@ -224,8 +230,8 @@ sub server_client_connected
 
 
 	# Save our socket on the client
-	$connections->{$client_session_id}->{'socket'} = $heap->{'client'};
-	$connections->{$client_session_id}->{'protocol'} = 'HTTP';
+	$globals->{'Connections'}->{$client_session_id}->{'Socket'} = $heap->{'client'};
+	$globals->{'Connections'}->{$client_session_id}->{'Protocol'} = 'HTTP';
 }
 
 
@@ -234,22 +240,25 @@ sub server_client_connected
 sub server_client_disconnected
 {
 	my ($kernel,$heap,$session,$request) = @_[KERNEL, HEAP, SESSION, ARG0];
-	my $client_session_id = $session->ID;
 
+
+	my $client_session_id = $session->ID;
+	my $client = $globals->{'Connections'}->{$client_session_id};
 
 	# Check if we have a disconnection function to call
 	if (
-			defined($connections->{$client_session_id}->{'resource'}) &&
-			defined($connections->{$client_session_id}->{'resource'}->{'handler'}) &&
-			ref($connections->{$client_session_id}->{'resource'}->{'handler'}) eq 'HASH' &&
-			defined($connections->{$client_session_id}->{'resource'}->{'handler'}->{'on_disconnect'})
+			defined($client->{'Resource'}) &&
+			defined($client->{'Resource'}->{'Handler'}) &&
+			ref($client->{'Resource'}->{'Handler'}) eq 'HASH' &&
+			defined($client->{'Resource'}->{'Handler'}->{'on_disconnect'})
 	) {
 		# Call disconnection function
-		$connections->{$client_session_id}->{'resource'}->{'handler'}->{'on_disconnect'}->($kernel,$globals,$client_session_id);
+		$client->{'Resource'}->{'Handler'}->{'on_disconnect'}
+				->($kernel,$globals,$client_session_id);
 	}
 
 	# Remove client session
-	delete($connections->{$client_session_id});
+	delete($globals->{'Connections'}->{$client_session_id});
 }
 
 
@@ -261,7 +270,7 @@ sub server_request
 
 
 	my $client_session_id = $session->ID;
-	my $conn = $connections->{$client_session_id};
+	my $client = $globals->{'Connections'}->{$client_session_id};
 
 
 	# Our response back if one, and if we should just close the connection or not
@@ -269,7 +278,7 @@ sub server_request
 	my $closeWhenDone = 0;
 
 	# Its HTTP
-	if ($conn->{'protocol'} eq "HTTP") {
+	if ($client->{'Protocol'} eq "HTTP") {
 		# Check the protocol we're currently handling
 		# We may have a response from the filter indicating an error
 		if (ref($request) eq "HTTP::Response") {
@@ -286,13 +295,13 @@ sub server_request
 		}
 
 	# Its a websocket
-	} elsif ($conn->{'protocol'} eq "WebSocket") {
+	} elsif ($client->{'Protocol'} eq "WebSocket") {
 		$response = _server_request_websocket($kernel,$client_session_id,$request);
 	}
 
 	# If there is a response send it
 	if (defined($response)) {
-		$conn->{'socket'}->put($response);
+		$client->{'Socket'}->put($response);
 	}
 
 	# Check if connection must be closed
@@ -372,6 +381,8 @@ sub httpCreateResponse
 		my $stylesheetsStr = "";
 		my $stylesheetStr = "";
 		my $javascriptStr = "";
+		my $versionStr = VERSION;
+
 		if (defined($options)) {
 			# Check if menu exists
 			if (my $menu = $options->{'menu'}) {
@@ -511,7 +522,7 @@ $content
 			<hr />
 			<footer>
 				<p class="muted">
-						v$globals->{'version'} - Copyright &copy; 2013, <a href="http://www.allworldit.com">AllWorldIT</a>
+						v$versionStr - Copyright &copy; 2013-2014, <a href="http://www.allworldit.com">AllWorldIT</a>
 				</p>
 			</footer>
 		</div>
@@ -555,7 +566,7 @@ sub _server_request_http
 	my ($kernel,$client_session_id,$request) = @_;
 
 
-	my $conn = $connections->{$client_session_id};
+	my $conn = $globals->{'Connections'}->{$client_session_id};
 
 	my $protocol = "HTTP"; # By default we're HTTP
 
@@ -612,16 +623,20 @@ sub _server_request_http
 	$logger->log(LOG_DEBUG,"[WEBSERVER] Parsed HTTP request into: module='%s', action='%s'",$module,$action);
 
 	# Save what resource we just accessed
-	$connections->{$client_session_id}->{'resource'} = {
-		'module' => $module,
-		'action' => $action,
-		'handler' => $handler,
+	$globals->{'Connections'}->{$client_session_id}->{'Resource'} = {
+		'Module' => $module,
+		'Action' => $action,
+		'Handler' => $handler,
+	};
+
+	my $system = {
+		'logger' => $logger
 	};
 
 	# This is normal HTTP request
 	if ($protocol eq "HTTP") {
 		# Do the function call now
-		my ($res,$content,$extra) = $function->($kernel,$globals,$client_session_id,$request);
+		my ($res,$content,$extra) = $function->($kernel,$system,$client_session_id,$request);
 
 
 		# Module return undef if they don't want to handle the request
@@ -651,7 +666,7 @@ sub _server_request_http
 		}
 
 		# Do the function call now
-		my ($res,$ret1,$ret2) = $function->($kernel,$globals,$client_session_id,$request,$conn->{'socket'});
+		my ($res,$ret1,$ret2) = $function->($kernel,$globals,$client_session_id,$request,$conn->{'Socket'});
 		# If we have a response defined, we rejected the upgrade
 		if (defined($res)) {
 			$response = httpDisplayFault($res,$ret1,$ret2);
@@ -659,8 +674,8 @@ sub _server_request_http
 			# Return our upgrade response
 			$response = _server_request_http_wsupgrade($request,$module,$action);
 			# Upgrade the protocol & handler
-			$connections->{$client_session_id}->{'protocol'} = 'WebSocket';
-			$connections->{$client_session_id}->{'resource'}->{'handler'} = $newHandler;
+			$globals->{'Connections'}->{$client_session_id}->{'Protocol'} = 'WebSocket';
+			$globals->{'Connections'}->{$client_session_id}->{'Resource'}->{'Handler'} = $newHandler;
 		}
 	}
 
@@ -687,8 +702,8 @@ sub _server_request_websocket
 	my ($kernel,$client_session_id,$rawRequest) = @_;
 
 
-	my $conn = $connections->{$client_session_id};
-	my $handler = $conn->{'resource'}->{'handler'};
+	my $conn = $globals->{'Connections'}->{$client_session_id};
+	my $handler = $conn->{'Resource'}->{'Handler'};
 
 	# Function we need to call
 	my $function = $handler;
@@ -707,7 +722,8 @@ sub _server_request_websocket
 	my $request;
 	eval { $request = decode_json($rawRequest); };
 	if ($@) {
-		$logger->log(LOG_NOTICE,"[WEBSERVER] Failed to decode JSON request '%s'",$rawRequest);
+		# FIXME: NOTICE: Failed to decode JSON request '&#3;&#xFFFD; , may be disconnect from websocket?
+		$logger->log(LOG_NOTICE,"[WEBSERVER] Failed to decode JSON request '%s'",encode_entities($rawRequest));
 		return encode_json({'status' => "error", 'message' => "Failed to decode JSON"});
 	}
 
@@ -738,12 +754,12 @@ sub _server_request_websocket
 
 
 	# Do the function call now
-	my ($res,$content,$extra) = $function->($kernel,$globals,$client_session_id,$request,$conn->{'socket'});
+	my ($res,$content,$extra) = $function->($kernel,$globals,$client_session_id,$request,$conn->{'Socket'});
 
 	$logger->log(LOG_INFO,"[WEBSERVER] %s Request [%s/%s]",
-			$conn->{'protocol'},
-			$conn->{'resource'}->{'module'},
-			$conn->{'resource'}->{'action'},
+			$conn->{'Protocol'},
+			$conn->{'Resource'}->{'Module'},
+			$conn->{'Resource'}->{'Action'},
 	);
 
 	# Check if its a success or failure

@@ -67,16 +67,18 @@ use opentrafficshaper::plugins::configmanager qw(
 	getPoolMemberShaperState
 	isPoolMemberReady
 
-	getOverrides
-	getOverride
+	getPoolOverrides
+	getPoolOverride
 
+	getInterfaceGroup
 	getInterfaceGroups
 	isInterfaceGroupIDValid
 
 	getMatchPriorities
 	isMatchPriorityIDValid
 
-	getTrafficClasses getTrafficClassName
+	getTrafficClass
+	getTrafficClasses
 	isTrafficClassIDValid
 );
 
@@ -106,11 +108,11 @@ my $menu = [
 		'items' => [
 			{
 				'name' => 'List Overrides',
-				'link' => 'override-list'
+				'link' => 'pool-override-list'
 			},
 			{
 				'name' => 'Add Override',
-				'link' => 'override-add'
+				'link' => 'pool-override-add'
 			}
 		]
 	},
@@ -178,23 +180,22 @@ EOF
 		# Get a nice last update string
 		my $lastUpdate = DateTime->from_epoch( epoch => $pool->{'LastUpdate'} )->iso8601();
 
-		my $cirStr = sprintf('%s/%s',prettyUndef($pool->{'TrafficLimitTx'}),prettyUndef($pool->{'TrafficLimitRx'}));
-		my $limitStr = sprintf('%s/%s',prettyUndef($pool->{'TrafficLimitTxBurst'}),prettyUndef($pool->{'TrafficLimitRxBurst'}));
-
-		my $igidEscaped = uri_escape($pool->{'InterfaceGroupID'});
-		my $pidEscaped = uri_escape($pool->{'ID'});
-
-
-		my $friendlyName = (defined($pool->{'FriendlyName'}) && $pool->{'FriendlyName'} ne "") ? $pool->{'FriendlyName'} :
+		my $poolCIRStr = encode_entities(sprintf('%s/%s',prettyUndef($pool->{'TxCIR'}),prettyUndef($pool->{'RxCIR'})));
+		my $poolLimitStr = encode_entities(sprintf('%s/%s',prettyUndef($pool->{'TxLimit'}),prettyUndef($pool->{'RxLimit'})));
+		my $poolFriendlyName = (defined($pool->{'FriendlyName'}) && $pool->{'FriendlyName'} ne "") ? $pool->{'FriendlyName'} :
 				$pool->{'Name'};
-		my $friendlyNameEncoded = encode_entities($friendlyName);
+		my $poolFriendlyNameEncoded = encode_entities($poolFriendlyName);
 
-		my $nameEncoded = encode_entities($pool->{'Name'});
-		my $nameEscaped = uri_escape($pool->{'Name'});
+		my $poolNameEncoded = encode_entities($pool->{'Name'});
 
-		my $expiresStr = ($pool->{'Expires'} > 0) ? DateTime->from_epoch( epoch => $pool->{'Expires'} )->iso8601() : '-never-';
+		my $poolExpiresStr = encode_entities(
+				($pool->{'Expires'} > 0) ? DateTime->from_epoch( epoch => $pool->{'Expires'} )->iso8601() : '-never-'
+		);
 
-		my $classStr = getTrafficClassName($pool->{'ClassID'});
+
+
+		my $trafficClass = getTrafficClass($pool->{'TrafficClassID'});
+		my $trafficClassNameEncoded = encode_entities($trafficClass->{'Name'});
 
 		# Display relevant icons depending on pool status
 		my $icons = "";
@@ -214,22 +215,26 @@ EOF
 #			$icons .= '<span class="glyphicon glyphicon-edit" />';
 #		}
 
+		my $urlStatsPool = sprintf('/statistics/by-pool?pool=%s',uri_escape("$pool->{'InterfaceGroupID'}:$pool->{'Name'}"));
+		my $urlPoolEdit = sprintf('/limits/pool-edit?pid=%s',uri_escape($pool->{'ID'}));
+		my $urlPoolMemberList = sprintf('/limits/poolmember-list?pid=%s',uri_escape($pool->{'ID'}));
+		my $urlPoolRemove = sprintf('/limits/pool-remove?pid=%s',uri_escape($pool->{'ID'}));
 
 		$content .= <<EOF;
 				<tr>
 					<td>$icons</td>
-					<td>$friendlyNameEncoded</td>
-					<td>$nameEncoded</td>
-					<td>$expiresStr</td>
+					<td>$poolFriendlyNameEncoded</td>
+					<td>$poolNameEncoded</td>
+					<td>$poolExpiresStr</td>
 					<td><span class="glyphicon glyphicon-arrow-right" /></td>
-					<td>$classStr</td>
-					<td>$cirStr</td>
-					<td>$limitStr</td>
+					<td>$trafficClassNameEncoded</td>
+					<td>$poolCIRStr</td>
+					<td>$poolLimitStr</td>
 					<td>
-						<a href="/statistics/by-pool?pool=$igidEscaped:$nameEscaped"><span class="glyphicon glyphicon-stats"></span></a>
-						<a href="/limits/pool-edit?pid=$pidEscaped"><span class="glyphicon glyphicon-wrench"></span></a>
-						<a href="/limits/poolmember-list?pid=$pidEscaped"><span class="glyphicon glyphicon-link"></span></a>
-						<a href="/limits/pool-remove?pid=$pidEscaped"><span class="glyphicon glyphicon-remove"></span></a>
+						<a href="$urlStatsPool"><span class="glyphicon glyphicon-stats"></span></a>
+						<a href="$urlPoolEdit"><span class="glyphicon glyphicon-wrench"></span></a>
+						<a href="$urlPoolMemberList"><span class="glyphicon glyphicon-link"></span></a>
+						<a href="$urlPoolRemove"><span class="glyphicon glyphicon-remove"></span></a>
 					</td>
 				</tr>
 EOF
@@ -277,9 +282,9 @@ sub pool_addedit
 		FriendlyName
 		Name
 		InterfaceGroupID
-		ClassID
-		TrafficLimitTx TrafficLimitTxBurst
-		TrafficLimitRx TrafficLimitRxBurst
+		TrafficClassID
+		TxCIR TxLimit
+		RxCIR RxLimit
 		Expires inputExpires.modifier
 		Notes
 	);
@@ -308,7 +313,7 @@ sub pool_addedit
 	if (defined($queryParams->{'pid'})) {
 		# Check if we can grab the pool
 		if (!defined($pool = getPool($queryParams->{'pid'}->{'value'}))) {
-			return (HTTP_TEMPORARY_REDIRECT,"limits");
+			return (HTTP_TEMPORARY_REDIRECT,"/limits");
 		}
 	}
 
@@ -320,7 +325,7 @@ sub pool_addedit
 		# If user pressed cancel, redirect
 		if (defined($form->{'cancel'})) {
 			# Redirects to default page
-			return (HTTP_TEMPORARY_REDIRECT,'limits');
+			return (HTTP_TEMPORARY_REDIRECT,'/limits');
 		}
 
 		# Transform form into form data
@@ -332,7 +337,7 @@ sub pool_addedit
 		if (defined($form->{'submit'}) && $form->{'submit'}->{'value'} eq "Edit") {
 			# Check pool exists
 			if (!defined($pool)) {
-				return (HTTP_TEMPORARY_REDIRECT,'limits');
+				return (HTTP_TEMPORARY_REDIRECT,'/limits');
 			}
 
 			$formData->{'ID'} = $pool->{'ID'};
@@ -354,7 +359,7 @@ sub pool_addedit
 
 		# Woops ... no query string?
 		} elsif (keys %{$queryParams} > 0) {
-			return (HTTP_TEMPORARY_REDIRECT,'limits');
+			return (HTTP_TEMPORARY_REDIRECT,'/limits');
 		}
 	}
 
@@ -375,18 +380,18 @@ sub pool_addedit
 		if ($formType ne "Edit" && getPoolByName($interfaceGroupID,$name)) {
 			push(@errors,"A pool with the same name already exists");
 		}
-		my $classID;
-		if (!defined($classID = isTrafficClassIDValid($formData->{'ClassID'}))) {
+		my $trafficClassID;
+		if (!defined($trafficClassID = isTrafficClassIDValid($formData->{'TrafficClassID'}))) {
 			push(@errors,"Traffic class is not valid");
 		}
-		my $trafficLimitTx = isNumber($formData->{'TrafficLimitTx'});
-		my $trafficLimitTxBurst = isNumber($formData->{'TrafficLimitTxBurst'});
-		if (!defined($trafficLimitTx) && !defined($trafficLimitTxBurst)) {
+		my $txCIR = isNumber($formData->{'TxCIR'});
+		my $txLimit = isNumber($formData->{'TxLimit'});
+		if (!defined($txCIR) && !defined($txLimit)) {
 			push(@errors,"A valid download CIR and/or limit is required");
 		}
-		my $trafficLimitRx = isNumber($formData->{'TrafficLimitRx'});
-		my $trafficLimitRxBurst = isNumber($formData->{'TrafficLimitRxBurst'});
-		if (!defined($trafficLimitRx) && !defined($trafficLimitRxBurst)) {
+		my $rxCIR = isNumber($formData->{'RxCIR'});
+		my $rxLimit = isNumber($formData->{'RxLimit'});
+		if (!defined($rxCIR) && !defined($rxLimit)) {
 			push(@errors,"A valid upload CIR and/or limit is required");
 		}
 
@@ -437,11 +442,11 @@ sub pool_addedit
 				'FriendlyName' => $friendlyName,
 				'Name' => $name,
 				'InterfaceGroupID' => $interfaceGroupID,
-				'ClassID' => $classID,
-				'TrafficLimitTx' => $trafficLimitTx,
-				'TrafficLimitTxBurst' => $trafficLimitTxBurst,
-				'TrafficLimitRx' => $trafficLimitRx,
-				'TrafficLimitRxBurst' => $trafficLimitRxBurst,
+				'TrafficClassID' => $trafficClassID,
+				'TxCIR' => $txCIR,
+				'TxLimit' => $txLimit,
+				'RxCIR' => $rxCIR,
+				'RxLimit' => $rxLimit,
 				'Expires' => $expires,
 				'Notes' => $notes,
 			};
@@ -463,14 +468,14 @@ sub pool_addedit
 					$formType,
 					prettyUndef($name),
 					prettyUndef($interfaceGroupID),
-					prettyUndef($classID),
-					prettyUndef($trafficLimitTx),
-					prettyUndef($trafficLimitRx),
-					prettyUndef($trafficLimitTxBurst),
-					prettyUndef($trafficLimitRxBurst)
+					prettyUndef($trafficClassID),
+					prettyUndef($txCIR),
+					prettyUndef($rxCIR),
+					prettyUndef($txLimit),
+					prettyUndef($rxLimit)
 			);
 
-			return (HTTP_TEMPORARY_REDIRECT,'limits');
+			return (HTTP_TEMPORARY_REDIRECT,'/limits');
 		}
 	}
 
@@ -491,35 +496,43 @@ EOF
 	# Spit out errors if we have any
 	if (@errors > 0) {
 		foreach my $error (@errors) {
-			$content .= '<div class="alert alert-danger">'.$error.'</div>';
+			$content .= '<div class="alert alert-danger">'.encode_entities($error).'</div>';
 		}
 	}
 
 	# Generate interface group list
-	my $interfaceGroups = getInterfaceGroups();
+	my @interfaceGroups = sort(getInterfaceGroups());
 	my $interfaceGroupStr = "";
-	foreach my $interfaceGroupID (sort keys %{$interfaceGroups}) {
+	foreach my $interfaceGroupID (@interfaceGroups) {
+		my $interfaceGroup = getInterfaceGroup($interfaceGroupID);
+		my $interfaceGroupIDEncoded = encode_entities($interfaceGroupID);
+		my $interfaceGroupNameEncoded = encode_entities($interfaceGroup->{'Name'});
+
 		# Check if this item is selected
 		my $selected = "";
 		if ($formData->{'InterfaceGroupID'} ne "" && $formData->{'InterfaceGroupID'} eq $interfaceGroupID) {
 			$selected = "selected";
 		}
+
 		# And build the options
-		$interfaceGroupStr .= '<option value="'.$interfaceGroupID.'" '.$selected.'>'.
-				$interfaceGroups->{$interfaceGroupID}->{'name'}.'</option>';
+		$interfaceGroupStr .= '<option value="'.$interfaceGroupIDEncoded.'" '.$selected.'>'.
+				$interfaceGroupNameEncoded.'</option>';
 	}
 
 	# Generate traffic class list
-	my $trafficClasses = getTrafficClasses();
+	my @trafficClasses = sort(getTrafficClasses());
 	my $trafficClassStr = "";
-	foreach my $classID (sort keys %{$trafficClasses}) {
+	foreach my $trafficClassID (@trafficClasses) {
+		my $trafficClass = getTrafficClass($trafficClassID);
+		my $trafficClassIDEncoded = encode_entities($trafficClassID);
+		my $trafficClassNameEncoded = encode_entities($trafficClass->{'Name'});
 		# Process selections nicely
 		my $selected = "";
-		if ($formData->{'ClassID'} ne "" && $formData->{'ClassID'} eq $classID) {
+		if ($formData->{'TrafficClassID'} ne "" && $formData->{'TrafficClassID'} eq $trafficClassID) {
 			$selected = "selected";
 		}
 		# And build the options
-		$trafficClassStr .= '<option value="'.$classID.'" '.$selected.'>'.$trafficClasses->{$classID}.'</option>';
+		$trafficClassStr .= '<option value="'.$trafficClassIDEncoded.'" '.$selected.'>'.$trafficClassNameEncoded.'</option>';
 	}
 
 	# Generate expires modifiers list
@@ -535,8 +548,8 @@ EOF
 			$selected = "selected";
 		}
 		# And build the options
-		$expiresModifierStr .= '<option value="'.$expireModifier.'" '.$selected.'>'.$expiresModifiers->{$expireModifier}.
-				'</option>';
+		$expiresModifierStr .= '<option value="'.$expireModifier.'" '.$selected.'>'.
+				encode_entities($expiresModifiers->{$expireModifier}).'</option>';
 	}
 
 	# Blank expires if its 0
@@ -576,58 +589,58 @@ EOF
 				</div>
 			</div>
 			<div class="form-group">
-				<label for="ClassID" class="col-md-2 control-label">Traffic Class</label>
+				<label for="TrafficClassID" class="col-md-2 control-label">Traffic Class</label>
 				<div class="row">
 					<div class="col-md-2">
-						<select name="ClassID" class="form-control">
+						<select name="TrafficClassID" class="form-control">
 							$trafficClassStr
 						</select>
 					</div>
 				</div>
 			</div>
 			<div class="form-group">
-				<label for="TrafficLimitTx" class="col-md-2 control-label">Download CIR</label>
+				<label for="TxCIR" class="col-md-2 control-label">Download CIR</label>
 				<div class="row">
 					<div class="col-md-3">
 						<div class="input-group">
-							<input name="TrafficLimitTx" type="text" placeholder="Download CIR" class="form-control"
-									value="$formData->{'TrafficLimitTx'}" />
+							<input name="TxCIR" type="text" placeholder="Download CIR" class="form-control"
+									value="$formData->{'TxCIR'}" />
 							<span class="input-group-addon">Kbps *<span>
 						</div>
 					</div>
 				</div>
 			</div>
 			<div class="form-group">
-				<label for="TrafficLimitTxBurst" class="col-md-2 control-label">Download Limit</label>
+				<label for="TxLimit" class="col-md-2 control-label">Download Limit</label>
 				<div class="row">
 					<div class="col-md-3">
 						<div class="input-group">
-							<input name="TrafficLimitTxBurst" type="text" placeholder="Download Limit" class="form-control"
-									value="$formData->{'TrafficLimitTxBurst'}" />
+							<input name="TxLimit" type="text" placeholder="Download Limit" class="form-control"
+									value="$formData->{'TxLimit'}" />
 							<span class="input-group-addon">Kbps<span>
 						</div>
 					</div>
 				</div>
 			</div>
 			<div class="form-group">
-				<label for="TrafficLimitRx" class="col-md-2 control-label">Upload CIR</label>
+				<label for="RxCIR" class="col-md-2 control-label">Upload CIR</label>
 				<div class="row">
 					<div class="col-md-3">
 						<div class="input-group">
-							<input name="TrafficLimitRx" type="text" placeholder="Upload CIR" class="form-control"
-									value="$formData->{'TrafficLimitRx'}" />
+							<input name="RxCIR" type="text" placeholder="Upload CIR" class="form-control"
+									value="$formData->{'RxCIR'}" />
 							<span class="input-group-addon">Kbps *<span>
 						</div>
 					</div>
 				</div>
 			</div>
 			<div class="form-group">
-				<label for="TrafficLimitRxBurst" class="col-md-2 control-label">Upload Limit</label>
+				<label for="RxLimit" class="col-md-2 control-label">Upload Limit</label>
 				<div class="row">
 					<div class="col-md-3">
 						<div class="input-group">
-							<input name="TrafficLimitRxBurst" type="text" placeholder="Upload Limit" class="form-control"
-									value="$formData->{'TrafficLimitRxBurst'}" />
+							<input name="RxLimit" type="text" placeholder="Upload Limit" class="form-control"
+									value="$formData->{'RxLimit'}" />
 							<span class="input-group-addon">Kbps<span>
 						</div>
 					</div>
@@ -723,18 +736,16 @@ EOF
 			# Post the removal
 			$kernel->post("configmanager" => "pool_remove" => $pool->{'ID'});
 		}
-		return (HTTP_TEMPORARY_REDIRECT,'limits');
+		return (HTTP_TEMPORARY_REDIRECT,'/limits');
 	}
 
-	# Make the pool ID safe for HTML
-	my $encodedPID = encode_entities($queryParams->{'pid'}->{'value'});
 	# Make the friendly name HTML safe
-	my $encodedName = encode_entities($pool->{'Name'});
+	my $encodedPoolName = encode_entities($pool->{'Name'});
 
 	# Build our confirmation dialog
 	$content .= <<EOF;
 		<div class="alert alert-danger">
-			Are you very sure you wish to remove pool for "$encodedName"?
+			Are you very sure you wish to remove pool for "$encodedPoolName"?
 		</div>
 		<form role="form" method="post">
 			<input type="submit" class="btn btn-primary" name="confirm" value="Yes" />
@@ -788,13 +799,12 @@ EOF
 	# Grab pools members
 	my @poolMembers = getPoolMembers($pool->{'ID'});
 
-	# Make the pool ID safe for HTML
-	my $pidEscaped = encode_entities($pool->{'ID'});
-
 	my $poolFriendlyName = (defined($pool->{'FriendlyName'}) && $pool->{'FriendlyName'} ne "") ? $pool->{'FriendlyName'} :
 			$pool->{'Name'};
 	my $poolFriendlyNameEncoded = encode_entities($poolFriendlyName);
 	my $poolNameEncoded = encode_entities($pool->{'Name'});
+
+	my $urlPoolMemberAdd = sprintf('/limits/poolmember-add?pid=%s',uri_escape($pool->{'ID'}));
 
 	# Menu
 	$customMenu = [
@@ -803,7 +813,7 @@ EOF
 			'items' => [
 				{
 					'name' => 'Add Pool Member',
-					'link' => "poolmember-add?pid=$pidEscaped",
+					'link' => $urlPoolMemberAdd
 				},
 			],
 		},
@@ -839,22 +849,20 @@ EOF
 		}
 
 		# Get a nice last update string
-		my $pmidEscaped = uri_escape($poolMember->{'ID'});
-
-		my $friendlyName = (defined($poolMember->{'FriendlyName'}) && $poolMember->{'FriendlyName'} ne "") ?
+		my $poolMemberFriendlyName = (defined($poolMember->{'FriendlyName'}) && $poolMember->{'FriendlyName'} ne "") ?
 				$poolMember->{'FriendlyName'} : $poolMember->{'Username'};
-		my $friendlyNameEncoded = encode_entities($friendlyName);
+		my $poolMemberFriendlyNameEncoded = encode_entities($poolMemberFriendlyName);
 
-		my $usernameEncoded = encode_entities($poolMember->{'Username'});
+		my $poolMemberUsernameEncoded = encode_entities($poolMember->{'Username'});
 
-		my $ipEncoded = encode_entities($poolMember->{'IPAddress'});
+		my $poolMemberIPEncoded = encode_entities($poolMember->{'IPAddress'});
 
-		my $createdStr = ($poolMember->{'Created'} > 0) ?
-				DateTime->from_epoch( epoch => $poolMember->{'Created'} )->iso8601() : '-never-';
-		my $updatedStr = ($poolMember->{'LastUpdate'} > 0) ?
-				DateTime->from_epoch( epoch => $poolMember->{'LastUpdate'} )->iso8601() : '-never-';
-		my $expiresStr = ($poolMember->{'Expires'} > 0) ?
-				DateTime->from_epoch( epoch => $poolMember->{'Expires'} )->iso8601() : '-never-';
+		my $poolMemberCreatedStr = encode_entities(($poolMember->{'Created'} > 0) ?
+				DateTime->from_epoch( epoch => $poolMember->{'Created'} )->iso8601() : '-never-');
+		my $poolMemberUpdatedStr = encode_entities(($poolMember->{'LastUpdate'} > 0) ?
+				DateTime->from_epoch( epoch => $poolMember->{'LastUpdate'} )->iso8601() : '-never-');
+		my $poolMemberExpiresStr = encode_entities(($poolMember->{'Expires'} > 0) ?
+				DateTime->from_epoch( epoch => $poolMember->{'Expires'} )->iso8601() : '-never-');
 
 		# Display relevant icons depending on pool status
 		my $icons = "";
@@ -874,18 +882,21 @@ EOF
 #			$icons .= '<span class="glyphicon glyphicon-edit" />';
 #		}
 
+		my $urlPoolMemberEdit = sprintf('/limits/poolmember-edit?pmid=%s',uri_escape($poolMember->{'ID'}));
+		my $urlPoolMemberRemove = sprintf('/limits/poolmember-remove?pmid=%s',uri_escape($poolMember->{'ID'}));
+
 		$content .= <<EOF;
 				<tr>
 					<td>$icons</td>
-					<td>$friendlyNameEncoded</td>
-					<td>$usernameEncoded</td>
-					<td>$ipEncoded</td>
-					<td>$createdStr</td>
-					<td>$updatedStr</td>
-					<td>$expiresStr</td>
+					<td>$poolMemberFriendlyNameEncoded</td>
+					<td>$poolMemberUsernameEncoded</td>
+					<td>$poolMemberIPEncoded</td>
+					<td>$poolMemberCreatedStr</td>
+					<td>$poolMemberUpdatedStr</td>
+					<td>$poolMemberExpiresStr</td>
 					<td>
-						<a href="/limits/poolmember-edit?pmid=$pmidEscaped"><span class="glyphicon glyphicon-wrench"></span></a>
-						<a href="/limits/poolmember-remove?pmid=$pmidEscaped"><span class="glyphicon glyphicon-remove"></span></a>
+						<a href="$urlPoolMemberEdit"><span class="glyphicon glyphicon-wrench"></span></a>
+						<a href="$urlPoolMemberRemove"><span class="glyphicon glyphicon-remove"></span></a>
 					</td>
 				</tr>
 EOF
@@ -964,7 +975,7 @@ sub poolmember_addedit
 	if (defined($queryParams->{'pmid'})) {
 		# Check if we can grab the pool member
 		if (!defined($poolMember = getPoolMember($queryParams->{'pmid'}->{'value'}))) {
-			return (HTTP_TEMPORARY_REDIRECT,"limits");
+			return (HTTP_TEMPORARY_REDIRECT,"/limits");
 		}
 
 		$pool = getPool($poolMember->{'PoolID'});
@@ -973,7 +984,7 @@ sub poolmember_addedit
 	} elsif (defined($queryParams->{'pid'})) {
 		# Check if we can grab the pool
 		if (!defined($pool = getPool($queryParams->{'pid'}->{'value'}))) {
-			return (HTTP_TEMPORARY_REDIRECT,"limits");
+			return (HTTP_TEMPORARY_REDIRECT,"/limits");
 		}
 	}
 
@@ -986,15 +997,13 @@ sub poolmember_addedit
 		if (defined($form->{'cancel'})) {
 			# If the pool member is defined, rededirect to pool member list
 			if (defined($poolMember)) {
-				my $pidEscaped = uri_escape($poolMember->{'PoolID'});
-				return (HTTP_TEMPORARY_REDIRECT,"limits/poolmember-list?pid=$pidEscaped");
+				return (HTTP_TEMPORARY_REDIRECT,sprintf('/limits/poolmember-list?pid=%s',$pool->{'IID'}));
 			# Do same for pool
 			} elsif (defined($pool)) {
-				my $pidEscaped = uri_escape($pool->{'ID'});
-				return (HTTP_TEMPORARY_REDIRECT,"limits/poolmember-list?pid=$pidEscaped");
+				return (HTTP_TEMPORARY_REDIRECT,sprintf('/limits/poolmember-list?pid=%s',$pool->{'IID'}));
 			}
 
-			return (HTTP_TEMPORARY_REDIRECT,'limits');
+			return (HTTP_TEMPORARY_REDIRECT,'/limits');
 		}
 
 		# Transform form into form data
@@ -1006,7 +1015,7 @@ sub poolmember_addedit
 		if (defined($form->{'submit'}) && $form->{'submit'}->{'value'} eq "Edit") {
 			# If there is no pool member on submit, redirect<F7>
 			if (!defined($poolMember)) {
-				return (HTTP_TEMPORARY_REDIRECT,'limits');
+				return (HTTP_TEMPORARY_REDIRECT,'/limits');
 			}
 
 			$formData->{'ID'} = $poolMember->{'ID'};
@@ -1015,7 +1024,7 @@ sub poolmember_addedit
 			$formNoEdit = "readonly";
 		}
 
-	# Maybe we were given an override key as a parameter? this would be an edit form
+	# Maybe we were given a pool override key as a parameter? this would be an edit form
 	} elsif ($request->method eq "GET") {
 		# If we got a pool member, this is an edit
 		if (defined($poolMember)) {
@@ -1030,7 +1039,7 @@ sub poolmember_addedit
 
 		# Woops ... no query string?
 		} elsif (!defined($pool)) {
-			return (HTTP_TEMPORARY_REDIRECT,'limits');
+			return (HTTP_TEMPORARY_REDIRECT,'/limits');
 		}
 	}
 
@@ -1128,8 +1137,7 @@ sub poolmember_addedit
 					prettyUndef($pool->{'ID'}),
 			);
 
-			my $pidEscaped = uri_escape($pool->{'ID'});
-			return (HTTP_TEMPORARY_REDIRECT,"limits/poolmember-list?pid=$pidEscaped");
+			return (HTTP_TEMPORARY_REDIRECT,sprintf('/limits/poolmember-list?pid=%s',$pool->{'ID'}));
 		}
 	}
 
@@ -1166,7 +1174,7 @@ EOF
 	# Spit out errors if we have any
 	if (@errors > 0) {
 		foreach my $error (@errors) {
-			$content .= '<div class="alert alert-danger">'.$error.'</div>';
+			$content .= '<div class="alert alert-danger">'.encode_entities($error).'</div>';
 		}
 	}
 
@@ -1201,8 +1209,8 @@ EOF
 			$selected = "selected";
 		}
 		# And build the options
-		$expiresModifierStr .= '<option value="'.$expireModifier.'" '.$selected.'>'.$expiresModifiers->{$expireModifier}.
-				'</option>';
+		$expiresModifierStr .= '<option value="'.$expireModifier.'" '.$selected.'>'.
+				encode_entities($expiresModifiers->{$expireModifier}).'</option>';
 	}
 
 	# Blank expires if its 0
@@ -1285,6 +1293,7 @@ EOF
 }
 
 
+
 # Pool member remove action
 sub poolmember_remove
 {
@@ -1322,7 +1331,7 @@ EOF
 	}
 
 	# Make the pool ID safe for HTML
-	my $pidEscaped = encode_entities($poolMember->{'PoolID'});
+	my $urlPoolMemberAdd = sprintf('/limits/poolmember-add?pid=%s',encode_entities($poolMember->{'PoolID'}));
 
 	# Menu
 	$customMenu = [
@@ -1331,7 +1340,7 @@ EOF
 			'items' => [
 				{
 					'name' => 'Add Pool Member',
-					'link' => "poolmember-add?pid=$pidEscaped",
+					'link' => $urlPoolMemberAdd
 				},
 			],
 		},
@@ -1348,19 +1357,19 @@ EOF
 			# Post the removal
 			$kernel->post("configmanager" => "poolmember_remove" => $poolMember->{'ID'});
 		}
-		return (HTTP_TEMPORARY_REDIRECT,"limits/poolmember-list?pid=$pidEscaped");
+		return (HTTP_TEMPORARY_REDIRECT,sprintf('/limits/poolmember-list?pid=%s',$poolMember->{'PoolID'}));
 	}
 
 	# Make the friendly name HTML safe
-	my $friendlyName = (defined($poolMember->{'FriendlyName'}) && $poolMember->{'FriendlyName'} ne "") ?
+	my $poolMemberFriendlyName = (defined($poolMember->{'FriendlyName'}) && $poolMember->{'FriendlyName'} ne "") ?
 			$poolMember->{'FriendlyName'} : $poolMember->{'Username'};
-	my $friendlyNameEncoded = encode_entities($friendlyName);
-	my $usernameEncoded = encode_entities($poolMember->{'Username'});
+	my $poolMemberFriendlyNameEncoded = encode_entities($poolMemberFriendlyName);
+	my $poolMemberUsernameEncoded = encode_entities($poolMember->{'Username'});
 
 	# Build our confirmation dialog
 	$content .= <<EOF;
 		<div class="alert alert-danger">
-			Are you very sure you wish to remove pool member "$friendlyNameEncoded" [$usernameEncoded]?
+			Are you very sure you wish to remove pool member "$poolMemberFriendlyNameEncoded" [$poolMemberUsernameEncoded]?
 		</div>
 		<form role="form" method="post">
 			<input type="submit" class="btn btn-primary" name="confirm" value="Yes" />
@@ -1392,9 +1401,9 @@ sub limit_add
 		Username IPAddress
 		InterfaceGroupID
 		MatchPriorityID
-		ClassID
-		TrafficLimitTx TrafficLimitTxBurst
-		TrafficLimitRx TrafficLimitRxBurst
+		TrafficClassID
+		TxCIR TxLimit
+		RxCIR RxLimit
 		Expires inputExpires.modifier
 		Notes
 	);
@@ -1419,7 +1428,7 @@ sub limit_add
 		# If user pressed cancel, redirect
 		if (defined($form->{'cancel'})) {
 			# Redirects to default page
-			return (HTTP_TEMPORARY_REDIRECT,'limits');
+			return (HTTP_TEMPORARY_REDIRECT,'/limits');
 		}
 
 		# Transform form into form data
@@ -1450,18 +1459,18 @@ sub limit_add
 		if (!defined($matchPriorityID = isMatchPriorityIDValid($formData->{'MatchPriorityID'}))) {
 			push(@errors,"Match priority is not valid");
 		}
-		my $classID;
-		if (!defined($classID = isTrafficClassIDValid($formData->{'ClassID'}))) {
+		my $trafficClassID;
+		if (!defined($trafficClassID = isTrafficClassIDValid($formData->{'TrafficClassID'}))) {
 			push(@errors,"Traffic class is not valid");
 		}
-		my $trafficLimitTx = isNumber($formData->{'TrafficLimitTx'});
-		my $trafficLimitTxBurst = isNumber($formData->{'TrafficLimitTxBurst'});
-		if (!defined($trafficLimitTx) && !defined($trafficLimitTxBurst)) {
+		my $txCIR = isNumber($formData->{'TxCIR'});
+		my $txLimit = isNumber($formData->{'TxLimit'});
+		if (!defined($txCIR) && !defined($txLimit)) {
 			push(@errors,"A valid download CIR and/or limit is required");
 		}
-		my $trafficLimitRx = isNumber($formData->{'TrafficLimitRx'});
-		my $trafficLimitRxBurst = isNumber($formData->{'TrafficLimitRxBurst'});
-		if (!defined($trafficLimitRx) && !defined($trafficLimitRxBurst)) {
+		my $rxCIR = isNumber($formData->{'RxCIR'});
+		my $rxLimit = isNumber($formData->{'RxLimit'});
+		if (!defined($rxCIR) && !defined($rxLimit)) {
 			push(@errors,"A valid upload CIR and/or limit is required");
 		}
 
@@ -1507,11 +1516,11 @@ sub limit_add
 				'GroupID' => 1,
 				'InterfaceGroupID' => $interfaceGroupID,
 				'MatchPriorityID' => $matchPriorityID,
-				'ClassID' => $classID,
-				'TrafficLimitTx' => $trafficLimitTx,
-				'TrafficLimitTxBurst' => $trafficLimitTxBurst,
-				'TrafficLimitRx' => $trafficLimitRx,
-				'TrafficLimitRxBurst' => $trafficLimitRxBurst,
+				'TrafficClassID' => $trafficClassID,
+				'TxCIR' => $txCIR,
+				'TxLimit' => $txLimit,
+				'RxCIR' => $rxCIR,
+				'RxLimit' => $rxLimit,
 				'Expires' => $expires,
 				'Notes' => $notes,
 			};
@@ -1529,14 +1538,14 @@ sub limit_add
 					prettyUndef(undef),
 					prettyUndef($interfaceGroupID),
 					prettyUndef($matchPriorityID),
-					prettyUndef($classID),
-					prettyUndef($trafficLimitTx),
-					prettyUndef($trafficLimitRx),
-					prettyUndef($trafficLimitTxBurst),
-					prettyUndef($trafficLimitRxBurst)
+					prettyUndef($trafficClassID),
+					prettyUndef($txCIR),
+					prettyUndef($rxCIR),
+					prettyUndef($txLimit),
+					prettyUndef($rxLimit)
 			);
 
-			return (HTTP_TEMPORARY_REDIRECT,'limits');
+			return (HTTP_TEMPORARY_REDIRECT,'/limits');
 		}
 	}
 
@@ -1557,22 +1566,24 @@ EOF
 	# Spit out errors if we have any
 	if (@errors > 0) {
 		foreach my $error (@errors) {
-			$content .= '<div class="alert alert-danger">'.$error.'</div>';
+			$content .= '<div class="alert alert-danger">'.encode_entities($error).'</div>';
 		}
 	}
 
 	# Generate interface group list
-	my $interfaceGroups = getInterfaceGroups();
+	my @interfaceGroups = sort(getInterfaceGroups());
 	my $interfaceGroupStr = "";
-	foreach my $interfaceGroupID (sort keys %{$interfaceGroups}) {
+	foreach my $interfaceGroupID (@interfaceGroups) {
+		my $interfaceGroup = getInterfaceGroup($interfaceGroupID);
+
 		# Process selections nicely
 		my $selected = "";
 		if ($formData->{'InterfaceGroupID'} ne "" && $formData->{'InterfaceGroupID'} eq $interfaceGroupID) {
 			$selected = "selected";
 		}
 		# And build the options
-		$interfaceGroupStr .= '<option value="'.$interfaceGroupID.'" '.$selected.'>'.
-				$interfaceGroups->{$interfaceGroupID}->{'name'}.'</option>';
+		$interfaceGroupStr .= '<option value="'.encode_entities($interfaceGroupID).'" '.$selected.'>'.
+				encode_entities($interfaceGroup->{'Name'}).'</option>';
 	}
 
 	# Generate match priority list
@@ -1589,21 +1600,24 @@ EOF
 			$selected = "selected";
 		}
 		# And build the options
-		$matchPriorityStr .= '<option value="'.$matchPriorityID.'" '.$selected.'>'.$matchPriorities->{$matchPriorityID}.
-				'</option>';
+		$matchPriorityStr .= '<option value="'.encode_entities($matchPriorityID).'" '.$selected.'>'.
+				encode_entities($matchPriorities->{$matchPriorityID}).'</option>';
 	}
 
 	# Generate traffic class list
-	my $trafficClasses = getTrafficClasses();
+	my @trafficClasses = sort(getTrafficClasses());
 	my $trafficClassStr = "";
-	foreach my $classID (sort keys %{$trafficClasses}) {
+	foreach my $trafficClassID (@trafficClasses) {
+		my $trafficClass = getTrafficClass($trafficClassID);
+
 		# Process selections nicely
 		my $selected = "";
-		if ($formData->{'ClassID'} ne "" && $formData->{'ClassID'} eq $classID) {
+		if ($formData->{'TrafficClassID'} ne "" && $formData->{'TrafficClassID'} eq $trafficClassID) {
 			$selected = "selected";
 		}
 		# And build the options
-		$trafficClassStr .= '<option value="'.$classID.'" '.$selected.'>'.$trafficClasses->{$classID}.'</option>';
+		$trafficClassStr .= '<option value="'.encode_entities($trafficClassID).'" '.$selected.'>'.
+				encode_entities($trafficClass->{'Name'}).'</option>';
 	}
 
 	# Generate expires modifiers list
@@ -1619,8 +1633,8 @@ EOF
 			$selected = "selected";
 		}
 		# And build the options
-		$expiresModifierStr .= '<option value="'.$expireModifier.'" '.$selected.'>'.$expiresModifiers->{$expireModifier}.
-				'</option>';
+		$expiresModifierStr .= '<option value="'.$expireModifier.'" '.$selected.'>'.
+				encode_entities($expiresModifiers->{$expireModifier}).'</option>';
 	}
 
 	# Blank expires if its 0
@@ -1680,10 +1694,10 @@ EOF
 				</div>
 			</div>
 			<div class="form-group">
-				<label for="ClassID" class="col-md-2 control-label">Traffic Class</label>
+				<label for="TrafficClassID" class="col-md-2 control-label">Traffic Class</label>
 				<div class="row">
 					<div class="col-md-2">
-						<select name="ClassID" class="form-control">
+						<select name="TrafficClassID" class="form-control">
 							$trafficClassStr
 						</select>
 					</div>
@@ -1704,48 +1718,48 @@ EOF
 				</div>
 			</div>
 			<div class="form-group">
-				<label for="TrafficLimitTx" class="col-md-2 control-label">Download CIR</label>
+				<label for="TxCIR" class="col-md-2 control-label">Download CIR</label>
 				<div class="row">
 					<div class="col-md-3">
 						<div class="input-group">
-							<input name="TrafficLimitTx" type="text" placeholder="Download CIR" class="form-control"
-									value="$formData->{'TrafficLimitTx'}" />
+							<input name="TxCIR" type="text" placeholder="Download CIR" class="form-control"
+									value="$formData->{'TxCIR'}" />
 							<span class="input-group-addon">Kbps *<span>
 						</div>
 					</div>
 				</div>
 			</div>
 			<div class="form-group">
-				<label for="TrafficLimitTxBurst" class="col-md-2 control-label">Download Limit</label>
+				<label for="TxLimit" class="col-md-2 control-label">Download Limit</label>
 				<div class="row">
 					<div class="col-md-3">
 						<div class="input-group">
-							<input name="TrafficLimitTxBurst" type="text" placeholder="Download Limit" class="form-control"
-									value="$formData->{'TrafficLimitTxBurst'}" />
+							<input name="TxLimit" type="text" placeholder="Download Limit" class="form-control"
+									value="$formData->{'TxLimit'}" />
 							<span class="input-group-addon">Kbps<span>
 						</div>
 					</div>
 				</div>
 			</div>
 			<div class="form-group">
-				<label for="TrafficLimitRx" class="col-md-2 control-label">Upload CIR</label>
+				<label for="RxCIR" class="col-md-2 control-label">Upload CIR</label>
 				<div class="row">
 					<div class="col-md-3">
 						<div class="input-group">
-							<input name="TrafficLimitRx" type="text" placeholder="Upload CIR" class="form-control"
-									value="$formData->{'TrafficLimitRx'}" />
+							<input name="RxCIR" type="text" placeholder="Upload CIR" class="form-control"
+									value="$formData->{'RxCIR'}" />
 							<span class="input-group-addon">Kbps *<span>
 						</div>
 					</div>
 				</div>
 			</div>
 			<div class="form-group">
-				<label for="TrafficLimitRxBurst" class="col-md-2 control-label">Upload Limit</label>
+				<label for="RxLimit" class="col-md-2 control-label">Upload Limit</label>
 				<div class="row">
 					<div class="col-md-3">
 						<div class="input-group">
-							<input name="TrafficLimitRxBurst" type="text" placeholder="Upload Limit" class="form-control"
-									value="$formData->{'TrafficLimitRxBurst'}" />
+							<input name="RxLimit" type="text" placeholder="Upload Limit" class="form-control"
+									value="$formData->{'RxLimit'}" />
 							<span class="input-group-addon">Kbps<span>
 						</div>
 					</div>
@@ -1771,20 +1785,21 @@ EOF
 }
 
 
-# Override list
-sub override_list
+
+# Pool override list
+sub pool_override_list
 {
 	my ($kernel,$globals,$client_session_id,$request) = @_;
 
 
-	my @overrides = getOverrides();
+	my @poolOverrides = getPoolOverrides();
 
 	# Build content
 	my $content = "";
 
 	# Header
 	$content .=<<EOF;
-		<legend>Override List</legend>
+		<legend>Pool Override List</legend>
 		<table class="table">
 			<thead>
 				<tr>
@@ -1804,50 +1819,60 @@ sub override_list
 			<tbody>
 EOF
 	# Body
-	foreach my $oid (@overrides) {
-		my $override;
-		# If we can't get the override, just skip it
-		if (!defined($override = getOverride($oid))) {
+	foreach my $poid (@poolOverrides) {
+		my $poolOverride;
+		# If we can't get the pool override, just skip it
+		if (!defined($poolOverride = getPoolOverride($poid))) {
 			next;
 		}
 
-		my $oidEscaped = uri_escape($override->{'ID'});
+		my $poolOverrideFriendlyNameEncoded = encode_entities(prettyUndef($poolOverride->{'FriendlyName'}));
+		my $poolOverridePoolNameEncoded = encode_entities(prettyUndef($poolOverride->{'PoolName'}));
+		my $poolOverrideUsernameEncoded = encode_entities(prettyUndef($poolOverride->{'Username'}));
+		my $poolOverrideIPAddressEncoded = encode_entities(prettyUndef($poolOverride->{'IPAddress'}));
+		my $poolOverrideExpiresStr = encode_entities(
+				($poolOverride->{'Expires'} > 0) ?
+						DateTime->from_epoch( epoch => $poolOverride->{'Expires'} )->iso8601() : '-never-'
+		);
 
-		my $friendlyNameEncoded = prettyUndef(encode_entities($override->{'FriendlyName'}));
-		my $usernameEncoded = prettyUndef(encode_entities($override->{'Username'}));
-		my $poolNameEncoded = prettyUndef(encode_entities($override->{'PoolName'}));
-		my $ipAddress = prettyUndef($override->{'IPAddress'});
-		my $expiresStr = ($override->{'Expires'} > 0) ?
-				DateTime->from_epoch( epoch => $override->{'Expires'} )->iso8601() : '-never-';
+		my $poolOverrideTrafficClassStr = "-undef-";
+		if (defined($poolOverride->{'TrafficClassID'})) {
+			my $trafficClass = getTrafficClass($poolOverride->{'TrafficClassID'});
+			$poolOverrideTrafficClassStr = encode_entities($trafficClass->{'Name'});
+		}
 
-		my $classStr = prettyUndef(getTrafficClassName($override->{'ClassID'}));
-		my $cirStr = sprintf('%s/%s',prettyUndef($override->{'TrafficLimitTx'}),prettyUndef($override->{'TrafficLimitRx'}));
-		my $limitStr = sprintf('%s/%s',prettyUndef($override->{'TrafficLimitTxBurst'}),
-				prettyUndef($override->{'TrafficLimitRxBurst'}));
+		my $poolOverrideCIRStr = encode_entities(
+			sprintf('%s/%s',prettyUndef($poolOverride->{'TxCIR'}),prettyUndef($poolOverride->{'RxCIR'}))
+		);
+		my $poolOverrideLimitStr = encode_entities(
+			sprintf('%s/%s',prettyUndef($poolOverride->{'TxLimit'}),prettyUndef($poolOverride->{'RxLimit'}))
+		);
 
+		my $urlPoolOverrideEdit = sprintf('/limits/pool-override-edit?oid=',encode_entities($poolOverride->{'ID'}));
+		my $urlPoolOverrideRemove = sprintf('/limits/pool-override-remove?oid=',encode_entities($poolOverride->{'ID'}));
 
 		$content .= <<EOF;
 				<tr>
 					<td></td>
-					<td>$friendlyNameEncoded</td>
-					<td>$poolNameEncoded</td>
-					<td>$usernameEncoded</td>
-					<td>$ipAddress</td>
-					<td>$expiresStr</td>
+					<td>$poolOverrideFriendlyNameEncoded</td>
+					<td>$poolOverridePoolNameEncoded</td>
+					<td>$poolOverrideUsernameEncoded</td>
+					<td>$poolOverrideIPAddressEncoded</td>
+					<td>$poolOverrideExpiresStr</td>
 					<td><span class="glyphicon glyphicon-arrow-right" /></td>
-					<td>$classStr</td>
-					<td>$cirStr</td>
-					<td>$limitStr</td>
+					<td>$poolOverrideTrafficClassStr</td>
+					<td>$poolOverrideCIRStr</td>
+					<td>$poolOverrideLimitStr</td>
 					<td>
-						<a href="/limits/override-edit?oid=$oidEscaped"><span class="glyphicon glyphicon-wrench" /></a>
-						<a href="/limits/override-remove?oid=$oidEscaped"><span class="glyphicon glyphicon-remove" /></a>
+						<a href="$urlPoolOverrideEdit"><span class="glyphicon glyphicon-wrench" /></a>
+						<a href="$urlPoolOverrideRemove"><span class="glyphicon glyphicon-remove" /></a>
 					</td>
 				</tr>
 EOF
 	}
 
 	# No results
-	if (!@overrides) {
+	if (!@poolOverrides) {
 		$content .=<<EOF;
 				<tr class="info">
 					<td colspan="11"><p class="text-center">No Results</p></td>
@@ -1866,8 +1891,9 @@ EOF
 }
 
 
+
 # Add/edit action
-sub override_addedit
+sub pool_override_addedit
 {
 	my ($kernel,$globals,$client_session_id,$request) = @_;
 
@@ -1882,16 +1908,16 @@ sub override_addedit
 	my @formElements = qw(
 		FriendlyName
 		PoolName Username IPAddress
-		ClassID
-		TrafficLimitTx TrafficLimitTxBurst
-		TrafficLimitRx TrafficLimitRxBurst
+		TrafficClassID
+		TxCIR TxLimit
+		RxCIR RxLimit
 		Expires inputExpires.modifier
 		Notes
 	);
 	my @formElementCheckboxes = qw(
-		ClassID
-		TrafficLimitTx TrafficLimitTxBurst
-		TrafficLimitRx TrafficLimitRxBurst
+		TrafficClassID
+		TxCIR TxLimit
+		RxCIR RxLimit
 	);
 
 	# Expires modifier options
@@ -1907,17 +1933,17 @@ sub override_addedit
 	my $formNoEdit = "";
 	# Form data
 	my $formData;
-	# If we have a override, this is where its kept
-	my $override;
+	# If we have a pool override, this is where its kept
+	my $poolOverride;
 
 	# Grab query params
 	my $queryParams = parseURIQuery($request);
 
-	# If we have a override ID, pull in the override
-	if (defined($queryParams->{'oid'})) {
-		# Check if we can grab the override
-		if (!defined($override = getOverride($queryParams->{'oid'}->{'value'}))) {
-			return (HTTP_TEMPORARY_REDIRECT,"limits/override-list");
+	# If we have a pool override ID, pull in the pool override
+	if (defined($queryParams->{'poid'})) {
+		# Check if we can grab the pool override
+		if (!defined($poolOverride = getPoolOverride($queryParams->{'poid'}->{'value'}))) {
+			return (HTTP_TEMPORARY_REDIRECT,"limits/pool-override-list");
 		}
 	}
 
@@ -1929,7 +1955,7 @@ sub override_addedit
 		# If user pressed cancel, redirect
 		if (defined($form->{'cancel'})) {
 			# Redirects to default page
-			return (HTTP_TEMPORARY_REDIRECT,'limits/override-list');
+			return (HTTP_TEMPORARY_REDIRECT,'/limits/pool-override-list');
 		}
 
 		# Transform form into form data
@@ -1939,24 +1965,24 @@ sub override_addedit
 
 		# Set form type if its edit
 		if (defined($form->{'submit'}) && $form->{'submit'}->{'value'} eq "Edit") {
-			# Check override exists
-			if (!defined($override)) {
-				return (HTTP_TEMPORARY_REDIRECT,'limits/override-list');
+			# Check pool override exists
+			if (!defined($poolOverride)) {
+				return (HTTP_TEMPORARY_REDIRECT,'/limits/pool-override-list');
 			}
 
-			$formData->{'ID'} = $override->{'ID'};
+			$formData->{'ID'} = $poolOverride->{'ID'};
 
 			$formType = "Edit";
 			$formNoEdit = "readonly";
 		}
 
-	# A GET would indicate that a override ID was passed normally
+	# A GET would indicate that a pool override ID was passed normally
 	} elsif ($request->method eq "GET") {
-		# We need a override
-		if (defined($override)) {
-			# Setup form data from override
+		# We need a pool override
+		if (defined($poolOverride)) {
+			# Setup form data from pool override
 			foreach my $key (@formElements) {
-				$formData->{$key} = $override->{$key};
+				$formData->{$key} = $poolOverride->{$key};
 			}
 			# Setup our checkboxes
 			foreach my $checkbox (@formElementCheckboxes) {
@@ -1970,7 +1996,7 @@ sub override_addedit
 
 		# Woops ... no query string?
 		} elsif (keys %{$queryParams} > 0) {
-			return (HTTP_TEMPORARY_REDIRECT,'limits/override-list');
+			return (HTTP_TEMPORARY_REDIRECT,'/limits/pool-override-list');
 		}
 	}
 
@@ -1991,45 +2017,45 @@ sub override_addedit
 		}
 
 		# If the traffic class is ticked, process it
-		my $classID;
-		if (defined($formData->{'inputClassID.enabled'})) {
-			if (!defined($classID = isTrafficClassIDValid($formData->{'ClassID'}))) {
+		my $trafficClassID;
+		if (defined($formData->{'inputTrafficClassID.enabled'})) {
+			if (!defined($trafficClassID = isTrafficClassIDValid($formData->{'TrafficClassID'}))) {
 				push(@errors,"Traffic class is not valid");
 			}
 		}
 		# Check traffic limits
-		my $trafficLimitTx;
-		if (defined($formData->{'inputTrafficLimitTx.enabled'})) {
-			if (!defined($trafficLimitTx = isNumber($formData->{'TrafficLimitTx'}))) {
+		my $txCIR;
+		if (defined($formData->{'inputTxCIR.enabled'})) {
+			if (!defined($txCIR = isNumber($formData->{'TxCIR'}))) {
 				push(@errors,"Download CIR is not valid");
 			}
 		}
-		my $trafficLimitTxBurst;
-		if (defined($formData->{'inputTrafficLimitTxBurst.enabled'})) {
-			if (!defined($trafficLimitTxBurst = isNumber($formData->{'TrafficLimitTxBurst'}))) {
+		my $txLimit;
+		if (defined($formData->{'inputTxLimit.enabled'})) {
+			if (!defined($txLimit = isNumber($formData->{'TxLimit'}))) {
 				push(@errors,"Download limit is not valid");
 			}
 		}
-		# Check TrafficLimitRx
-		my $trafficLimitRx;
-		if (defined($formData->{'inputTrafficLimitRx.enabled'})) {
-			if (!defined($trafficLimitRx = isNumber($formData->{'TrafficLimitRx'}))) {
+		# Check RxCIR
+		my $rxCIR;
+		if (defined($formData->{'inputRxCIR.enabled'})) {
+			if (!defined($rxCIR = isNumber($formData->{'RxCIR'}))) {
 				push(@errors,"Upload CIR is not valid");
 			}
 		}
-		my $trafficLimitRxBurst;
-		if (defined($formData->{'inputTrafficLimitRxBurst.enabled'})) {
-			if (!defined($trafficLimitRxBurst = isNumber($formData->{'TrafficLimitRxBurst'}))) {
+		my $rxLimit;
+		if (defined($formData->{'inputRxLimit.enabled'})) {
+			if (!defined($rxLimit = isNumber($formData->{'RxLimit'}))) {
 				push(@errors,"Upload limit is not valid");
 			}
 		}
-		# Check that we actually have something to override
+		# Check that we actually have something to pool override
 		if (
-				!defined($classID) &&
-				!defined($trafficLimitTx) && !defined($trafficLimitTxBurst) &&
-				!defined($trafficLimitRx) && !defined($trafficLimitRxBurst)
+				!defined($trafficClassID) &&
+				!defined($txCIR) && !defined($txLimit) &&
+				!defined($rxCIR) && !defined($rxLimit)
 		) {
-			push(@errors,"Something must be specified to override");
+			push(@errors,"Something must be specified to pool override");
 		}
 
 		my $expires = 0;
@@ -2065,20 +2091,20 @@ sub override_addedit
 		# Grab notes
 		my $notes = $formData->{'Notes'};
 
-		# If there are no errors we need to push this override
+		# If there are no errors we need to push this pool override
 		if (!@errors && $request->method eq "POST") {
-			# Build override
-			my $overrideData = {
+			# Build pool override
+			my $poolOverrideData = {
 				'FriendlyName' => $friendlyName,
 				'PoolName' => $poolName,
 				'Username' => $username,
 				'IPAddress' => $ipAddress,
 #				'GroupID' => 1,
-				'ClassID' => $classID,
-				'TrafficLimitTx' => $trafficLimitTx,
-				'TrafficLimitTxBurst' => $trafficLimitTxBurst,
-				'TrafficLimitRx' => $trafficLimitRx,
-				'TrafficLimitRxBurst' => $trafficLimitRxBurst,
+				'TrafficClassID' => $trafficClassID,
+				'TxCIR' => $txCIR,
+				'TxLimit' => $txLimit,
+				'RxCIR' => $rxCIR,
+				'RxLimit' => $rxLimit,
 				'Expires' => $expires,
 				'Notes' => $notes,
 			};
@@ -2086,28 +2112,28 @@ sub override_addedit
 			# Check if this is an add or edit
 			my $cEvent;
 			if ($formType eq "Add") {
-				$cEvent = "override_add";
+				$cEvent = "pool_override_add";
 			} else {
-				$overrideData->{'ID'} = $formData->{'ID'};
-				$cEvent = "override_change";
+				$poolOverrideData->{'ID'} = $formData->{'ID'};
+				$cEvent = "pool_override_change";
 			}
 
-			$kernel->post("configmanager" => $cEvent => $overrideData);
+			$kernel->post("configmanager" => $cEvent => $poolOverrideData);
 
-			$logger->log(LOG_INFO,"[WEBSERVER/OVERRIDE/ADD] Pool: %s, User: %s, IP: %s, Group: %s, Class: %s, Limits: %s/%s, ".
+			$logger->log(LOG_INFO,"[WEBSERVER/POOL-OVERRIDE/ADD] Pool: %s, User: %s, IP: %s, Group: %s, Class: %s, Limits: %s/%s, ".
 					"Burst: %s/%s",
 					prettyUndef($poolName),
 					prettyUndef($username),
 					prettyUndef($ipAddress),
 					"",
-					prettyUndef($classID),
-					prettyUndef($trafficLimitTx),
-					prettyUndef($trafficLimitRx),
-					prettyUndef($trafficLimitTxBurst),
-					prettyUndef($trafficLimitRxBurst)
+					prettyUndef($trafficClassID),
+					prettyUndef($txCIR),
+					prettyUndef($rxCIR),
+					prettyUndef($txLimit),
+					prettyUndef($rxLimit)
 			);
 
-			return (HTTP_TEMPORARY_REDIRECT,'limits/override-list');
+			return (HTTP_TEMPORARY_REDIRECT,'/limits/pool-override-list');
 		}
 	}
 
@@ -2125,28 +2151,31 @@ sub override_addedit
 
 	# Form header
 	$content .=<<EOF;
-		<legend>$formType Override</legend>
+		<legend>$formType Pool Override</legend>
 		<form role="form" method="post">
 EOF
 
 	# Spit out errors if we have any
 	if (@errors > 0) {
 		foreach my $error (@errors) {
-			$content .= '<div class="alert alert-danger">'.$error.'</div>';
+			$content .= '<div class="alert alert-danger">'.encode_entities($error).'</div>';
 		}
 	}
 
 	# Generate traffic class list
-	my $trafficClasses = getTrafficClasses();
+	my @trafficClasses = sort(getTrafficClasses());
 	my $trafficClassStr = "";
-	foreach my $classID (sort keys %{$trafficClasses}) {
+	foreach my $trafficClassID (@trafficClasses) {
+		my $trafficClass = getTrafficClass($trafficClassID);
+
 		# Process selections nicely
 		my $selected = "";
-		if ($formData->{'ClassID'} ne "" && $formData->{'ClassID'} eq $classID) {
+		if ($formData->{'TrafficClassID'} ne "" && $formData->{'TrafficClassID'} eq $trafficClassID) {
 			$selected = "selected";
 		}
 		# And build the options
-		$trafficClassStr .= '<option value="'.$classID.'" '.$selected.'>'.$trafficClasses->{$classID}.'</option>';
+		$trafficClassStr .= '<option value="'.$trafficClassID.'" '.$selected.'>'.encode_entities($trafficClass->{'Name'}).
+				'</option>';
 	}
 
 	# Generate expires modifiers list
@@ -2162,8 +2191,8 @@ EOF
 			$selected = "selected";
 		}
 		# And build the options
-		$expiresModifierStr .= '<option value="'.$expireModifier.'" '.$selected.'>'.$expiresModifiers->{$expireModifier}.
-				'</option>';
+		$expiresModifierStr .= '<option value="'.$expireModifier.'" '.$selected.'>'.
+				encode_entities($expiresModifiers->{$expireModifier}).'</option>';
 	}
 
 	# Blank expires if its 0
@@ -2216,11 +2245,12 @@ EOF
 			</div>
 
 			<div class="form-group">
-				<label for="ClassID" class="col-md-2 control-label">Traffic Class</label>
+				<label for="TrafficClassID" class="col-md-2 control-label">Traffic Class</label>
 				<div class="row">
 					<div class="col-md-3">
-						<input name="inputClassID.enabled" type="checkbox" $formData->{'inputClassID.enabled'}/> Override
-						<select name="ClassID" class="form-control">
+						<input name="inputTrafficClassID.enabled" type="checkbox" $formData->{'inputTrafficClassID.enabled'}/>
+						Override
+						<select name="TrafficClassID" class="form-control">
 							$trafficClassStr
 						</select>
 					</div>
@@ -2228,14 +2258,14 @@ EOF
 			</div>
 
 			<div class="form-group">
-				<label for="TrafficLimitTx" class="col-md-2 control-label">Download CIR</label>
+				<label for="TxCIR" class="col-md-2 control-label">Download CIR</label>
 				<div class="row">
 					<div class="col-md-3">
-						<input name="inputTrafficLimitTx.enabled" type="checkbox" $formData->{'inputTrafficLimitTx.enabled'} />
+						<input name="inputTxCIR.enabled" type="checkbox" $formData->{'inputTxCIR.enabled'} />
 						Override
 						<div class="input-group">
-							<input name="TrafficLimitTx" type="text" placeholder="Download CIR" class="form-control"
-									value="$formData->{'TrafficLimitTx'}" />
+							<input name="TxCIR" type="text" placeholder="Download CIR" class="form-control"
+									value="$formData->{'TxCIR'}" />
 							<span class="input-group-addon">Kbps<span>
 						</div>
 					</div>
@@ -2243,14 +2273,14 @@ EOF
 			</div>
 
 			<div class="form-group">
-				<label for="TrafficLimitTxBurst" class="col-md-2 control-label">Download Limit</label>
+				<label for="TxLimit" class="col-md-2 control-label">Download Limit</label>
 				<div class="row">
 					<div class="col-md-3">
-						<input name="inputTrafficLimitTxBurst.enabled" type="checkbox"
-								$formData->{'inputTrafficLimitTxBurst.enabled'}/> Override
+						<input name="inputTxLimit.enabled" type="checkbox"
+								$formData->{'inputTxLimit.enabled'}/> Override
 						<div class="input-group">
-							<input name="TrafficLimitTxBurst" type="text" placeholder="Download Limit" class="form-control"
-									value="$formData->{'TrafficLimitTxBurst'}" />
+							<input name="TxLimit" type="text" placeholder="Download Limit" class="form-control"
+									value="$formData->{'TxLimit'}" />
 							<span class="input-group-addon">Kbps<span>
 						</div>
 					</div>
@@ -2258,28 +2288,28 @@ EOF
 			</div>
 
 			<div class="form-group">
-				<label for="inputTrafficLimitRx" class="col-md-2 control-label">Upload CIR</label>
+				<label for="inputRxCIR" class="col-md-2 control-label">Upload CIR</label>
 				<div class="row">
 					<div class="col-md-3">
-						<input name="inputTrafficLimitRx.enabled" type="checkbox"
-								$formData->{'inputTrafficLimitRx.enabled'}/> Override
+						<input name="inputRxCIR.enabled" type="checkbox"
+								$formData->{'inputRxCIR.enabled'}/> Override
 						<div class="input-group">
-							<input name="TrafficLimitRx" type="text" placeholder="Upload CIR" class="form-control"
-									value="$formData->{'TrafficLimitRx'}" />
+							<input name="RxCIR" type="text" placeholder="Upload CIR" class="form-control"
+									value="$formData->{'RxCIR'}" />
 							<span class="input-group-addon">Kbps<span>
 						</div>
 					</div>
 				</div>
 			</div>
 			<div class="form-group">
-				<label for="TrafficLimitRxBurst" class="col-md-2 control-label">Upload Limit</label>
+				<label for="RxLimit" class="col-md-2 control-label">Upload Limit</label>
 				<div class="row">
 					<div class="col-md-3">
-						<input name="inputTrafficLimitRxBurst.enabled" type="checkbox"
-								$formData->{'inputTrafficLimitRxBurst.enabled'}/> Override
+						<input name="inputRxLimit.enabled" type="checkbox"
+								$formData->{'inputRxLimit.enabled'}/> Override
 						<div class="input-group">
-							<input name="TrafficLimitRxBurst" type="text" placeholder="Upload Limit" class="form-control"
-									value="$formData->{'TrafficLimitRxBurst'}" />
+							<input name="RxLimit" type="text" placeholder="Upload Limit" class="form-control"
+									value="$formData->{'RxLimit'}" />
 							<span class="input-group-addon">Kbps<span>
 						</div>
 					</div>
@@ -2322,7 +2352,7 @@ EOF
 
 
 # Remove action
-sub override_remove
+sub pool_override_remove
 {
 	my ($kernel,$globals,$client_session_id,$request) = @_;
 
@@ -2333,26 +2363,26 @@ sub override_remove
 	# Pull in GET
 	my $queryParams = parseURIQuery($request);
 	# We need a key first of all...
-	if (!defined($queryParams->{'oid'})) {
+	if (!defined($queryParams->{'poid'})) {
 		$content = <<EOF;
 			<div class="alert alert-danger text-center">
-				No override oid in query string!
+				No pool override oid in query string!
 			</div>
 EOF
 		goto END;
 	}
 
-	# Grab the override
-	my $override = getOverride($queryParams->{'oid'}->{'value'});
+	# Grab the pool override
+	my $poolOverride = getPoolOverride($queryParams->{'poid'}->{'value'});
 
 	# Make the oid safe for HTML
-	my $encodedID = encode_entities($queryParams->{'oid'}->{'value'});
+	my $encodedPoolOverrideID = encode_entities($queryParams->{'poid'}->{'value'});
 
-	# Make sure the oid was valid... we would have an override now if it was
-	if (!defined($override)) {
+	# Make sure the oid was valid... we would have an pool override now if it was
+	if (!defined($poolOverride)) {
 		$content = <<EOF;
 			<div class="alert alert-danger text-center">
-				Invalid override oid "$encodedID"!
+				Invalid pool override oid "$encodedPoolOverrideID"!
 			</div>
 EOF
 		goto END;
@@ -2365,19 +2395,19 @@ EOF
 		# Check if its a success
 		if ($form->{'confirm'}->{'value'} eq "Yes") {
 			# Post the removal
-			$kernel->post("configmanager" => "override_remove" => $override->{'ID'});
+			$kernel->post("configmanager" => "pool-override_remove" => $poolOverride->{'ID'});
 		}
-		return (HTTP_TEMPORARY_REDIRECT,'limits/override-list');
+		return (HTTP_TEMPORARY_REDIRECT,'/limits/pool-override-list');
 	}
 
 
 	# Make the friendly name HTML safe
-	my $encodedFriendlyName = encode_entities($override->{'FriendlyName'});
+	my $encodedPoolOverrideFriendlyName = encode_entities($poolOverride->{'FriendlyName'});
 
 	# Build our confirmation dialog
 	$content .= <<EOF;
 		<div class="alert alert-danger">
-			Are you very sure you wish to remove override "$encodedFriendlyName"?
+			Are you very sure you wish to remove pool override "$encodedPoolOverrideFriendlyName"?
 		</div>
 		<form role="form" method="post">
 			<input type="submit" class="btn btn-primary" name="confirm" value="Yes" />
