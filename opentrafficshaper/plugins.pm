@@ -82,8 +82,10 @@ sub plugin_register
 			# Check if the error is critical or not
 			if ($systemPlugin) {
 				$logger->log(LOG_ERR,"[PLUGINS] Error loading plugin '%s', things WILL BREAK! (%s)",$pluginName,$@);
+				exit;
 			} else {
 				$logger->log(LOG_WARN,"[PLUGINS] Error loading plugin '%s' (%s)",$pluginName,$@);
+				exit;
 			}
 		} else {
 			$logger->log(LOG_DEBUG,"[PLUGINS] Plugin '%s' loaded.",$pluginName);
