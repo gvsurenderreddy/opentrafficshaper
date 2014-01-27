@@ -87,7 +87,6 @@ sub get_one
 	while ($self->{'buffer'} =~ s/^(class.+)\n\s+(.+\n\s+.+)\n.+\n.+\n\n//m) {
 		my $curstat;
 
-
 		my ($classStr,$statsStr) = ($1,$2);
 		# Strip off the line into an array
 		my @classArray = split(/\s+/,$classStr);
@@ -134,6 +133,7 @@ sub get_one
 
 		push(@results,$curstat);	
 	}
+
 
 	return [ @results ];
 }

@@ -89,6 +89,8 @@ our $pluginInfo = {
 # Copy of system globals
 my $globals;
 my $logger;
+
+
 # Our own data storage
 my $config = {
 	'expiry_period' => DEFAULT_EXPIRY_PERIOD,
@@ -211,11 +213,13 @@ sub plugin_init
 }
 
 
+
 # Start the plugin
 sub plugin_start
 {
 	$logger->log(LOG_INFO,"[RADIUS] Started");
 }
+
 
 
 # Initialize server
@@ -245,6 +249,7 @@ sub _session_start
 }
 
 
+
 # Shut down server
 sub _session_stop
 {
@@ -264,6 +269,7 @@ sub _session_stop
 
 	$logger = undef;
 }
+
 
 
 # Read event for server
@@ -569,6 +575,7 @@ sub _session_socket_read
 }
 
 
+
 # Convert status into something easy to useful
 sub getStatus
 {
@@ -584,6 +591,7 @@ sub getStatus
 		return "unknown";
 	}
 }
+
 
 
 # Simple function to reduce everything to kbit
@@ -610,6 +618,7 @@ sub getKbit
 
 	return $newCounter;
 }
+
 
 
 1;

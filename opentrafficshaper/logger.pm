@@ -49,6 +49,7 @@ use IO::Handle;
 use POSIX qw( strftime );
 
 
+
 # Instantiate
 sub new {
 	my ($class) = @_;
@@ -59,6 +60,8 @@ sub new {
 	bless $self, $class;
 	return $self;
 }
+
+
 
 # Logging function
 sub log
@@ -97,6 +100,8 @@ sub log
 	}
 }
 
+
+
 # Set log file & open it
 sub open
 {
@@ -113,6 +118,8 @@ sub open
 	$self->{'handle'} = $fh;
 }
 
+
+
 # Set log level
 sub setLevel
 {
@@ -122,6 +129,8 @@ sub setLevel
 	# And set it
 	$self->{'level'} = $level;
 }
+
+
 
 1;
 # vim: ts=4

@@ -254,6 +254,7 @@ EOF
 }
 
 
+
 # Pool add/edit action
 sub pool_addedit
 {
@@ -661,6 +662,7 @@ EOF
 }
 
 
+
 # Pool remove action
 sub pool_remove
 {
@@ -738,6 +740,7 @@ EOF
 END:
 	return (HTTP_OK,$content,{ 'menu' => $menu });
 }
+
 
 
 # Pool member list page/action
@@ -906,6 +909,7 @@ EOF
 END:
 	return (HTTP_OK,$content,{ 'menu' => $customMenu });
 }
+
 
 
 # Pool member add/edit action
@@ -1362,6 +1366,7 @@ EOF
 END:
 	return (HTTP_OK,$content,{ 'menu' => $customMenu });
 }
+
 
 
 # Add action
@@ -2308,6 +2313,7 @@ EOF
 
 	return (HTTP_OK,$content,{ 'menu' => $menu });
 }
+
 
 
 # Remove action

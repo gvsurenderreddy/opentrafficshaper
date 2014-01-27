@@ -106,11 +106,13 @@ sub plugin_init
 }
 
 
+
 # Start the plugin
 sub plugin_start
 {
 	$logger->log(LOG_INFO,"[TCSTATS] Started");
 }
+
 
 
 # Initialize this plugins main POE session
@@ -129,6 +131,7 @@ sub _session_start
 }
 
 
+
 # Shut down session
 sub _session_stop
 {
@@ -143,6 +146,7 @@ sub _session_stop
 
 	$logger = undef;
 }
+
 
 
 # Time ticker for processing changes
@@ -214,6 +218,7 @@ sub _session_tick
 };
 
 
+
 # Child writes to STDOUT
 sub _task_child_stdout
 {
@@ -281,6 +286,7 @@ sub _task_child_stdout
 }
 
 
+
 # Child writes to STDERR
 sub _task_child_stderr
 {
@@ -291,6 +297,7 @@ sub _task_child_stderr
 
 	$logger->log(LOG_WARN,"[TCSTATS] TASK/%s: STDERR => %s",$task_id,$stdout);
 }
+
 
 
 # Child closed its handles, it won't communicate with us, so remove it
@@ -323,6 +330,7 @@ sub _task_child_close
 }
 
 
+
 # Reap the dead child
 sub _task_handle_SIGCHLD
 {
@@ -342,6 +350,7 @@ sub _task_handle_SIGCHLD
 }
 
 
+
 # Handle SIGINT
 sub _task_handle_SIGINT
 {
@@ -357,6 +366,7 @@ sub _task_handle_SIGINT
 
 	$logger->log(LOG_WARN,"[TCSTATS] Killed children processes");
 }
+
 
 
 1;

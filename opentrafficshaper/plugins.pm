@@ -38,6 +38,7 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 my $globals;
 
 
+
 # Check if a plugin is loaded
 sub isPluginLoaded
 {
@@ -46,6 +47,7 @@ sub isPluginLoaded
 
 	return defined($globals->{'plugins'}->{$pluginName});
 }
+
 
 
 # Function to register a plugin
@@ -88,6 +90,7 @@ sub plugin_register
 		}
 	}
 }
+
 
 
 # Setup our main config ref
@@ -149,6 +152,7 @@ sub _plugin_register {
 
 	return 0;
 }
+
 
 
 1;

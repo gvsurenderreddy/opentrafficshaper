@@ -826,6 +826,7 @@ sub plugin_init
 }
 
 
+
 # Start the plugin
 sub plugin_start
 {
@@ -861,6 +862,7 @@ sub _session_start
 
 	$logger->log(LOG_DEBUG,"[CONFIGMANAGER] Initialized");
 }
+
 
 
 # Stop the session
@@ -899,6 +901,7 @@ sub _session_stop
 
 	$logger = undef;
 }
+
 
 
 # Time ticker for processing changes
@@ -1007,7 +1010,6 @@ sub _session_tick
 
 		# Pool has been modified
 		} elsif ($pool->{'Status'} == CFGM_CHANGED) {
-
 			# If the shaper is live we can go ahead
 			if ($shaperState & SHAPER_LIVE) {
 				$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' [%s] has been modified, sending to shaper",
@@ -1263,6 +1265,7 @@ sub _session_tick
 }
 
 
+
 # Handle SIGHUP
 sub _session_SIGHUP
 {
@@ -1270,6 +1273,7 @@ sub _session_SIGHUP
 
 	$logger->log(LOG_WARN,"[CONFIGMANAGER] Got SIGHUP, ignoring for now");
 }
+
 
 
 # Event for 'pool_add'
@@ -1302,6 +1306,7 @@ sub _session_pool_add
 }
 
 
+
 # Event for 'pool_remove'
 sub _session_pool_remove
 {
@@ -1318,6 +1323,7 @@ sub _session_pool_remove
 }
 
 
+
 # Event for 'pool_change'
 sub _session_pool_change
 {
@@ -1331,6 +1337,7 @@ sub _session_pool_change
 
 	changePool($poolData);
 }
+
 
 
 # Event for 'poolmember_add'
@@ -1361,6 +1368,7 @@ sub _session_poolmember_add
 }
 
 
+
 # Event for 'poolmember_remove'
 sub _session_poolmember_remove
 {
@@ -1374,6 +1382,7 @@ sub _session_poolmember_remove
 
 	removePoolMember($pmid);
 }
+
 
 
 # Event for 'poolmember_change'
@@ -1391,6 +1400,7 @@ sub _session_poolmember_change
 
 	changePoolMember($poolMemberData);
 }
+
 
 
 # Event for 'limit_add'
@@ -1619,6 +1629,7 @@ sub getMatchPriorities
 }
 
 
+
 # Function to check if interface group is valid
 sub isMatchPriorityIDValid
 {
@@ -1632,6 +1643,7 @@ sub isMatchPriorityIDValid
 
 	return $mpid;
 }
+
 
 
 # Function to set a pool attribute
@@ -1649,6 +1661,7 @@ sub setPoolAttribute
 
 	return $value;
 }
+
 
 
 # Function to get a pool attribute
@@ -1669,6 +1682,7 @@ sub getPoolAttribute
 
 	return $pools->{$pid}->{'.attributes'}->{$attr};
 }
+
 
 
 # Function to remove a pool attribute
@@ -1712,6 +1726,7 @@ sub getOverrides
 {
 	return (keys %{$overrides});
 }
+
 
 
 # Function to create a pool
@@ -1832,6 +1847,7 @@ sub createPool
 }
 
 
+
 # Function to remove a pool
 sub removePool
 {
@@ -1866,6 +1882,7 @@ sub removePool
 
 	return;
 }
+
 
 
 # Function to change a pool
@@ -1906,6 +1923,7 @@ sub changePool
 }
 
 
+
 # Function to return a pool
 sub getPool
 {
@@ -1924,6 +1942,7 @@ sub getPool
 
 	return $pool;
 }
+
 
 
 # Function to get a pool by its name
@@ -1946,11 +1965,13 @@ sub getPoolByName
 }
 
 
+
 # Function to return a list of pool ID's
 sub getPools
 {
 	return (keys %{$pools});
 }
+
 
 
 # Function to return a pool TX interface
@@ -1968,6 +1989,7 @@ sub getPoolTxInterface
 }
 
 
+
 # Function to return a pool RX interface
 sub getPoolRxInterface
 {
@@ -1983,6 +2005,7 @@ sub getPoolRxInterface
 }
 
 
+
 # Function to return a pool traffic class ID
 sub getPoolTrafficClassID
 {
@@ -1996,6 +2019,7 @@ sub getPoolTrafficClassID
 
 	return $pools->{$pid}->{'ClassID'};
 }
+
 
 
 # Function to set pools shaper state
@@ -2015,6 +2039,7 @@ sub setPoolShaperState
 }
 
 
+
 # Function to unset pools shaper state
 sub unsetPoolShaperState
 {
@@ -2030,6 +2055,7 @@ sub unsetPoolShaperState
 
 	return $pools->{$pid}->{'.shaper_state'};
 }
+
 
 
 # Function to get shaper state for a pool
@@ -2059,6 +2085,7 @@ sub isPoolIDValid
 
 	return $pid;
 }
+
 
 
 # Function to return if a pool is ready for any kind of modification
@@ -2115,6 +2142,7 @@ sub getEffectivePool
 
 	return $pool;
 }
+
 
 
 # Function to create a pool member
@@ -2249,6 +2277,7 @@ sub	createPoolMember
 }
 
 
+
 # Function to remove pool member, this function is actually just going to flag it offline
 # the offline pool members will be caught by cleanup and removed, we do this because we
 # need the pool member setup in the removal functions, we cannot remove it first, and we
@@ -2294,6 +2323,7 @@ sub removePoolMember
 }
 
 
+
 # Function to change a pool member
 sub changePoolMember
 {
@@ -2331,6 +2361,7 @@ sub changePoolMember
 }
 
 
+
 # Function to return a list of pool ID's
 sub getPoolMembers
 {
@@ -2351,6 +2382,7 @@ sub getPoolMembers
 }
 
 
+
 # Function to return a pool member
 sub getPoolMember
 {
@@ -2369,6 +2401,7 @@ sub getPoolMember
 
 	return $poolMember;
 }
+
 
 
 # Function to return a list of pool ID's
@@ -2400,6 +2433,7 @@ sub getPoolMemberByUsernameIP
 }
 
 
+
 # Function to return pool member ID's with a certain IP address using an interface group
 sub getAllPoolMembersByInterfaceGroupIP
 {
@@ -2420,6 +2454,7 @@ sub getAllPoolMembersByInterfaceGroupIP
 }
 
 
+
 # Function to check the pool member ID exists
 sub isPoolMemberIDValid
 {
@@ -2432,6 +2467,7 @@ sub isPoolMemberIDValid
 
 	return $pmid;
 }
+
 
 
 # Function to return if a pool member is ready for any kind of modification
@@ -2449,6 +2485,7 @@ sub isPoolMemberReady
 }
 
 
+
 # Function to return a pool member match priority
 sub getPoolMemberMatchPriority
 {
@@ -2463,6 +2500,7 @@ sub getPoolMemberMatchPriority
 	# NK: No actual mappping yet, we just return the ID
 	return $poolMembers->{$pmid}->{'MatchPriorityID'};
 }
+
 
 
 # Function to set a pool member attribute
@@ -2482,6 +2520,7 @@ sub setPoolMemberAttribute
 }
 
 
+
 # Function to set pool member shaper state
 sub setPoolMemberShaperState
 {
@@ -2497,6 +2536,7 @@ sub setPoolMemberShaperState
 
 	return $poolMembers->{$pmid}->{'.shaper_state'};
 }
+
 
 
 # Function to unset pool member shaper state
@@ -2516,6 +2556,7 @@ sub unsetPoolMemberShaperState
 }
 
 
+
 # Function to get shaper state for a pool
 sub getPoolMemberShaperState
 {
@@ -2529,6 +2570,7 @@ sub getPoolMemberShaperState
 
 	return $poolMembers->{$pmid}->{'.shaper_state'};
 }
+
 
 
 # Function to get a pool member attribute
@@ -2551,6 +2593,7 @@ sub getPoolMemberAttribute
 }
 
 
+
 # Function to remove a pool member attribute
 sub removePoolMemberAttribute
 {
@@ -2569,6 +2612,7 @@ sub removePoolMemberAttribute
 
 	return delete($poolMembers->{$pmid}->{'.attributes'}->{$attr});
 }
+
 
 
 # Create a limit, which is the combination of a pool and a pool member
@@ -3010,6 +3054,7 @@ sub _override_resolve
 }
 
 
+
 # Remove pool override information
 sub _override_remove_pool
 {
@@ -3029,6 +3074,7 @@ sub _override_remove_pool
 		}
 	}
 }
+
 
 
 # Load our statefile
@@ -3150,6 +3196,7 @@ sub _load_statefile
 }
 
 
+
 # Write out statefile
 sub _write_statefile
 {
@@ -3261,6 +3308,7 @@ sub _write_statefile
 
 	$logger->log(LOG_NOTICE,"[CONFIGMANAGER] State file '%s' saved in %s",$config->{'statefile'},sprintf('%.3fs',$timediff2));
 }
+
 
 
 1;

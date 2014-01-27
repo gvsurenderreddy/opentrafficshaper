@@ -286,12 +286,14 @@ sub plugin_init
 }
 
 
+
 # Start the plugin
 sub plugin_start
 {
 	$logger->log(LOG_INFO,"[STATISTICS] Started");
 
 }
+
 
 
 # Initialize this plugins main POE session
@@ -308,6 +310,7 @@ sub _session_start
 
 	$logger->log(LOG_DEBUG,"[STATISTICS] Initialized");
 }
+
 
 
 # Stop session
@@ -338,6 +341,7 @@ sub _session_stop
 
 	$logger = undef;
 }
+
 
 
 # Time ticker for processing changes
@@ -644,6 +648,7 @@ sub _session_tick
 }
 
 
+
 # Update limit Statistics
 # $item has some special use cases:
 #	main:$iface:all	- Interface total stats
@@ -661,6 +666,7 @@ sub _session_update
 
 	_processStatistics($kernel,$statsData);
 }
+
 
 
 # Handle subscriptions to updates
@@ -693,6 +699,7 @@ sub subscribe
 	# Return the SID we subscribed
 	return $ssid;
 }
+
 
 
 # Handle unsubscribes
@@ -728,6 +735,7 @@ sub unsubscribe
 }
 
 
+
 # Return user last stats
 sub getLastStats
 {
@@ -759,6 +767,7 @@ sub getLastStats
 }
 
 
+
 # Return stats by SID
 sub getStatsBySID
 {
@@ -779,6 +788,7 @@ sub getStatsBySID
 
 	return $statistics;
 }
+
 
 
 # Return basic stats by SID
@@ -803,6 +813,7 @@ sub getStatsBasicBySID
 }
 
 
+
 # Get the stats ID from Class ID
 sub getSIDFromCID
 {
@@ -818,6 +829,7 @@ sub getSIDFromCID
 	# Return the SID fo the identifier
 	return _getSIDFromIdentifier($identifier);
 }
+
 
 
 # Set the stats ID from Class ID
@@ -840,6 +852,7 @@ sub setSIDFromCID
 
 	return $sid;
 }
+
 
 
 # Get the stats ID from a PID
@@ -881,6 +894,7 @@ sub setSIDFromPID
 }
 
 
+
 # Get the stats ID from a counter
 sub getSIDFromCounter
 {
@@ -896,6 +910,7 @@ sub getSIDFromCounter
 	# Return the SID for the counter
 	return _getSIDFromIdentifier($identifier);
 }
+
 
 
 # Set the stats ID from a counter
@@ -918,6 +933,7 @@ sub setSIDFromCounter
 
 	return $sid;
 }
+
 
 
 # Return traffic direction
@@ -984,6 +1000,7 @@ sub getConfigManagerCounters
 #
 # Internal Functions
 #
+
 
 # Function to process a bunch of statistics
 sub _processStatistics
@@ -1053,6 +1070,7 @@ sub _processStatistics
 }
 
 
+
 # Generate ConfigManager stats
 sub _getConfigManagerStats
 {
@@ -1077,6 +1095,7 @@ sub _getConfigManagerStats
 }
 
 
+
 # Function to get a SID identifier from a class ID
 sub _getIdentifierFromCID
 {
@@ -1085,6 +1104,7 @@ sub _getIdentifierFromCID
 
 	return sprintf("Class:%s:%s",$iface,$cid);
 }
+
 
 
 # Function to get a SID identifier from a pool ID
@@ -1102,6 +1122,7 @@ sub _getIdentifierFromPID
 }
 
 
+
 # Function to get a SID identifier from a counter
 sub _getIdentifierFromCounter
 {
@@ -1109,6 +1130,7 @@ sub _getIdentifierFromCounter
 
 	return sprintf("Counter:%s",$counter);
 }
+
 
 
 # Return a cached SID if its cached
@@ -1119,6 +1141,7 @@ sub _getCachedSIDFromIdentifier
 
 	return $statsDBIdentifierMap->{$identifier};
 }
+
 
 
 # Grab or add the identifier to the DB
@@ -1147,6 +1170,7 @@ sub _getSIDFromIdentifier
 }
 
 
+
 # Set SID from identifier in DB
 sub _setSIDFromIdentifier
 {
@@ -1165,12 +1189,14 @@ sub _setSIDFromIdentifier
 }
 
 
+
 # Get aligned time on a Precision
 sub _getAlignedTime
 {
 	my ($time,$precision) = @_;
 	return $time - ($time % $precision);
 }
+
 
 
 # Internal function to get stats by SID
@@ -1213,6 +1239,7 @@ sub _getStatsBySID
 }
 
 
+
 # Internal function to get basic stats by SID
 sub _getStatsBasicBySID
 {
@@ -1250,6 +1277,7 @@ sub _getStatsBasicBySID
 }
 
 
+
 # Function to transform stats before sending them
 sub _fixStatDirection
 {
@@ -1285,6 +1313,7 @@ sub _fixStatDirection
 }
 
 
+
 # Function to transform stats before sending them
 sub _fixCounterName
 {
@@ -1304,6 +1333,7 @@ sub _fixCounterName
 
 	return $newStat;
 }
+
 
 
 1;

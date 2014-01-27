@@ -821,6 +821,7 @@ sub jsondata
 }
 
 
+
 # Return javascript for the graph
 sub _getJavascript
 {
@@ -885,6 +886,7 @@ EOF
 
 	return $javascript;
 }
+
 
 
 1;

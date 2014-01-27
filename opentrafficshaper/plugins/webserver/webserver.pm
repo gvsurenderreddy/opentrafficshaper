@@ -187,6 +187,7 @@ sub plugin_init
 }
 
 
+
 # Start the plugin
 sub plugin_start
 {
@@ -204,6 +205,7 @@ sub server_session_start
 }
 
 
+
 # Server session stopped
 sub server_session_stop
 {
@@ -211,6 +213,7 @@ sub server_session_stop
 
 	$logger->log(LOG_DEBUG,"[WEBSERVER] Shutdown");
 }
+
 
 
 # Signal that the client has connected
@@ -224,6 +227,7 @@ sub server_client_connected
 	$connections->{$client_session_id}->{'socket'} = $heap->{'client'};
 	$connections->{$client_session_id}->{'protocol'} = 'HTTP';
 }
+
 
 
 # Signal that the client has disconnected
@@ -247,6 +251,7 @@ sub server_client_disconnected
 	# Remove client session
 	delete($connections->{$client_session_id});
 }
+
 
 
 # Handle the HTTP request
@@ -297,6 +302,7 @@ sub server_request
 }
 
 
+
 # Display fault
 sub httpDisplayFault
 {
@@ -327,6 +333,7 @@ EOF
 }
 
 
+
 # Do a redirect
 sub httpRedirect
 {
@@ -334,6 +341,7 @@ sub httpRedirect
 
 	return HTTP::Response->new(HTTP_FOUND, 'Redirect', [Location => $url]);
 }
+
 
 
 # Create a response object
@@ -672,6 +680,7 @@ END:
 }
 
 
+
 # Handle the websocket request
 sub _server_request_websocket
 {
@@ -761,6 +770,7 @@ sub _server_request_websocket
 }
 
 
+
 # Function to parse a HTTP resource
 sub _parse_http_resource
 {
@@ -820,6 +830,7 @@ sub _parse_http_resource
 
 	return ($handler,$module,$action);
 }
+
 
 
 # Handle Websocket

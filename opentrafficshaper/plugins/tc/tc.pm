@@ -189,11 +189,13 @@ sub plugin_init
 }
 
 
+
 # Start the plugin
 sub plugin_start
 {
 	$logger->log(LOG_INFO,"[TC] Started");
 }
+
 
 
 # Initialize this plugins main POE session
@@ -207,6 +209,7 @@ sub _session_start
 
 	$logger->log(LOG_DEBUG,"[TC] Initialized");
 }
+
 
 
 # Initialize this plugins main POE session
@@ -308,6 +311,7 @@ sub _session_pool_add
 }
 
 
+
 # Event handler for removing a pool
 sub _session_pool_remove
 {
@@ -390,6 +394,7 @@ sub _session_pool_remove
 }
 
 
+
 ## Event handler for changing a pool
 sub _session_pool_change
 {
@@ -444,6 +449,7 @@ sub _session_pool_change
 	unsetPoolShaperState($pool->{'ID'},SHAPER_NOTLIVE|SHAPER_PENDING);
 	setPoolShaperState($pool->{'ID'},SHAPER_LIVE);
 }
+
 
 
 # Event handler for adding a pool member
@@ -650,6 +656,7 @@ sub _session_poolmember_add
 }
 
 
+
 # Event handler for removing a pool member
 sub _session_poolmember_remove
 {
@@ -747,6 +754,7 @@ sub getPIDFromTcClass
 }
 
 
+
 # Function to return if this is linked to a pool's class
 sub isPoolTcClass
 {
@@ -760,6 +768,7 @@ sub isPoolTcClass
 
 	return $minorTcClass;
 }
+
 
 
 # Return the ClassID from a TC class
@@ -935,6 +944,7 @@ sub _tc_iface_init
 	}
 
 }
+
 
 
 # Function to apply traffic optimizations to a classes
@@ -1299,6 +1309,7 @@ sub _tc_class_optimize
 }
 
 
+
 # Function to easily add a hash table
 sub _tc_filter_add_dstlink
 {
@@ -1312,6 +1323,7 @@ sub _tc_filter_add_dstlink
 }
 
 
+
 # Function to easily add a hash table
 sub _tc_filter_add_srclink
 {
@@ -1323,6 +1335,7 @@ sub _tc_filter_add_srclink
 	# Add filter to it
 	_tc_filter_add($changeSet,$interface,$parentID,$priority,$filterID,$protocol,$htHex,$ipHex,"src",12,$cidr,$mask);
 }
+
 
 
 # Function to easily add a hash table
@@ -1396,6 +1409,7 @@ sub _tc_filter_add
 }
 
 
+
 # Function to add a TC class
 sub _tc_class_add
 {
@@ -1418,6 +1432,7 @@ sub _tc_class_add
 						'burst', "${burst}kb",
 		]);
 }
+
 
 
 # Function to change a TC class
@@ -1444,6 +1459,7 @@ sub _tc_class_change
 }
 
 
+
 # Get a pool TC class from pool ID
 sub _reserveTcClassByPoolID
 {
@@ -1453,6 +1469,7 @@ sub _reserveTcClassByPoolID
 }
 
 
+
 # Get a traffic class TC class
 sub _reserveTcClassByTrafficClassID
 {
@@ -1460,6 +1477,7 @@ sub _reserveTcClassByTrafficClassID
 
 	return __reserveMinorTcClass($interface,TC_ROOT_CLASS,"_traffic_class_:$classID");
 }
+
 
 
 # Get a prio class TC class
@@ -1472,6 +1490,7 @@ sub _reserveMajorTcClassByPrioClass
 }
 
 
+
 # Return TC class from a traffic class ID
 sub _getTcClassFromTrafficClassID
 {
@@ -1479,6 +1498,7 @@ sub _getTcClassFromTrafficClassID
 
 	return __getMinorTcClassByRef($interface,TC_ROOT_CLASS,"_traffic_class_:$classID");
 }
+
 
 
 # Return prio TC class using class
@@ -1491,6 +1511,7 @@ sub _getPrioTcClass
 }
 
 
+
 # Function to dispose of a TC class
 sub _disposePoolTcClass
 {
@@ -1498,6 +1519,7 @@ sub _disposePoolTcClass
 
 	return __disposeMinorTcClass($interface,TC_ROOT_CLASS,$tcClass);
 }
+
 
 
 # Function to dispose of a major TC class
@@ -1515,6 +1537,7 @@ sub _disposePrioTcClass
 
 	return __disposeMajorTcClass($interface,$majorTcClass);
 }
+
 
 
 # Function to get next available TC class
@@ -1551,6 +1574,7 @@ sub __reserveMinorTcClass
 }
 
 
+
 # Function to get next available major TC class
 sub _reserveMajorTcClass
 {
@@ -1585,6 +1609,7 @@ sub _reserveMajorTcClass
 }
 
 
+
 # Get a minor class by its rerf
 sub __getMinorTcClassByRef
 {
@@ -1597,6 +1622,7 @@ sub __getMinorTcClassByRef
 
 	return $tcClasses->{$interface}->{$majorTcClass}->{'reverse'}->{$ref};
 }
+
 
 
 # Get a major class by its rerf
@@ -1613,6 +1639,7 @@ sub __getMajorTcClassByRef
 }
 
 
+
 # Get ref using the minor tc class
 sub __getRefByMinorTcClass
 {
@@ -1625,6 +1652,7 @@ sub __getRefByMinorTcClass
 
 	return $tcClasses->{$interface}->{$majorTcClass}->{'track'}->{$minorTcClass};
 }
+
 
 
 # Function to dispose of a TC class
@@ -1642,6 +1670,7 @@ sub __disposeMinorTcClass
 }
 
 
+
 # Function to dispose of a major TC class
 sub __disposeMajorTcClass
 {
@@ -1655,6 +1684,7 @@ sub __disposeMajorTcClass
 	$tcClasses->{$interface}->{'track'}->{$tcMajorClass} = undef;
 	delete($tcClasses->{$interface}->{'reverse'}->{$ref});
 }
+
 
 
 # Function to get next available TC filter
@@ -1691,6 +1721,7 @@ sub _reserveTcFilter
 }
 
 
+
 # Function to dispose of a TC Filter
 sub _disposeTcFilter
 {
@@ -1703,9 +1734,12 @@ sub _disposeTcFilter
 }
 
 
+
 #
 # Task/child communication & handling stuff
 #
+
+
 
 # Initialize our tc session
 sub _task_session_start
@@ -1721,6 +1755,7 @@ sub _task_session_start
 	# Fire things up, we trigger this to process the task queue generated during init
 	$kernel->yield("_task_run_next");
 }
+
 
 
 # Add task to queue
@@ -1742,6 +1777,7 @@ sub _task_add_to_queue
 
 	$logger->log(LOG_DEBUG,"[TC] TASK: Queued %s changes",$numChanges);
 }
+
 
 
 # Send the next command in the task direction
@@ -1766,6 +1802,7 @@ sub _task_put_next
 }
 
 
+
 # Queue a task
 sub _task_queue
 {
@@ -1780,6 +1817,7 @@ sub _task_queue
 		$kernel->yield("_task_run_next");
 	}
 }
+
 
 
 # Run next task
@@ -1833,6 +1871,7 @@ sub _task_run_next
 }
 
 
+
 # Child writes to STDOUT
 sub _task_child_stdout
 {
@@ -1845,6 +1884,7 @@ sub _task_child_stdout
 }
 
 
+
 # Child writes to STDERR
 sub _task_child_stderr
 {
@@ -1855,6 +1895,7 @@ sub _task_child_stderr
 
 	$logger->log(LOG_WARN,"[TC] TASK/%s: STDOUT => %s",$task_id,$stdout);
 }
+
 
 
 # Child flushed to STDIN
@@ -1900,6 +1941,7 @@ sub _task_child_close
 }
 
 
+
 # Child got an error event, lets remove it too
 sub _task_child_error
 {
@@ -1929,6 +1971,7 @@ sub _task_child_error
 }
 
 
+
 # Reap the dead child
 sub _task_SIGCHLD
 {
@@ -1947,6 +1990,7 @@ sub _task_SIGCHLD
 	delete($heap->{'task_by_pid'}->{$pid});
 	delete($heap->{'idle_tasks'}->{$task->ID});
 }
+
 
 
 # Handle SIGINT
@@ -1988,6 +2032,7 @@ sub new
 }
 
 
+
 # Add a change to the list
 sub add
 {
@@ -1995,6 +2040,7 @@ sub add
 
 	push(@{$self->{'list'}},$change);
 }
+
 
 
 # Return the list
