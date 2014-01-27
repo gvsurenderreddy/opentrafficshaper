@@ -29,7 +29,7 @@ use POE;
 use IO::Socket::INET;
 
 use opentrafficshaper::logger;
-use opentrafficshaper::utils;
+use awitpt::util;
 use opentrafficshaper::plugins::configmanager qw(
 	createPool
 	changePool

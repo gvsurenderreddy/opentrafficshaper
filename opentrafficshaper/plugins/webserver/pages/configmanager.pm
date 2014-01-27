@@ -32,18 +32,21 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 
 use DateTime;
 use HTML::Entities;
-use HTTP::Status qw( :constants );
+use HTTP::Status qw(
+	:constants
+);
 use URI::Escape;
 
-use opentrafficshaper::logger;
-use opentrafficshaper::plugins;
-use opentrafficshaper::utils qw(
+use awitpt::util qw(
+	isNumber ISNUMBER_ALLOW_ZERO
+
 	parseFormContent
 	parseURIQuery
 
 	prettyUndef
 );
-
+use opentrafficshaper::logger;
+use opentrafficshaper::plugins;
 use opentrafficshaper::plugins::configmanager qw(
 	getInterfaces
 	getInterfaceTrafficClasses

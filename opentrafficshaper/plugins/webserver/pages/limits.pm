@@ -32,23 +32,28 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 
 use DateTime;
 use HTML::Entities;
-use HTTP::Status qw( :constants );
-use URI::Escape qw( uri_escape );
+use HTTP::Status qw(
+	:constants
+);
+use URI::Escape qw(
+	uri_escape
+);
 use URI::QueryParam;
-use Storable qw( dclone );
+use Storable qw(
+	dclone
+);
 
-use opentrafficshaper::constants;
-use opentrafficshaper::logger;
-use opentrafficshaper::plugins;
-use opentrafficshaper::utils qw(
+use awitpt::util qw(
 	parseURIQuery
 	parseFormContent
 	isUsername
-	isIP
+	isIPv4
 	isNumber
 	prettyUndef
 );
-
+use opentrafficshaper::constants;
+use opentrafficshaper::logger;
+use opentrafficshaper::plugins;
 use opentrafficshaper::plugins::configmanager qw(
 	getPools
 	getPool
@@ -1039,7 +1044,7 @@ sub poolmember_addedit
 			push(@errors,"Username is not valid");
 		}
 		my $ipAddress;
-		if (!defined($ipAddress = isIP($formData->{'IPAddress'}))) {
+		if (!defined($ipAddress = isIPv4($formData->{'IPAddress'}))) {
 			push(@errors,"IP address is not valid");
 		}
 		my $matchPriorityID;
@@ -1434,7 +1439,7 @@ sub limit_add
 			push(@errors,"Username is not valid");
 		}
 		my $ipAddress;
-		if (!defined($ipAddress = isIP($formData->{'IPAddress'}))) {
+		if (!defined($ipAddress = isIPv4($formData->{'IPAddress'}))) {
 			push(@errors,"IP address is not valid");
 		}
 		my $interfaceGroupID;
@@ -1980,7 +1985,7 @@ sub override_addedit
 		# Make sure we have at least a pool name, username or IP address
 		my $poolName = isUsername($formData->{'PoolName'});
 		my $username = isUsername($formData->{'Username'});
-		my $ipAddress = isIP($formData->{'IPAddress'});
+		my $ipAddress = isIPv4($formData->{'IPAddress'});
 		if (!defined($poolName) && !defined($username) && !defined($ipAddress)) {
 			push(@errors,"A pool name and/or IP address and/or Username must be specified");
 		}

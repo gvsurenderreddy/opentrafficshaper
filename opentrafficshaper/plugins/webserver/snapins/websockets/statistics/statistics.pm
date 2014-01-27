@@ -36,11 +36,10 @@ use JSON;
 use POE;
 use URI;
 
-use opentrafficshaper::logger;
-use opentrafficshaper::utils qw(
+use awitpt::util qw(
 	parseKeyPairString
 );
-
+use opentrafficshaper::logger;
 use opentrafficshaper::plugins::configmanager qw(
 	getPoolByName
 	getInterfaceGroup

@@ -21,16 +21,27 @@ package opentrafficshaper::plugins::configmanager;
 use strict;
 use warnings;
 
-
 use POE;
-use Storable qw( dclone );
+use Storable qw(
+	dclone
+);
+use Time::HiRes qw(
+	gettimeofday
+	tv_interval
+);
 
+use awitpt::util qw(
+	isNumber ISNUMBER_ALLOW_ZERO
+	isIPv4
+	isUsername
+
+	prettyUndef
+
+	getHashChanges
+);
 use opentrafficshaper::constants;
 use opentrafficshaper::logger;
-use opentrafficshaper::utils;
 
-# NK: TODO: Maybe we want to remove timing at some stage? maybe not?
-use Time::HiRes qw( gettimeofday tv_interval );
 
 
 # Exporter stuff

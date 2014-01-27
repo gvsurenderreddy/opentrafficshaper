@@ -32,16 +32,19 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 
 use DateTime;
 use HTML::Entities;
-use HTTP::Status qw( :constants );
+use HTTP::Status qw(
+	:constants
+);
 use JSON;
-use URI::Escape qw( uri_escape );
-
-use opentrafficshaper::logger;
-use opentrafficshaper::plugins;
-use opentrafficshaper::utils qw(
-	parseURIQuery
+use URI::Escape qw(
+	uri_escape
 );
 
+use awitpt::util qw(
+	parseURIQuery
+);
+use opentrafficshaper::logger;
+use opentrafficshaper::plugins;
 use opentrafficshaper::plugins::configmanager qw(
 	getPoolByName
 

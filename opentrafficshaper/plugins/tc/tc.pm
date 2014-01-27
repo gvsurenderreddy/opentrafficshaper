@@ -21,13 +21,15 @@ package opentrafficshaper::plugins::tc;
 use strict;
 use warnings;
 
+use POE qw(
+	Wheel::Run Filter::Line
+);
 
-use POE qw( Wheel::Run Filter::Line );
-
+use awitpt::util qw(
+	toHex
+);
 use opentrafficshaper::constants;
 use opentrafficshaper::logger;
-use opentrafficshaper::utils;
-
 use opentrafficshaper::plugins::configmanager qw(
 		getPool
 		getPoolAttribute
