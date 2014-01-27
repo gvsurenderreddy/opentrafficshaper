@@ -39,7 +39,7 @@ use POE::Filter;
 
 use vars qw($VERSION @ISA);
 # NOTE - Should be #.### (three decimal places)
-$VERSION = '1.000';
+$VERSION = '1.300';
 @ISA = qw(POE::Filter);
 
 
@@ -94,39 +94,39 @@ sub get_one
 		# Pull in all the items
 		# class htb 1:1 root rate 100000Kbit ceil 100000Kbit burst 51800b cburst 51800b
 		if (@classArray == 12) {
-			$curstat->{'cir'} = _getKNumber($classArray[5]);
-			$curstat->{'limit'} = _getKNumber($classArray[7]);
+			$curstat->{'CIR'} = _getKNumber($classArray[5]);
+			$curstat->{'Limit'} = _getKNumber($classArray[7]);
 		# class htb 1:d parent 1:1 rate 10000Kbit ceil 100000Kbit burst 6620b cburst 51800b
 		} elsif (@classArray == 13) {
-			$curstat->{'cir'} = _getKNumber($classArray[6]);
-			$curstat->{'limit'} = _getKNumber($classArray[8]);
+			$curstat->{'CIR'} = _getKNumber($classArray[6]);
+			$curstat->{'Limit'} = _getKNumber($classArray[8]);
 		# class htb 1:3 parent 1:1 prio 7 rate 10000Kbit ceil 100000Kbit burst 6620b cburst 51800b
 		} elsif (@classArray == 15) {
-			$curstat->{'priority'} = int($classArray[6]);
-			$curstat->{'cir'} = _getKNumber($classArray[8]);
-			$curstat->{'limit'} = _getKNumber($classArray[10]);
+			$curstat->{'Priority'} = int($classArray[6]);
+			$curstat->{'CIR'} = _getKNumber($classArray[8]);
+			$curstat->{'Limit'} = _getKNumber($classArray[10]);
 		# class htb 1:3 parent 1:1 leaf 3: prio 7 rate 10000Kbit ceil 100000Kbit burst 6620b cburst 51800b
 		} elsif (@classArray == 17) {
-			$curstat->{'priority'} = int($classArray[8]);
-			$curstat->{'cir'} = _getKNumber($classArray[10]);
-			$curstat->{'limit'} = _getKNumber($classArray[12]);
+			$curstat->{'Priority'} = int($classArray[8]);
+			$curstat->{'CIR'} = _getKNumber($classArray[10]);
+			$curstat->{'Limit'} = _getKNumber($classArray[12]);
 		} else {
 			next;
 		}
-		($curstat->{'_class_parent'},$curstat->{'_class_child'}) = split(/:/,$classArray[2]);
+		($curstat->{'TCClassParent'},$curstat->{'TCClassChild'}) = split(/:/,$classArray[2]);
 
 		#   Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0)
 		#   rate 0bit 0pps backlog 0b 0p requeues 0
 		if (@statsArray == 19) {
-			$curstat->{'total_bytes'} = int($statsArray[1]);
-			$curstat->{'total_packets'} = int($statsArray[3]);
-			$curstat->{'total_dropped'} = int($statsArray[6]);
-			$curstat->{'total_overlimits'} = int($statsArray[8]);
+			$curstat->{'TotalBytes'} = int($statsArray[1]);
+			$curstat->{'TotalPackets'} = int($statsArray[3]);
+			$curstat->{'TotalDropped'} = int($statsArray[6]);
+			$curstat->{'TotalOverlimits'} = int($statsArray[8]);
 
-			$curstat->{'rate'} = _getKNumber($statsArray[12]);
-			$curstat->{'pps'} = int(substr($statsArray[13],0,-3));
-			$curstat->{'queue_size'} = int(substr($statsArray[15],0,-1));
-			$curstat->{'queue_len'} = int(substr($statsArray[16],0,-1));
+			$curstat->{'Rate'} = _getKNumber($statsArray[12]);
+			$curstat->{'PPS'} = int(substr($statsArray[13],0,-3));
+			$curstat->{'QueueSize'} = int(substr($statsArray[15],0,-1));
+			$curstat->{'QueueLen'} = int(substr($statsArray[16],0,-1));
 		} else {
 			next;
 		}
