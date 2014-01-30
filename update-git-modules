@@ -12,4 +12,3 @@ git checkout
 git pull
 popd
 
-git submodule update
