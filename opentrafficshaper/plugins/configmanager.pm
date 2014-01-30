@@ -172,7 +172,7 @@ sub POOL_PERSISTENT_ATTRIBUTES {
 		Name
 		FriendlyName
 		InterfaceGroupID
-		ClassID TrafficLimitTx TrafficLimitRx TrafficLimitTxBurst TrafficLimitRxBurst
+		TrafficClassID TxCIR RxCIR TxLimit RxLimit
 		Expires
 		Source
 		Notes
