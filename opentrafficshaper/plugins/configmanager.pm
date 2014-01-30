@@ -2580,7 +2580,7 @@ sub getPool
 
 	# Remove attributes?
 	delete($pool->{'.attributes'});
-	delete($pool->{'.applied_attributes'});
+	delete($pool->{'.applied_overrides'});
 
 	return $pool;
 }
