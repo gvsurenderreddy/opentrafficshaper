@@ -1053,7 +1053,6 @@ sub _tc_iface_init
 #						'ecn'
 		]);
 	}
-
 }
 
 

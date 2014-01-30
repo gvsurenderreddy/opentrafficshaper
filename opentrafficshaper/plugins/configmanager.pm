@@ -1013,6 +1013,7 @@ sub _session_tick
 		_write_statefile();
 	}
 
+
 	# Check if we should cleanup
 	if ($globals->{'LastCleanup'} + CLEANUP_INTERVAL < $now) {
 		# Loop with all pool overrides and check for expired entries
@@ -1239,6 +1240,7 @@ sub _session_tick
 			);
 		}
 	}
+
 
 	# Loop through pool member change queue
 	while (my ($pmid, $poolMember) = each(%{$globals->{'PoolMemberChangeQueue'}})) {
