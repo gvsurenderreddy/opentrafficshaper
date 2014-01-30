@@ -738,7 +738,7 @@ sub plugin_init
 
 				# Check if rates are below are sane
 				if ($iclassCIR > $interfaceLimit) {
-					$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface '%s' class '%s' has CIR '%s' > interface speed '%s', ".
+					$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Interface '%s' class '%s' has CIR '%s' > interface speed '%s', ".
 							"adjusting to '%s'",
 							$interface,
 							$itrafficClassID,
@@ -749,7 +749,7 @@ sub plugin_init
 					$iclassCIR = $interfaceLimit;
 				}
 				if ($iclassLimit > $interfaceLimit) {
-					$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface '%s' class '%s' has Limit '%s' > interface speed '%s', ".
+					$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Interface '%s' class '%s' has Limit '%s' > interface speed '%s', ".
 							"adjusting to '%s'",
 							$interface,
 							$itrafficClassID,
@@ -760,7 +760,7 @@ sub plugin_init
 					$iclassLimit = $interfaceLimit;
 				}
 				if ($iclassCIR > $iclassLimit) {
-					$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface '%s' class '%s' has CIR '%s' > Limit '%s', adjusting CIR ".
+					$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Interface '%s' class '%s' has CIR '%s' > Limit '%s', adjusting CIR ".
 							"to '%s'",
 							$interface,
 							$itrafficClassID,
@@ -796,8 +796,8 @@ sub plugin_init
 		# Time to check the interface classes
 		foreach my $trafficClassID (getAllTrafficClasses()) {
 			# Check if we have a rate defined for this class in the interface definition
-			if (!isInterfaceTrafficClassIDValid($interfaceID,$trafficClassID)) {
-				$logger->log(LOG_WARN,"[CONFIGMANAGER] Interface '%s' has no class '%s' defined, using interface limit",
+			if (!isInterfaceTrafficClassValid($interfaceID,$trafficClassID)) {
+				$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Interface '%s' has no class '%s' defined, using interface limit",
 						$interface,
 						$trafficClassID
 				);
@@ -1406,7 +1406,7 @@ sub _session_SIGHUP
 {
 	my ($kernel, $heap, $signal_name) = @_[KERNEL, HEAP, ARG0];
 
-	$logger->log(LOG_WARN,"[CONFIGMANAGER] Got SIGHUP, ignoring for now");
+	$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Got SIGHUP, ignoring for now");
 }
 
 
@@ -1418,7 +1418,7 @@ sub _session_pool_add
 
 
 	if (!defined($poolData)) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] No pool data provided for 'pool_add' event");
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] No pool data provided for 'pool_add' event");
 		return;
 	}
 
@@ -1450,7 +1450,7 @@ sub _session_pool_remove
 
 	my $pool;
 	if (!defined(getPool($pid))) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Invalid pool ID '%s' for 'pool_remove' event",prettyUndef($pid));
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Invalid pool ID '%s' for 'pool_remove' event",prettyUndef($pid));
 		return;
 	}
 
@@ -1466,7 +1466,7 @@ sub _session_pool_change
 
 
 	if (!isPoolIDValid($poolData->{'ID'})) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Invalid pool ID '%s' for 'pool_change' event",prettyUndef($poolData->{'ID'}));
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Invalid pool ID '%s' for 'pool_change' event",prettyUndef($poolData->{'ID'}));
 		return;
 	}
 
@@ -1482,7 +1482,7 @@ sub _session_poolmember_add
 
 
 	if (!defined($poolMemberData)) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] No pool member data provided for 'poolmember_add' event");
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] No pool member data provided for 'poolmember_add' event");
 		return;
 	}
 
@@ -1511,7 +1511,7 @@ sub _session_poolmember_remove
 
 
 	if (!isPoolMemberIDValid($pmid)) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Invalid pool member ID '%s' for 'poolmember_remove' event",prettyUndef($pmid));
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Invalid pool member ID '%s' for 'poolmember_remove' event",prettyUndef($pmid));
 		return;
 	}
 
@@ -1527,7 +1527,7 @@ sub _session_poolmember_change
 
 
 	if (!isPoolMemberIDValid($poolMemberData->{'ID'})) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Invalid pool member ID '%s' for 'poolmember_change' event",
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Invalid pool member ID '%s' for 'poolmember_change' event",
 				prettyUndef($poolMemberData->{'ID'})
 		);
 		return;
@@ -1545,7 +1545,7 @@ sub _session_limit_add
 
 
 	if (!defined($limitData)) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] No limit data provided for 'limit_add' event");
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] No limit data provided for 'limit_add' event");
 		return;
 	}
 
@@ -1574,7 +1574,7 @@ sub _session_pool_override_add
 
 
 	if (!defined($poolOverrideData)) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] No pool override data provided for 'pool_override_add' event");
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] No pool override data provided for 'pool_override_add' event");
 		return;
 	}
 
@@ -1600,7 +1600,7 @@ sub _session_pool_override_remove
 
 
 	if (!isPoolOverrideIDValid($poid)) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Invalid pool override ID '%s' for 'pool_override_remove' event",
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Invalid pool override ID '%s' for 'pool_override_remove' event",
 				prettyUndef($poid)
 		);
 		return;
@@ -1618,7 +1618,7 @@ sub _session_pool_override_change
 
 
 	if (!isPoolOverrideIDValid($poolOverrideData->{'ID'})) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Invalid pool override ID '%s' for 'pool_override_change' event",
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Invalid pool override ID '%s' for 'pool_override_change' event",
 				prettyUndef($poolOverrideData->{'ID'})
 		);
 		return;
@@ -1638,12 +1638,12 @@ sub createGroup
 
 	# Check if ID is valid
 	if (!defined($group->{'ID'} = $groupData->{'ID'})) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Failed to add group as ID is invalid");
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Failed to add group as ID is invalid");
 		return;
 	}
 	# Check if Name is valid
 	if (!defined($group->{'Name'} = $groupData->{'Name'})) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Failed to add group as Name is invalid");
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Failed to add group as Name is invalid");
 		return;
 	}
 
@@ -1681,13 +1681,13 @@ sub createTrafficClass
 
 	# Check if ID is valid
 	if (!defined($class->{'ID'} = $classData->{'ID'})) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Failed to add traffic class as ID is invalid");
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Failed to add traffic class as ID is invalid");
 		return;
 	}
 
 	# Check if Name is valid
 	if (!defined($class->{'Name'} = $classData->{'Name'})) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Failed to add traffic class as Name is invalid");
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Failed to add traffic class as Name is invalid");
 		return;
 	}
 
@@ -2082,25 +2082,25 @@ sub createInterface
 
 	# Check if ID is valid
 	if (!defined($interface->{'ID'} = $interfaceData->{'ID'})) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Failed to add interface as ID is invalid");
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Failed to add interface as ID is invalid");
 		return;
 	}
 
 	# Check if Interface is valid
 	if (!defined($interface->{'Device'} = $interfaceData->{'Device'})) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Failed to add interface as Device is invalid");
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Failed to add interface as Device is invalid");
 		return;
 	}
 
 	# Check if Name is valid
 	if (!defined($interface->{'Name'} = $interfaceData->{'Name'})) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Failed to add interface as Name is invalid");
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Failed to add interface as Name is invalid");
 		return;
 	}
 
 	# Check Limit is valid
 	if (!defined($interface->{'Limit'} = isNumber($interfaceData->{'Limit'}))) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Failed to add interface as Limit is invalid");
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Failed to add interface as Limit is invalid");
 		return;
 	}
 
@@ -2187,19 +2187,19 @@ sub createInterfaceGroup
 
 	# Check if Name is valid
 	if (!defined($interfaceGroup->{'Name'} = $interfaceGroupData->{'Name'})) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Failed to add interface group as Name is invalid");
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Failed to add interface group as Name is invalid");
 		return;
 	}
 
 	# Check if TxInterface is valid
 	if (!defined($interfaceGroup->{'TxInterface'} = isInterfaceIDValid($interfaceGroupData->{'TxInterface'}))) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Failed to add interface group as TxInterface is invalid");
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Failed to add interface group as TxInterface is invalid");
 		return;
 	}
 
 	# Check if RxInterface is valid
 	if (!defined($interfaceGroup->{'RxInterface'} = isInterfaceIDValid($interfaceGroupData->{'RxInterface'}))) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Failed to add interface group as RxInterface is invalid");
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Failed to add interface group as RxInterface is invalid");
 		return;
 	}
 
@@ -2399,12 +2399,12 @@ sub createPool
 
 	# Now check if the name is valid
 	if (!defined($pool->{'Name'} = $poolData->{'Name'})) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process pool add as Name is invalid");
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process pool add as Name is invalid");
 		return;
 	}
 	# Check interface group ID is OK
 	if (!defined($pool->{'InterfaceGroupID'} = isInterfaceGroupIDValid($poolData->{'InterfaceGroupID'}))) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process pool add for '%s' as the InterfaceGroupID is invalid",
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process pool add for '%s' as the InterfaceGroupID is invalid",
 				$pool->{'Name'}
 		);
 		return;
@@ -2415,7 +2415,7 @@ sub createPool
 	}
 	# Check class is OK
 	if (!defined($pool->{'TrafficClassID'} = isTrafficClassIDValid($poolData->{'TrafficClassID'}))) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process pool add for '%s' as the TrafficClassID is invalid",
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process pool add for '%s' as the TrafficClassID is invalid",
 				$pool->{'Name'}
 		);
 		return;
@@ -2819,18 +2819,18 @@ sub	createPoolMember
 
 	# Check if IP address is defined
 	if (!defined(isIPv4($poolMember->{'IPAddress'} = $poolMemberData->{'IPAddress'}))) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process pool member add as the IPAddress is invalid");
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process pool member add as the IPAddress is invalid");
 		return;
 	}
 	# Now check if Username its valid
 	if (!defined(isUsername($poolMember->{'Username'} = $poolMemberData->{'Username'}))) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process pool member add as Username is invalid");
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process pool member add as Username is invalid");
 		return;
 	}
 
 	# Check pool ID is OK
 	if (!defined($poolMember->{'PoolID'} = isPoolIDValid($poolMemberData->{'PoolID'}))) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process pool member add for '%s' as the PoolID is invalid",
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process pool member add for '%s' as the PoolID is invalid",
 				$poolMemberData->{'Username'}
 		);
 		return;
@@ -2841,14 +2841,14 @@ sub	createPoolMember
 
 	# Check match priority ID is OK
 	if (!defined($poolMember->{'MatchPriorityID'} = isMatchPriorityIDValid($poolMemberData->{'MatchPriorityID'}))) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process pool member add for '%s' as the MatchPriorityID is invalid",
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process pool member add for '%s' as the MatchPriorityID is invalid",
 				$poolMemberData->{'Username'}
 		);
 		return;
 	}
 	# Check group ID is OK
 	if (!defined($poolMember->{'GroupID'} = isGroupIDValid($poolMemberData->{'GroupID'}))) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process pool member add for '%s' as the GroupID is invalid",
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process pool member add for '%s' as the GroupID is invalid",
 				$poolMemberData->{'Username'}
 		);
 		return;
@@ -3293,7 +3293,7 @@ sub createLimit
 
 	# Check if IP address is defined
 	if (!defined(isIPv4($limitData->{'IPAddress'} = $limitData->{'IPAddress'}))) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Cannot process limit add as the IP address is invalid");
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process limit add as the IP address is invalid");
 		return;
 	}
 
