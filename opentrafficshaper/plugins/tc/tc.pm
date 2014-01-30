@@ -59,7 +59,10 @@ use opentrafficshaper::plugins::configmanager qw(
 	getInterface
 	getInterfaces
 	getInterfaceDefaultPool
-	getEffectiveInterfaceTrafficClass
+	getEffectiveInterfaceTrafficClass2
+	isInterfaceTrafficClassValid
+	setInterfaceTrafficClassShaperState
+	unsetInterfaceTrafficClassShaperState
 );
 
 
@@ -247,6 +250,62 @@ sub _session_stop
 }
 
 
+
+# Event handler for changing a class
+sub _session_class_change
+{
+	my ($kernel, $interfaceTrafficClassID) = @_[KERNEL, ARG0, ARG1];
+
+
+	# Grab our effective class
+	my $effectiveInterfaceTrafficClass = getEffectiveInterfaceTrafficClass2($interfaceTrafficClassID);
+
+	# Grab interface ID
+	my $interfaceID = $effectiveInterfaceTrafficClass->{'InterfaceID'};
+	# Grab interface from config manager
+	my $interface = getInterface($interfaceID);
+
+	# Grab traffic class ID
+	my $trafficClassID = $effectiveInterfaceTrafficClass->{'TrafficClassID'};
+
+	$logger->log(LOG_INFO,"[TC] Processing interface class changes for '%s' traffic class ID '%s'",
+			$interface->{'Device'},
+			$trafficClassID
+	);
+
+	# Grab tc interface
+	my $tcInterface = $globals->{'Interfaces'}->{$interfaceID};
+	# Grab interface traffic class
+	my $interfaceTrafficClass = $tcInterface->{'TrafficClasses'}->{$trafficClassID};
+
+	# Grab the traffic class
+	my $majorTcClass = $tcInterface->{'TcClass'};
+	my $minorTcClass = $interfaceTrafficClass->{"TcClass"};
+
+	# Generate changeset
+	my $changeSet = TC::ChangeSet->new();
+
+	# If we're a normal class we are treated differently than if we're a main/root class below (interface main speed)
+	if ($minorTcClass > 1) {
+		_tc_class_change($changeSet,$interfaceID,$majorTcClass,"",$minorTcClass,
+				$effectiveInterfaceTrafficClass->{'CIR'},
+				$effectiveInterfaceTrafficClass->{'Limit'}
+		);
+	# XXX: This will be the actual interface, we set limit and burst to the same
+	} else {
+		_tc_class_change($changeSet,$interfaceID,TC_ROOT_CLASS,"",$minorTcClass,$effectiveInterfaceTrafficClass->{'Limit'});
+	}
+
+	# Post changeset
+	$kernel->post("_tc" => "queue" => $changeSet);
+
+	# Mark as live
+	unsetInterfaceTrafficClassShaperState($interfaceTrafficClassID,SHAPER_NOTLIVE|SHAPER_PENDING);
+	setInterfaceTrafficClassShaperState($interfaceTrafficClassID,SHAPER_LIVE);
+}
+
+
+
 # Event handler for adding a pool
 sub _session_pool_add
 {
@@ -272,8 +331,8 @@ sub _session_pool_add
 	my $changeSet = TC::ChangeSet->new();
 
 	# Grab some things we need from the main pool
-	my $txInterface = getPoolTxInterface($pool->{'ID'});
-	my $rxInterface = getPoolRxInterface($pool->{'ID'});
+	my $txInterfaceID = getPoolTxInterface($pool->{'ID'});
+	my $rxInterfaceID = getPoolRxInterface($pool->{'ID'});
 
 	# Grab effective config
 	my $trafficClassID = $effectivePool->{'TrafficClassID'};
@@ -284,28 +343,28 @@ sub _session_pool_add
 	my $trafficPriority = getTrafficClassPriority($effectivePool->{'TrafficClassID'});
 
 	# Get the Tx traffic classes TC class
-	my $tcClass_TxTrafficClass = _getTcClassFromTrafficClassID($txInterface,$trafficClassID);
+	my $tcClass_TxTrafficClass = _getTcClassFromTrafficClassID($txInterfaceID,$trafficClassID);
 	# Generate our pools Tx TC class
-	my $tcClass_TxPool = _reserveTcClassByPoolID($txInterface,$pool->{'ID'});
+	my $tcClass_TxPool = _reserveMinorTcClassByPoolID($txInterfaceID,$pool->{'ID'});
 	# Add the main Tx TC class for this pool
-	_tc_class_add($changeSet,$txInterface,TC_ROOT_CLASS,$tcClass_TxTrafficClass,$tcClass_TxPool,$txCIR,
+	_tc_class_add($changeSet,$txInterfaceID,TC_ROOT_CLASS,$tcClass_TxTrafficClass,$tcClass_TxPool,$txCIR,
 			$txLimit,$trafficPriority
 	);
 	# Add Tx TC optimizations
-	_tc_class_optimize($changeSet,$txInterface,$tcClass_TxPool,$txCIR);
+	_tc_class_optimize($changeSet,$txInterfaceID,$tcClass_TxPool,$txCIR);
 	# Set Tx TC class
 	setPoolAttribute($pool->{'ID'},'tc.txclass',$tcClass_TxPool);
 
 	# Get the Rx traffic classes TC class
-	my $tcClass_RxTrafficClass = _getTcClassFromTrafficClassID($rxInterface,$trafficClassID);
+	my $tcClass_RxTrafficClass = _getTcClassFromTrafficClassID($rxInterfaceID,$trafficClassID);
 	# Generate our pools Rx TC class
-	my $tcClass_RxPool = _reserveTcClassByPoolID($rxInterface,$pool->{'ID'});
+	my $tcClass_RxPool = _reserveMinorTcClassByPoolID($rxInterfaceID,$pool->{'ID'});
 	# Add the main Rx TC class for this pool
-	_tc_class_add($changeSet,$rxInterface,TC_ROOT_CLASS,$tcClass_RxTrafficClass,$tcClass_RxPool,$rxCIR,
+	_tc_class_add($changeSet,$rxInterfaceID,TC_ROOT_CLASS,$tcClass_RxTrafficClass,$tcClass_RxPool,$rxCIR,
 			$rxLimit,$trafficPriority
 	);
 	# Add Rx TC optimizations
-	_tc_class_optimize($changeSet,$rxInterface,$tcClass_RxPool,$rxCIR);
+	_tc_class_optimize($changeSet,$rxInterfaceID,$tcClass_RxPool,$rxCIR);
 	# Set Rx TC
 	setPoolAttribute($pool->{'ID'},'tc.rxclass',$tcClass_RxPool);
 
@@ -356,8 +415,8 @@ sub _session_pool_remove
 	);
 
 	# Grab our interfaces
-	my $txInterface = getPoolTxInterface($pool->{'ID'});
-	my $rxInterface = getPoolRxInterface($pool->{'ID'});
+	my $txInterfaceID = getPoolTxInterface($pool->{'ID'});
+	my $rxInterfaceID = getPoolRxInterface($pool->{'ID'});
 	# Grab the traffic class from the pool
 	my $txPoolTcClass = getPoolAttribute($pool->{'ID'},'tc.txclass');
 	my $rxPoolTcClass = getPoolAttribute($pool->{'ID'},'tc.rxclass');
@@ -365,19 +424,22 @@ sub _session_pool_remove
 	# Grab current class ID
 	my $trafficClassID = getPoolAttribute($pool->{'ID'},'shaper.live.ClassID');
 	# Grab our minor classes
-	my $txTrafficClassTcClass = _getTcClassFromTrafficClassID($txInterface,$trafficClassID);
-	my $rxTrafficClassTcClass = _getTcClassFromTrafficClassID($rxInterface,$trafficClassID);
+	my $txTrafficClassTcClass = _getTcClassFromTrafficClassID($txInterfaceID,$trafficClassID);
+	my $rxTrafficClassTcClass = _getTcClassFromTrafficClassID($rxInterfaceID,$trafficClassID);
+
+	my $txInterface = getInterface($txInterfaceID);
+	my $rxInterface = getInterface($rxInterfaceID);
 
 	# Clear up the class
 	$changeSet->add([
 			'/sbin/tc','class','del',
-				'dev',$txInterface,
+				'dev',$txInterface->{'Device'},
 				'parent',"1:$txTrafficClassTcClass",
 				'classid',"1:$txPoolTcClass",
 	]);
 	$changeSet->add([
 			'/sbin/tc','class','del',
-				'dev',$rxInterface,
+				'dev',$rxInterface->{'Device'},
 				'parent',"1:$rxTrafficClassTcClass",
 				'classid',"1:$rxPoolTcClass",
 	]);
@@ -424,8 +486,8 @@ sub _session_pool_change
 	my $effectivePool = getEffectivePool($pool->{'ID'});
 
 	# Grab our interfaces
-	my $txInterface = getPoolTxInterface($pool->{'ID'});
-	my $rxInterface = getPoolRxInterface($pool->{'ID'});
+	my $txInterfaceID = getPoolTxInterface($pool->{'ID'});
+	my $rxInterfaceID = getPoolRxInterface($pool->{'ID'});
 	# Grab the traffic class from the pool
 	my $txPoolTcClass = getPoolAttribute($pool->{'ID'},'tc.txclass');
 	my $rxPoolTcClass = getPoolAttribute($pool->{'ID'},'tc.rxclass');
@@ -439,15 +501,15 @@ sub _session_pool_change
 	my $trafficPriority = getTrafficClassPriority($trafficClassID);
 
 	# Grab our minor classes
-	my $txTrafficClassTcClass = _getTcClassFromTrafficClassID($txInterface,$trafficClassID);
-	my $rxTrafficClassTcClass = _getTcClassFromTrafficClassID($rxInterface,$trafficClassID);
+	my $txTrafficClassTcClass = _getTcClassFromTrafficClassID($txInterfaceID,$trafficClassID);
+	my $rxTrafficClassTcClass = _getTcClassFromTrafficClassID($rxInterfaceID,$trafficClassID);
 
 	# Generate changeset
 	my $changeSet = TC::ChangeSet->new();
 
-	_tc_class_change($changeSet,$txInterface,TC_ROOT_CLASS,$txTrafficClassTcClass,$txPoolTcClass,$txCIR,
+	_tc_class_change($changeSet,$txInterfaceID,TC_ROOT_CLASS,$txTrafficClassTcClass,$txPoolTcClass,$txCIR,
 			$txLimit,$trafficPriority);
-	_tc_class_change($changeSet,$rxInterface,TC_ROOT_CLASS,$rxTrafficClassTcClass,$rxPoolTcClass,$rxCIR,
+	_tc_class_change($changeSet,$rxInterfaceID,TC_ROOT_CLASS,$rxTrafficClassTcClass,$rxPoolTcClass,$rxCIR,
 			$rxLimit,$trafficPriority);
 
 	# Post changeset
@@ -501,47 +563,47 @@ sub _session_poolmember_add
 	}
 
 	# Grab some variables we going to need below
-	my $txInterface = getPoolTxInterface($pool->{'ID'});
-	my $rxInterface = getPoolRxInterface($pool->{'ID'});
+	my $txInterfaceID = getPoolTxInterface($pool->{'ID'});
+	my $rxInterfaceID = getPoolRxInterface($pool->{'ID'});
 	my $trafficPriority = getTrafficClassPriority($pool->{'TrafficClassID'});
 	my $matchPriority = getPoolMemberMatchPriority($poolMember->{'ID'});
 
 	# Check if we have a entry for the /8, if not we must create our 2nd level hash table and link it
-	if (!defined($globals->{'TcFilterMappings'}->{$txInterface}->{'dst'}->{$matchPriority}->{$ip1})) {
+	if (!defined($globals->{'TcFilterMappings'}->{$txInterfaceID}->{'dst'}->{$matchPriority}->{$ip1})) {
 		# Grab filter ID's for 2nd level
-		my $filterID = _reserveTcFilter($txInterface,$matchPriority,$pool->{'ID'});
+		my $filterID = _reserveTcFilter($txInterfaceID,$matchPriority,$pool->{'ID'});
 		# Track our mapping
-		$globals->{'TcFilterMappings'}->{$txInterface}->{'dst'}->{$matchPriority}->{$ip1}->{'id'} = $filterID;
+		$globals->{'TcFilterMappings'}->{$txInterfaceID}->{'dst'}->{$matchPriority}->{$ip1}->{'id'} = $filterID;
 		$logger->log(LOG_DEBUG,"[TC] Linking 2nd level TX hash table to '%s' to '%s.0.0.0/8', priority '%s'",
 				$filterID,
 				$ip1,
 				$matchPriority
 		);
-		_tc_filter_add_dstlink($changeSet,$txInterface,TC_ROOT_CLASS,$matchPriority,$filterID,$config->{'ip_protocol'},800,"",
+		_tc_filter_add_dstlink($changeSet,$txInterfaceID,TC_ROOT_CLASS,$matchPriority,$filterID,$config->{'ip_protocol'},800,"",
 				"$ip1.0.0.0/8","00ff0000");
 	}
-	if (!defined($globals->{'TcFilterMappings'}->{$rxInterface}->{'src'}->{$matchPriority}->{$ip1})) {
+	if (!defined($globals->{'TcFilterMappings'}->{$rxInterfaceID}->{'src'}->{$matchPriority}->{$ip1})) {
 		# Grab filter ID's for 2nd level
-		my $filterID = _reserveTcFilter($rxInterface,$matchPriority,$pool->{'ID'});
+		my $filterID = _reserveTcFilter($rxInterfaceID,$matchPriority,$pool->{'ID'});
 		# Track our mapping
-		$globals->{'TcFilterMappings'}->{$rxInterface}->{'src'}->{$matchPriority}->{$ip1}->{'id'} = $filterID;
+		$globals->{'TcFilterMappings'}->{$rxInterfaceID}->{'src'}->{$matchPriority}->{$ip1}->{'id'} = $filterID;
 		$logger->log(LOG_DEBUG,"[TC] Linking 2nd level RX hash table to '%s' to '%s.0.0.0/8', priority '%s'",
 				$filterID,
 				$ip1,
 				$matchPriority
 		);
-		_tc_filter_add_srclink($changeSet,$rxInterface,TC_ROOT_CLASS,$matchPriority,$filterID,$config->{'ip_protocol'},800,"",
+		_tc_filter_add_srclink($changeSet,$rxInterfaceID,TC_ROOT_CLASS,$matchPriority,$filterID,$config->{'ip_protocol'},800,"",
 				"$ip1.0.0.0/8","00ff0000");
 	}
 
 	# Check if we have our /16 hash entry, if not we must create the 3rd level hash table
-	if (!defined($globals->{'TcFilterMappings'}->{$txInterface}->{'dst'}->{$matchPriority}->{$ip1}->{$ip2})) {
+	if (!defined($globals->{'TcFilterMappings'}->{$txInterfaceID}->{'dst'}->{$matchPriority}->{$ip1}->{$ip2})) {
 		# Grab filter ID's for 3rd level
-		my $filterID = _reserveTcFilter($txInterface,$matchPriority,$pool->{'ID'});
+		my $filterID = _reserveTcFilter($txInterfaceID,$matchPriority,$pool->{'ID'});
 		# Track our mapping
-		$globals->{'TcFilterMappings'}->{$txInterface}->{'dst'}->{$matchPriority}->{$ip1}->{$ip2}->{'id'} = $filterID;
+		$globals->{'TcFilterMappings'}->{$txInterfaceID}->{'dst'}->{$matchPriority}->{$ip1}->{$ip2}->{'id'} = $filterID;
 		# Grab some hash table ID's we need
-		my $ip1HtHex = $globals->{'TcFilterMappings'}->{$txInterface}->{'dst'}->{$matchPriority}->{$ip1}->{'id'};
+		my $ip1HtHex = $globals->{'TcFilterMappings'}->{$txInterfaceID}->{'dst'}->{$matchPriority}->{$ip1}->{'id'};
 		# And hex our IP component
 		my $ip2Hex = toHex($ip2);
 		$logger->log(LOG_DEBUG,"[TC] Linking 3rd level TX hash table to '%s' to '%s.%s.0.0/16', priority '%s'",
@@ -550,16 +612,16 @@ sub _session_poolmember_add
 				$ip2,
 				$matchPriority
 		);
-		_tc_filter_add_dstlink($changeSet,$txInterface,TC_ROOT_CLASS,$matchPriority,$filterID,$config->{'ip_protocol'},$ip1HtHex,
+		_tc_filter_add_dstlink($changeSet,$txInterfaceID,TC_ROOT_CLASS,$matchPriority,$filterID,$config->{'ip_protocol'},$ip1HtHex,
 				$ip2Hex,"$ip1.$ip2.0.0/16","0000ff00");
 	}
-	if (!defined($globals->{'TcFilterMappings'}->{$rxInterface}->{'src'}->{$matchPriority}->{$ip1}->{$ip2})) {
+	if (!defined($globals->{'TcFilterMappings'}->{$rxInterfaceID}->{'src'}->{$matchPriority}->{$ip1}->{$ip2})) {
 		# Grab filter ID's for 3rd level
-		my $filterID = _reserveTcFilter($rxInterface,$matchPriority,$pool->{'ID'});
+		my $filterID = _reserveTcFilter($rxInterfaceID,$matchPriority,$pool->{'ID'});
 		# Track our mapping
-		$globals->{'TcFilterMappings'}->{$rxInterface}->{'src'}->{$matchPriority}->{$ip1}->{$ip2}->{'id'} = $filterID;
+		$globals->{'TcFilterMappings'}->{$rxInterfaceID}->{'src'}->{$matchPriority}->{$ip1}->{$ip2}->{'id'} = $filterID;
 		# Grab some hash table ID's we need
-		my $ip1HtHex = $globals->{'TcFilterMappings'}->{$rxInterface}->{'src'}->{$matchPriority}->{$ip1}->{'id'};
+		my $ip1HtHex = $globals->{'TcFilterMappings'}->{$rxInterfaceID}->{'src'}->{$matchPriority}->{$ip1}->{'id'};
 		# And hex our IP component
 		my $ip2Hex = toHex($ip2);
 		$logger->log(LOG_DEBUG,"[TC] Linking 3rd level RX hash table to '%s' to '%s.%s.0.0/16', priority '%s'",
@@ -568,18 +630,18 @@ sub _session_poolmember_add
 				$ip2,
 				$matchPriority
 		);
-		_tc_filter_add_srclink($changeSet,$rxInterface,TC_ROOT_CLASS,$matchPriority,$filterID,$config->{'ip_protocol'},$ip1HtHex,
+		_tc_filter_add_srclink($changeSet,$rxInterfaceID,TC_ROOT_CLASS,$matchPriority,$filterID,$config->{'ip_protocol'},$ip1HtHex,
 				$ip2Hex,"$ip1.$ip2.0.0/16","0000ff00");
 	}
 
 	# Check if we have our /24 hash entry, if not we must create the 4th level hash table
-	if (!defined($globals->{'TcFilterMappings'}->{$txInterface}->{'dst'}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3})) {
+	if (!defined($globals->{'TcFilterMappings'}->{$txInterfaceID}->{'dst'}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3})) {
 		# Grab filter ID's for 4th level
-		my $filterID = _reserveTcFilter($txInterface,$matchPriority,$pool->{'ID'});
+		my $filterID = _reserveTcFilter($txInterfaceID,$matchPriority,$pool->{'ID'});
 		# Track our mapping
-		$globals->{'TcFilterMappings'}->{$txInterface}->{'dst'}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3}->{'id'} = $filterID;
+		$globals->{'TcFilterMappings'}->{$txInterfaceID}->{'dst'}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3}->{'id'} = $filterID;
 		# Grab some hash table ID's we need
-		my $ip2HtHex = $globals->{'TcFilterMappings'}->{$txInterface}->{'dst'}->{$matchPriority}->{$ip1}->{$ip2}->{'id'};
+		my $ip2HtHex = $globals->{'TcFilterMappings'}->{$txInterfaceID}->{'dst'}->{$matchPriority}->{$ip1}->{$ip2}->{'id'};
 		# And hex our IP component
 		my $ip3Hex = toHex($ip3);
 		$logger->log(LOG_DEBUG,"[TC] Linking 4th level TX hash table to '%s' to '%s.%s.%s.0/24', priority '%s'",
@@ -589,16 +651,16 @@ sub _session_poolmember_add
 				$ip3,
 				$matchPriority
 		);
-		_tc_filter_add_dstlink($changeSet,$txInterface,TC_ROOT_CLASS,$matchPriority,$filterID,$config->{'ip_protocol'},$ip2HtHex,
+		_tc_filter_add_dstlink($changeSet,$txInterfaceID,TC_ROOT_CLASS,$matchPriority,$filterID,$config->{'ip_protocol'},$ip2HtHex,
 				$ip3Hex,"$ip1.$ip2.$ip3.0/24","000000ff");
 	}
-	if (!defined($globals->{'TcFilterMappings'}->{$rxInterface}->{'src'}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3})) {
+	if (!defined($globals->{'TcFilterMappings'}->{$rxInterfaceID}->{'src'}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3})) {
 		# Grab filter ID's for 4th level
-		my $filterID = _reserveTcFilter($rxInterface,$matchPriority,$pool->{'ID'});
+		my $filterID = _reserveTcFilter($rxInterfaceID,$matchPriority,$pool->{'ID'});
 		# Track our mapping
-		$globals->{'TcFilterMappings'}->{$rxInterface}->{'src'}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3}->{'id'} = $filterID;
+		$globals->{'TcFilterMappings'}->{$rxInterfaceID}->{'src'}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3}->{'id'} = $filterID;
 		# Grab some hash table ID's we need
-		my $ip2HtHex = $globals->{'TcFilterMappings'}->{$rxInterface}->{'src'}->{$matchPriority}->{$ip1}->{$ip2}->{'id'};
+		my $ip2HtHex = $globals->{'TcFilterMappings'}->{$rxInterfaceID}->{'src'}->{$matchPriority}->{$ip1}->{$ip2}->{'id'};
 		# And hex our IP component
 		my $ip3Hex = toHex($ip3);
 		$logger->log(LOG_DEBUG,"[TC] Linking 4th level RX hash table to '%s' to '%s.%s.%s.0/24', priority '%s'",
@@ -608,7 +670,7 @@ sub _session_poolmember_add
 				$ip3,
 				$matchPriority
 		);
-		_tc_filter_add_srclink($changeSet,$rxInterface,TC_ROOT_CLASS,$matchPriority,$filterID,$config->{'ip_protocol'},$ip2HtHex,
+		_tc_filter_add_srclink($changeSet,$rxInterfaceID,TC_ROOT_CLASS,$matchPriority,$filterID,$config->{'ip_protocol'},$ip2HtHex,
 				$ip3Hex,"$ip1.$ip2.$ip3.0/24","000000ff");
 	}
 
@@ -621,7 +683,7 @@ sub _session_poolmember_add
 		# Get the TX class
 		my $tcClass_trafficClass = getPoolAttribute($pool->{'ID'},'tc.txclass');
 		# Grab some hash table ID's we need
-		my $ip3HtHex = $globals->{'TcFilterMappings'}->{$txInterface}->{'dst'}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3}->{'id'};
+		my $ip3HtHex = $globals->{'TcFilterMappings'}->{$txInterfaceID}->{'dst'}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3}->{'id'};
 		# And hex our IP component
 		my $ip4Hex = toHex($ip4);
 		$logger->log(LOG_DEBUG,"[TC] Linking pool member IP '%s' to class '%s' at hash endpoint '%s:%s'",
@@ -632,8 +694,8 @@ sub _session_poolmember_add
 		);
 
 		# Link filter to traffic flow (class)
-		_tc_filter_add_flowlink($changeSet,$txInterface,TC_ROOT_CLASS,$trafficPriority,$config->{'ip_protocol'},$ip3HtHex,$ip4Hex,
-				"dst",16,$poolMember->{'IPAddress'},$tcClass_trafficClass);
+		_tc_filter_add_flowlink($changeSet,$txInterfaceID,TC_ROOT_CLASS,$trafficPriority,$config->{'ip_protocol'},$ip3HtHex,
+				$ip4Hex,"dst",16,$poolMember->{'IPAddress'},$tcClass_trafficClass);
 
 		# Save pool member filter ID
 		setPoolMemberAttribute($poolMember->{'ID'},'tc.txfilter',"${ip3HtHex}:${ip4Hex}:1");
@@ -643,7 +705,7 @@ sub _session_poolmember_add
 		# Generate our limit TC class
 		my $tcClass_trafficClass = getPoolAttribute($pool->{'ID'},'tc.rxclass');
 		# Grab some hash table ID's we need
-		my $ip3HtHex = $globals->{'TcFilterMappings'}->{$rxInterface}->{'src'}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3}->{'id'};
+		my $ip3HtHex = $globals->{'TcFilterMappings'}->{$rxInterfaceID}->{'src'}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3}->{'id'};
 		# And hex our IP component
 		my $ip4Hex = toHex($ip4);
 		$logger->log(LOG_DEBUG,"[TC] Linking RX IP '%s' to class '%s' at hash endpoint '%s:%s'",
@@ -654,8 +716,8 @@ sub _session_poolmember_add
 		);
 
 		# Link filter to traffic flow (class)
-		_tc_filter_add_flowlink($changeSet,$rxInterface,TC_ROOT_CLASS,$trafficPriority,$config->{'ip_protocol'},$ip3HtHex,$ip4Hex,
-				"src",12,$poolMember->{'IPAddress'},$tcClass_trafficClass);
+		_tc_filter_add_flowlink($changeSet,$rxInterfaceID,TC_ROOT_CLASS,$trafficPriority,$config->{'ip_protocol'},$ip3HtHex,
+				$ip4Hex,"src",12,$poolMember->{'IPAddress'},$tcClass_trafficClass);
 
 		# Save pool member filter ID
 		setPoolMemberAttribute($poolMember->{'ID'},'tc.rxfilter',"${ip3HtHex}:${ip4Hex}:1");
@@ -706,8 +768,8 @@ sub _session_poolmember_remove
 	);
 
 	# Grab our interfaces
-	my $txInterface = getPoolTxInterface($pool->{'ID'});
-	my $rxInterface = getPoolRxInterface($pool->{'ID'});
+	my $txInterfaceID = getPoolTxInterface($pool->{'ID'});
+	my $rxInterfaceID = getPoolRxInterface($pool->{'ID'});
 	# Grab the filter ID's from the pool member which is linked to the traffic class
 	my $txFilter = getPoolMemberAttribute($poolMember->{'ID'},'tc.txfilter');
 	my $rxFilter = getPoolMemberAttribute($poolMember->{'ID'},'tc.rxfilter');
@@ -716,13 +778,15 @@ sub _session_poolmember_remove
 	my $trafficClassID = getPoolAttribute($pool->{'ID'},'shaper.live.ClassID');
 	my $trafficPriority = getTrafficClassPriority($trafficClassID);
 
+	my $txInterface = getInterface($txInterfaceID);
+	my $rxInterface = getInterface($rxInterfaceID);
 
 	my $changeSet = TC::ChangeSet->new();
 
 	# Clear up the filter
 	$changeSet->add([
 			'/sbin/tc','filter','del',
-				'dev',$txInterface,
+				'dev',$txInterface->{'Device'},
 				'parent','1:',
 				'prio',$trafficPriority,
 				'handle',$txFilter,
@@ -731,7 +795,7 @@ sub _session_poolmember_remove
 	]);
 	$changeSet->add([
 			'/sbin/tc','filter','del',
-				'dev',$rxInterface,
+				'dev',$rxInterface->{'Device'},
 				'parent','1:',
 				'prio',$trafficPriority,
 				'handle',$rxFilter,
@@ -819,6 +883,7 @@ sub _tc_iface_init
 	# Grab our interface rate
 	my $interface = getInterface($interfaceID);
 
+### --- Interface Setup
 
 	# Clear the qdisc from the interface
 	$changeSet->add([
@@ -828,13 +893,20 @@ sub _tc_iface_init
 	]);
 
 	# Initialize the major TC class
-	my $interfaceRootTcClas = _reserveMajorTcClass($interfaceID,"root");
+	my $interfaceTcClass = _reserveMajorTcClass($interfaceID,"root");
+
+	# Set interface RootClass
+	$globals->{'Interfaces'}->{$interfaceID} = {
+		'TcClass' => $interfaceTcClass
+	};
+
+### --- Interface Traffic Class Setup
 
 	# Reserve our parent TC classes
 	my @trafficClasses = getAllTrafficClasses();
 	foreach my $trafficClassID (sort {$a <=> $b} @trafficClasses) {
-		# We don't really need the result, we just need the class created
-		_reserveTcClassByTrafficClassID($interfaceID,$trafficClassID);
+		# Record the class we get for this interface traffic class ID
+		my $interfaceTrafficClassTcClass = _reserveMinorTcClassByTrafficClassID($interfaceID,$trafficClassID);
 	}
 
 	# Do we have a default pool? if so we must direct traffic there
@@ -846,6 +918,9 @@ sub _tc_iface_init
 		$defaultPoolTcClass = _getTcClassFromTrafficClassID($interfaceID,$defaultPool);
 		push(@qdiscOpts,'default',$defaultPoolTcClass);
 	}
+
+
+### --- Interface Setup Part 2
 
 	# Add root qdisc
 	$changeSet->add([
@@ -868,10 +943,20 @@ sub _tc_iface_init
 					'burst',"$interface->{'Limit'}kb",
 	]);
 
+	# Class 0 is our interface, it points to 1 (the major TcClass)) : 1 (class below)
+	$globals->{'Interfaces'}->{$interfaceID}->{'TrafficClasses'}->{'0'} = {
+		'TcClass' => '1',
+		'CIR' => $interface->{'Limit'},
+		'Limit' => $interface->{'Limit'}
+	};
+
+
+### --- Setup each class
 
 	# Setup the classes
 	foreach my $trafficClassID (@trafficClasses) {
-		my $interfaceTrafficClass = getEffectiveInterfaceTrafficClass($interfaceID,$trafficClassID);
+		my $interfaceTrafficClassID = isInterfaceTrafficClassValid($interfaceID,$trafficClassID);
+		my $interfaceTrafficClass = getEffectiveInterfaceTrafficClass2($interfaceTrafficClassID);
 		my $tcClass = _getTcClassFromTrafficClassID($interfaceID,$trafficClassID);
 		my $trafficPriority = getTrafficClassPriority($trafficClassID);
 
@@ -887,11 +972,19 @@ sub _tc_iface_init
 						'prio',$trafficPriority,
 						'burst', "$interfaceTrafficClass->{'Limit'}kb",
 		]);
+
+		# Setup interface traffic class details
+		$globals->{'Interfaces'}->{$interfaceID}->{'TrafficClasses'}->{$trafficClassID} = {
+			'TcClass' => $tcClass,
+			'CIR' => $interfaceTrafficClass->{'CIR'},
+			'Limit' => $interfaceTrafficClass->{'Limit'}
+		};
 	}
 
 	# Process our default pool traffic optimizations
 	if (defined($defaultPool)) {
-		my $interfaceTrafficClass = getEffectiveInterfaceTrafficClass($interfaceID,$defaultPool);
+		my $interfaceTrafficClassID = isInterfaceTrafficClassValid($interfaceID,$defaultPool);
+		my $interfaceTrafficClass = getEffectiveInterfaceTrafficClass2($interfaceTrafficClassID);
 
 
 		# If we have a rate for this iface, then use it
@@ -1473,8 +1566,21 @@ sub _tc_class_change
 
 	my $interface = getInterface($interfaceID);
 
-	# Set burst to a sane value
-	my $burst = int($ceil / 8 / 5);
+	my @args = ();
+
+	# Based on if ceil is avaiable, set burst
+	my $burst;
+	if (defined($ceil)) {
+		$burst = int($ceil / 8 / 5);
+	} else {
+		# If ceil is not available, set burst and ceil
+		$burst = $ceil = $rate;
+	}
+
+	# Check if we have a priority
+	if (defined($trafficPriority)) {
+		push(@args,'prio',$trafficPriority);
+	}
 
 	# Create main rate limiting classes
 	$changeSet->add([
@@ -1485,15 +1591,15 @@ sub _tc_class_change
 				'htb',
 					'rate', "${rate}kbit",
 					'ceil', "${ceil}kbit",
-					'prio', $trafficPriority,
 					'burst', "${burst}kb",
+					@args
 	]);
 }
 
 
 
 # Get a pool TC class from pool ID
-sub _reserveTcClassByPoolID
+sub _reserveMinorTcClassByPoolID
 {
 	my ($interfaceID,$pid) = @_;
 
@@ -1503,7 +1609,7 @@ sub _reserveTcClassByPoolID
 
 
 # Get a traffic class TC class
-sub _reserveTcClassByTrafficClassID
+sub _reserveMinorTcClassByTrafficClassID
 {
 	my ($interfaceID,$trafficClassID) = @_;
 

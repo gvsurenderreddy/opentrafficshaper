@@ -49,15 +49,16 @@ use opentrafficshaper::logger;
 use opentrafficshaper::plugins;
 use opentrafficshaper::plugins::configmanager qw(
 	getInterfaces
-	getInterfaceTrafficClass
 	getInterface
 
 	getTrafficClass
 	getAllTrafficClasses
 
+	getInterfaceTrafficClass
+	changeInterfaceTrafficClass
+
 	isInterfaceIDValid
 
-	changeTrafficClass
 	isTrafficClassIDValid
 );
 
@@ -91,45 +92,27 @@ sub default
 }
 
 
+
 # Admin configuration
 sub admin_config
 {
 	my ($kernel,$globals,$client_session_id,$request) = @_;
 
 
-	# Items for our form...
-	my @formElements = qw(
-		FriendlyName
-		Identifier
-		ClassID
-		TrafficLimitTx TrafficLimitTxBurst
-		TrafficLimitRx TrafficLimitRxBurst
-		Notes
-	);
-
 	# Grab stuff we need
-	my $interfaces = getInterfaces();
+	my @interfaces = getInterfaces();
 
+
+	# Errors to display above the form
+	my @errors;
 
 	# Build content
 	my $content = "";
 
-	# Header
+	# Form header
 	$content .=<<EOF;
-		<!-- Config Tabs -->
-		<ul class="nav nav-tabs" id="configTabs">
-			<li class="active"><a href="#interfaces" data-toggle="tab">Interfaces</a></li>
-			<li><a href="#system" data-toggle="tab">System (TODO)</a></li>
-		</ul>
-		<!-- Tab panes -->
-		<div class="tab-content">
-			<div class="tab-pane active" id="interfaces">
+		<legend>Interface Rate Setup</legend>
 EOF
-
-
-	# Title of the form, by default its an add form
-	my $formType = "Add";
-	my $formNoEdit = "";
 	# Form data
 	my $formData;
 
@@ -138,10 +121,86 @@ EOF
 	if ($request->method eq "POST") {
 		# Parse form data
 		my $form = parseFormContent($request->content);
-		use Data::Dumper; warn "CONTENTDATA: ".Dumper($request->content);
-		use Data::Dumper; warn "FORMDATA: ".Dumper($form);
+
+		# Loop with rate changes
+		my $rateChanges = { };
+		foreach my $elementName (keys %{$form}) {
+			my $rateChange = $form->{$elementName};
+
+			# Skip over blanks
+			if ($rateChange->{'value'} =~ /^\s*$/) {
+				next;
+			}
+			# Split off the various components of the element name
+			my ($item,$interfaceID,$trafficClassID) = ($elementName =~ /^((?:CIR|Limit))\[([a-z0-9:.]+)\]\[([0-9]+)\]$/);
+			# Make sure everything is defined
+			if (!defined($item) || !defined($interfaceID) || !defined($trafficClassID)) {
+				push(@errors,"Invalid data received");
+				last;
+			}
+
+			# Check interface exists
+			if (!defined($interfaceID = isInterfaceIDValid($interfaceID))) {
+				push(@errors,"Invalid data received, interface ID is invalid");
+				last;
+			}
+			# Check class is valid
+			if (
+					!defined($trafficClassID = isNumber($trafficClassID,ISNUMBER_ALLOW_ZERO)) ||
+					($trafficClassID && !isTrafficClassIDValid($trafficClassID))
+			) {
+				push(@errors,"Invalid class ID received for interface [$interfaceID]");
+				last;
+			}
+			# Check value is valid
+			if (!defined($rateChange->{'value'} = isNumber($rateChange->{'value'}))) {
+				push(@errors,"Invalid value received for interface [$interfaceID], class [$trafficClassID]");
+				last;
+			}
+
+			$rateChanges->{$interfaceID}->{$trafficClassID}->{$item} = $rateChange->{'value'};
+		}
+# FIXME - check speed does not exceed inteface speed
+		# Check if there are no errors
+		if (!@errors) {
+			# Loop with interfaces
+			foreach my $interfaceID (keys %{$rateChanges}) {
+				my $trafficClasses = $rateChanges->{$interfaceID};
+
+				# Loop with traffic classes
+				foreach my $trafficClassID (keys %{$trafficClasses}) {
+					my $trafficClass = $trafficClasses->{$trafficClassID};
+
+					# Set some additional items we need
+					$trafficClass->{'InterfaceID'} = $interfaceID;
+					$trafficClass->{'TrafficClassID'} = $trafficClassID;
+					# Push changes
+					changeInterfaceTrafficClass($trafficClass);
+				}
+			}
+
+			return (HTTP_TEMPORARY_REDIRECT,"/configmanager");
+		}
 	}
 
+
+	# Header
+	$content .=<<EOF;
+		<!-- Config Tabs -->
+		<ul class="nav nav-tabs" id="configTabs">
+			<li class="active"><a href="#interfaces" data-toggle="tab">Interfaces</a></li>
+		</ul>
+		<!-- Tab panes -->
+		<div class="tab-content">
+			<div class="tab-pane active" id="interfaces">
+EOF
+
+	# Spit out errors if we have any
+	if (@errors > 0) {
+		foreach my $error (@errors) {
+			$content .= '<div class="alert alert-danger">'.encode_entities($error).'</div>';
+		}
+	}
 
 	# Interfaces tab setup
 	$content .=<<EOF;
@@ -150,14 +209,21 @@ EOF
 				<ul class="nav nav-tabs" id="configInterfaceTabs">
 EOF
 	my $firstPaneActive = " active";
-	foreach my $interface (@{$interfaces}) {
+	foreach my $interfaceID (@interfaces) {
+		my $interface = getInterface($interfaceID);
+		my $encodedInterfaceID = encode_entities($interfaceID);
+		my $encodedInterfaceName = encode_entities($interface->{'Name'});
+
+
 		$content .=<<EOF;
-					<li class="$firstPaneActive"><a href="#interface$interface" data-toggle="tab">Interface: $interface</a></li>
+					<li class="$firstPaneActive">
+						<a href="#interface$encodedInterfaceID" data-toggle="tab">
+							Interface: $encodedInterfaceName
+						</a>
+					</li>
 EOF
 		# No longer the first pane
 		$firstPaneActive = "";
-
-		$formData->{"MainTrafficLimitTx[$interface]"} = getInterfaceRate($interface);
 	}
 	$content .=<<EOF;
 				</ul>
@@ -167,17 +233,26 @@ EOF
 
 	# Suck in list of interfaces
 	$firstPaneActive = " active";
-	foreach my $interface (@{$interfaces}) {
+	foreach my $interfaceID (@interfaces) {
+		my $interface = getInterface($interfaceID);
+		my $encodedInterfaceID = encode_entities($interfaceID);
+		my $encodedInterfaceName = encode_entities($interface->{'Name'});
+		my $encodedInterfaceLimit = encode_entities($interface->{'Limit'});
+
+
 		# Interface tab
 		$content .=<<EOF;
-					<div class="tab-pane$firstPaneActive" id="interface$interface">
+					<div class="tab-pane$firstPaneActive" id="interface$encodedInterfaceID">
 EOF
 		# No longer the first pane
 		$firstPaneActive = "";
 
 		# Sanitize params if we need to
-		foreach my $item (@formElements) {
-			$formData->{$item} = defined($formData->{$item}) ? encode_entities($formData->{$item}) : "";
+		if (defined($formData->{"Limit[$encodedInterfaceID][0]"})) {
+		   $formData->{"Limit[$encodedInterfaceID][0]"} =
+				   encode_entities($formData->{"Limit[$encodedInterfaceID][0]"});
+		} else {
+		   $formData->{"Limit[$encodedInterfaceID][0]"} = "";
 		}
 
 
@@ -192,52 +267,70 @@ EOF
 		#
 		$content .=<<EOF;
 							<br />
-							<legend>Main: $interface</legend>
+							<legend>Main: $encodedInterfaceName</legend>
 							<div class="form-group">
-								<label for="TrafficLimitTx" class="col-md-1 control-label">CIR</label>
+								<label for="Limit" class="col-md-1 control-label">Speed</label>
 								<div class="row">
 									<div class="col-md-3">
 										<div class="input-group">
-											<input name="MainTrafficLimitTx[$interface]" type="text" placeholder="CIR" class="form-control" value="$formData->{"MainTrafficLimitTx[$interface]"}" />
+											<input name="Limit[$encodedInterfaceID][0]" type="text"
+													placeholder="$encodedInterfaceLimit" class="form-control"
+													value="$formData->{"Limit[$encodedInterfaceID][0]"}" />
 											<span class="input-group-addon">Kbps *<span>
-										</div>
-									</div>
-
-									<label for="TrafficLimitTxBurst" class="col-md-1 control-label">Limit</label>
-									<div class="col-md-3">
-										<div class="input-group">
-											<input name="MainTrafficLimitTxBurst[$interface]" type="text" placeholder="Limit" class="form-control" value="$formData->{'TrafficLimitTxBurst'}" />
-											<span class="input-group-addon">Kbps<span>
 										</div>
 									</div>
 								</div>
 							</div>
 EOF
 
-		my $classes = getInterfaceTrafficClasses($interface);
-		foreach my $class (sort { $a <=> $b } keys %{$classes}) {
-			my $className = getTrafficClassName($class);
-			my $classNameStr = encode_entities($className);
+		# Grab classes and loop
+		my @trafficClasses = getAllTrafficClasses();
+		foreach my $trafficClassID (sort { $a <=> $b } @trafficClasses) {
+			my $trafficClass = getTrafficClass($trafficClassID);
+			my $encodedTrafficClassID = encode_entities($trafficClassID);
+			my $encodedTrafficClassName = encode_entities($trafficClass->{'Name'});
+			my $interfaceTrafficClass = getInterfaceTrafficClass($interfaceID,$trafficClassID);
+			my $encodedInterfaceTrafficClassCIR = encode_entities($interfaceTrafficClass->{'CIR'});
+			my $encodedInterfaceTrafficClassLimit = encode_entities($interfaceTrafficClass->{'Limit'});
+
+
+			# Sanitize params if we need to
+			if (defined($formData->{"CIR[$encodedInterfaceID][$encodedTrafficClassID]"})) {
+			   $formData->{"CIR[$encodedInterfaceID][$encodedTrafficClassID]"} =
+					   encode_entities($formData->{"CIR[$encodedInterfaceID][$encodedTrafficClassID]"});
+			} else {
+			   $formData->{"CIR[$encodedInterfaceID][$encodedTrafficClassID]"} = "";
+			}
+			if (defined($formData->{"Limit[$encodedInterfaceID][$encodedTrafficClassID]"})) {
+			   $formData->{"Limit[$encodedInterfaceID][$encodedTrafficClassID]"} =
+					   encode_entities($formData->{"Limit[$encodedInterfaceID][$encodedTrafficClassID]"});
+			} else {
+			   $formData->{"Limit[$encodedInterfaceID][$encodedTrafficClassID]"} = "";
+			}
 
 			#
 			# Page content
 			#
 			$content .=<<EOF;
-							<legend>Class: $interface - $classNameStr</legend>
+							<legend>Class: $encodedInterfaceName - $encodedTrafficClassName</legend>
 							<div class="form-group">
-								<label for="TrafficLimitTx" class="col-md-1 control-label">CIR</label>
+								<label for="TxCIR" class="col-md-1 control-label">CIR</label>
 								<div class="row">
 									<div class="col-md-3">
 										<div class="input-group">
-											<input name="ClassTrafficLimitTx[$interface] x y [$class]" type="text" placeholder="CIR" class="form-control" value="$formData->{'TrafficLimitTx'}" />
+											<input name="CIR[$encodedInterfaceID][$encodedTrafficClassID]" type="text"
+													placeholder="$encodedInterfaceTrafficClassCIR" class="form-control"
+													value="$formData->{"CIR[$encodedInterfaceID][$encodedTrafficClassID]"}" />
 											<span class="input-group-addon">Kbps *<span>
 										</div>
 									</div>
 
-									<label for="TrafficLimitTxBurst" class="col-md-1 control-label">Limit</label>
+									<label for="TxLimit" class="col-md-1 control-label">Limit</label>
 									<div class="col-md-3">
 										<div class="input-group">
-											<input name="ClassTrafficLimitTxBurst[$interface][$class]" type="text" placeholder="Limit" class="form-control" value="$formData->{'TrafficLimitTxBurst'}" />
+											<input name="Limit[$encodedInterfaceID][$encodedTrafficClassID]" type="text"
+													placeholder="$encodedInterfaceTrafficClassLimit" class="form-control"
+													value="$formData->{"Limit[$encodedInterfaceID][$encodedTrafficClassID]"}" />
 											<span class="input-group-addon">Kbps<span>
 										</div>
 									</div>

@@ -55,7 +55,6 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 	isGroupIDValid
 
 	createTrafficClass
-	changeTrafficClass
 	getTrafficClass
 	getTrafficClasses
 	getInterfaceTrafficClass
@@ -67,7 +66,11 @@ our (@ISA,@EXPORT,@EXPORT_OK);
 	createInterface
 	createInterfaceClass
 	createInterfaceGroup
-	getEffectiveInterfaceTrafficClass
+	changeInterfaceTrafficClass
+	getEffectiveInterfaceTrafficClass2
+	isInterfaceTrafficClassValid
+	setInterfaceTrafficClassShaperState
+	unsetInterfaceTrafficClassShaperState
 
 	createLimit
 
@@ -176,6 +179,19 @@ sub POOL_PERSISTENT_ATTRIBUTES {
 	)
 }
 
+# Class attributes that can be changed (overridden)
+sub CLASS_CHANGE_ATTRIBUTES {
+	qw(
+		CIR Limit
+	)
+}
+
+# Class attributes that can be overidden
+sub CLASS_OVERRIDE_CHANGESET_ATTRIBUTES {
+	qw(
+		CIR Limit
+	)
+}
 
 # Mandatory pool member attributes
 sub POOLMEMBER_REQUIRED_ATTRIBUTES {
@@ -488,8 +504,12 @@ sub plugin_init
 	$globals->{'PoolOverrides'} = { };
 	$globals->{'PoolOverrideIDCounter'} = 1;
 
+	$globals->{'InterfaceTrafficClasses'} = { };
+	$globals->{'InterfaceTrafficClassCounter'} = 1;
+
 	$globals->{'PoolChangeQueue'} = { };
 	$globals->{'PoolMemberChangeQueue'} = { };
+	$globals->{'InterfaceTrafficClassChangeQueue'} = { };
 
 	# If we have global config, use it
 	my $gconfig = { };
@@ -882,6 +902,8 @@ sub plugin_init
 		}
 	}
 
+# TODO - loop and queue init interfaces?
+
 	# Check if we have a state file
 	if (defined(my $statefile = $system->{'file.config'}->{'system'}->{'statefile'})) {
 		$config->{'statefile'} = $statefile;
@@ -1032,6 +1054,40 @@ sub _session_tick
 		# Reset last cleanup time
 		$globals->{'LastCleanup'} = $now;
 	}
+
+	# Loop through interface traffic classes
+	while (my ($interfaceTrafficClassID, $interfaceTrafficClass) = each(%{$globals->{'InterfaceTrafficClassChangeQueue'}})) {
+		my $shaperState = getInterfaceTrafficClassShaperState($interfaceTrafficClassID);
+
+		# Traffic class has been changed
+		if ($interfaceTrafficClass->{'Status'} == CFGM_CHANGED) {
+			# If the shaper is live we can go ahead
+			if ($shaperState & SHAPER_LIVE) {
+				$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Interface traffic class [%s] has been modified, sending to shaper",
+						$interfaceTrafficClassID
+				);
+				$kernel->post('shaper' => 'class_change' => $interfaceTrafficClassID);
+				# Set pending online
+				setInterfaceTrafficClassShaperState($interfaceTrafficClassID,SHAPER_PENDING);
+				$interfaceTrafficClass->{'Status'} = CFGM_ONLINE;
+				# Remove from queue
+				delete($globals->{'InterfaceTrafficClassChangeQueue'}->{$interfaceTrafficClassID});
+
+			} else {
+				$logger->log(LOG_ERR,"[CONFIGMANAGER] Interface traffic class [%s] has UNKNOWN state '%s'",
+						$interfaceTrafficClassID,
+						$shaperState
+				);
+			}
+
+		} else {
+			$logger->log(LOG_ERR,"[CONFIGMANAGER] Interface traffic class [%s] has UNKNOWN status '%s'",
+					$interfaceTrafficClassID,
+					$interfaceTrafficClass->{'Status'}
+			);
+		}
+	}
+
 
 	# Loop through pool change queue
 	while (my ($pid, $pool) = each(%{$globals->{'PoolChangeQueue'}})) {
@@ -1672,22 +1728,55 @@ sub getInterfaceTrafficClass
 	if (!isInterfaceIDValid($interfaceID)) {
 		return;
 	}
-	# Check if t raffic class ID is valid
-	if (!isTrafficClassIDValid($trafficClassID)) {
+	# Check if traffic class ID is valid
+	if (!defined($trafficClassID = isNumber($trafficClassID,ISNUMBER_ALLOW_ZERO))) {
+		return;
+	}
+	if ($trafficClassID && !isTrafficClassIDValid($trafficClassID)) {
 		return;
 	}
 
-	my $class = dclone($globals->{'Interfaces'}->{$interfaceID}->{'TrafficClasses'}->{$trafficClassID});
+	my $interfaceTrafficClass = dclone($globals->{'Interfaces'}->{$interfaceID}->{'TrafficClasses'}->{$trafficClassID});
 
-	$class->{'Name'} = $globals->{'TrafficClasses'}->{$trafficClassID};
+	# Check if the traffic class ID is not 0
+	if ($trafficClassID) {
+		$interfaceTrafficClass->{'Name'} = $globals->{'TrafficClasses'}->{$trafficClassID}->{'Name'};
+	# If if it 0, this is a root class
+	} else {
+		$interfaceTrafficClass->{'Name'} = "Root Class";
+	}
 
-	return $class;
+	delete($interfaceTrafficClass->{'.applied_overrides'});
+
+	return $interfaceTrafficClass;
+}
+
+
+
+# Function to get a interface traffic class
+sub getInterfaceTrafficClass2
+{
+	my $interfaceTrafficClassID = shift;
+
+
+	# Check if this interface ID is valid
+	if (!isInterfaceTrafficClassIDValid2($interfaceTrafficClassID)) {
+		return;
+	}
+
+	my $interfaceTrafficClass = dclone($globals->{'InterfaceTrafficClasses'}->{$interfaceTrafficClassID});
+
+	$interfaceTrafficClass->{'Name'} = $globals->{'TrafficClasses'}->{$interfaceTrafficClass->{'TrafficClassID'}};
+
+	delete($interfaceTrafficClass->{'.applied_overrides'});
+
+	return $interfaceTrafficClass;
 }
 
 
 
 # Function to check if traffic class is valid
-sub isInterfaceTrafficClassIDValid
+sub isInterfaceTrafficClassValid
 {
 	my ($interfaceID,$trafficClassID) = @_;
 
@@ -1700,7 +1789,228 @@ sub isInterfaceTrafficClassIDValid
 		return;
 	}
 
-	return $trafficClassID;
+	return $globals->{'Interfaces'}->{$interfaceID}->{'TrafficClasses'}->{$trafficClassID}->{'ID'};
+}
+
+
+
+# Function to check the interface traffic class ID is valid
+sub isInterfaceTrafficClassIDValid2
+{
+	my $interfaceTrafficClassID = shift;
+
+
+	if (
+			!defined($interfaceTrafficClassID) ||
+			!defined($globals->{'InterfaceTrafficClasses'}->{$interfaceTrafficClassID})
+	) {
+		return;
+	}
+
+	return $interfaceTrafficClassID;
+}
+
+
+
+# Function to create an interface class
+sub createInterfaceTrafficClass
+{
+	my $interfaceTrafficClassData = shift;
+
+
+	my $interfaceTrafficClass;
+
+	# Check if InterfaceID is valid
+	if (!defined($interfaceTrafficClass->{'InterfaceID'} = isInterfaceIDValid($interfaceTrafficClassData->{'InterfaceID'}))) {
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Failed to add interface traffic class as InterfaceID is invalid");
+		return;
+	}
+
+	# Check if traffic class ID is valid
+	my $interfaceTrafficClassID;
+	if (!defined($interfaceTrafficClassID = isNumber($interfaceTrafficClassData->{'TrafficClassID'},ISNUMBER_ALLOW_ZERO))) {
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process class change as there is no 'TrafficClassID' attribute");
+		return;
+	}
+	if ($interfaceTrafficClassID && !isTrafficClassIDValid($interfaceTrafficClassData->{'TrafficClassID'})) {
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process class change as 'TrafficClassID' attribute is invalid");
+		return;
+	}
+	$interfaceTrafficClass->{'TrafficClassID'} = $interfaceTrafficClassID;
+
+	# Check CIR is valid
+	if (!defined($interfaceTrafficClass->{'CIR'} = isNumber($interfaceTrafficClassData->{'CIR'}))) {
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Failed to add interface as CIR is invalid");
+		return;
+	}
+
+	# Check Limit is valid
+	if (!defined($interfaceTrafficClass->{'Limit'} = isNumber($interfaceTrafficClassData->{'Limit'}))) {
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Failed to add interface as Limit is invalid");
+		return;
+	}
+
+	# Set ID
+	$interfaceTrafficClass->{'ID'} = $globals->{'InterfaceTrafficClassCounter'}++;
+
+	# Set status
+	$interfaceTrafficClass->{'Status'} = CFGM_NEW;
+
+	# Add interface
+	$globals->{'Interfaces'}->{$interfaceTrafficClass->{'InterfaceID'}}->{'TrafficClasses'}
+			->{$interfaceTrafficClass->{'TrafficClassID'}} = $interfaceTrafficClass;
+
+	# Link to interface traffic classes
+	$globals->{'InterfaceTrafficClasses'}->{$interfaceTrafficClass->{'ID'}} = $interfaceTrafficClass;
+
+	# TODO: Hack, this should set NOTLIVE & NEW and have the shaper create as per note in plugin_init section
+	# Set status on this interface traffic class
+	setInterfaceTrafficClassShaperState($interfaceTrafficClass->{'ID'},SHAPER_LIVE);
+	$interfaceTrafficClass->{'Status'} = CFGM_ONLINE;
+
+	return $interfaceTrafficClass->{'TrafficClassID'};
+}
+
+
+
+# Function to change a traffic class
+sub changeInterfaceTrafficClass
+{
+	my $interfaceTrafficClassData = shift;
+
+
+	# Check interface exists first
+	my $interfaceID;
+	if (!defined($interfaceID = isInterfaceIDValid($interfaceTrafficClassData->{'InterfaceID'}))) {
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process interface class change as there is no 'InterfaceID' attribute");
+		return;
+	}
+
+	# Check if traffic class ID is valid
+	my $trafficClassID;
+	if (!defined($trafficClassID = isNumber($interfaceTrafficClassData->{'TrafficClassID'},ISNUMBER_ALLOW_ZERO))) {
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process class change as there is no 'TrafficClassID' attribute");
+		return;
+	}
+	if ($trafficClassID && !isTrafficClassIDValid($interfaceTrafficClassData->{'TrafficClassID'})) {
+		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process class change as 'TrafficClassID' attribute is invalid");
+		return;
+	}
+
+	my $interfaceTrafficClass =  $globals->{'Interfaces'}->{$interfaceID}->{'TrafficClasses'}->{$trafficClassID};
+
+	my $changes = getHashChanges($interfaceTrafficClass,$interfaceTrafficClassData,[CLASS_CHANGE_ATTRIBUTES]);
+
+	# Bump up changes
+	$globals->{'StateChanged'}++;
+
+	# Flag changed
+	$interfaceTrafficClass->{'Status'} = CFGM_CHANGED;
+
+	# XXX - hack our override in
+	$interfaceTrafficClass->{'.applied_overrides'}->{'change'} = $changes;
+
+	# Add to change queue
+	$globals->{'InterfaceTrafficClassChangeQueue'}->{$interfaceTrafficClass->{'ID'}} = $interfaceTrafficClass;
+
+	# Return what was changed
+	return dclone($changes);
+}
+
+
+
+# Function to return a class with any items changed as per class overrides
+sub getEffectiveInterfaceTrafficClass2
+{
+	my $interfaceTrafficClassID = shift;
+
+
+	my $interfaceTrafficClass;
+	if (!defined($interfaceTrafficClass = getInterfaceTrafficClass2($interfaceTrafficClassID))) {
+		return;
+	}
+
+	my $realInterfaceTrafficClass = $globals->{'InterfaceTrafficClasses'}->{$interfaceTrafficClassID};
+
+	# If we have applied class overrides, check out what changes there may be
+	if (defined(my $appliedClassOverrides = $realInterfaceTrafficClass->{'.applied_overrides'})) {
+		my $interfaceTrafficClassOverrideSet;
+
+		# Loop with class overrides in ascending fashion, least matches to most
+		foreach my $interfaceTrafficClassID (
+				sort { $appliedClassOverrides->{$a} <=> $appliedClassOverrides->{$b} } keys %{$appliedClassOverrides}
+		) {
+			my $interfaceTrafficClassOverride = $appliedClassOverrides->{$interfaceTrafficClassID};
+
+			# Loop with attributes and create our override set
+			foreach my $attr (CLASS_OVERRIDE_CHANGESET_ATTRIBUTES) {
+			# Set class override set attribute if the class override has defined it
+				if (defined($interfaceTrafficClassOverride->{$attr}) && $interfaceTrafficClassOverride->{$attr} ne "") {
+					$interfaceTrafficClassOverrideSet->{$attr} = $interfaceTrafficClassOverride->{$attr};
+				}
+			}
+		}
+		# Set class overrides on pool
+		if (defined($interfaceTrafficClassOverrideSet)) {
+			foreach my $attr (keys %{$interfaceTrafficClassOverrideSet}) {
+				$interfaceTrafficClass->{$attr} = $interfaceTrafficClassOverrideSet->{$attr};
+			}
+		}
+	}
+
+	return $interfaceTrafficClass;
+}
+
+
+
+# Function to set interface traffic class shaper state
+sub setInterfaceTrafficClassShaperState
+{
+	my ($interfaceTrafficClassID,$state) = @_;
+
+
+	# Check interface traffic class exists first
+	if (!isInterfaceTrafficClassIDValid2($interfaceTrafficClassID)) {
+		return;
+	}
+
+	$globals->{'InterfacesTrafficClasses'}->{$interfaceTrafficClassID}->{'.shaper_state'} |= $state;
+
+	return $globals->{'InterfacesTrafficClasses'}->{$interfaceTrafficClassID}->{'.shaper_state'};
+}
+
+
+
+# Function to unset interface traffic class shaper state
+sub unsetInterfaceTrafficClassShaperState
+{
+	my ($interfaceTrafficClassID,$state) = @_;
+
+
+	# Check interface traffic class exists first
+	if (!isInterfaceTrafficClassIDValid2($interfaceTrafficClassID)) {
+		return;
+	}
+
+	$globals->{'InterfacesTrafficClasses'}->{$interfaceTrafficClassID}->{'.shaper_state'} &= ~$state;
+
+	return $globals->{'InterfacesTrafficClasses'}->{$interfaceTrafficClassID}->{'.shaper_state'};
+}
+
+
+
+# Function to get shaper state for a interface traffic class
+sub getInterfaceTrafficClassShaperState
+{
+	my $interfaceTrafficClassID = shift;
+
+
+	# Check interface traffic class exists first
+	if (!isInterfaceTrafficClassIDValid2($interfaceTrafficClassID)) {
+		return;
+	}
+
+	return $globals->{'InterfacesTrafficClasses'}->{$interfaceTrafficClassID}->{'.shaper_state'};
 }
 
 
@@ -1795,6 +2105,14 @@ sub createInterface
 	# Add interface
 	$globals->{'Interfaces'}->{$interface->{'ID'}} = $interface;
 
+	# Create interface main traffic class
+	createInterfaceTrafficClass({
+			'InterfaceID' => $interface->{'ID'},
+			'TrafficClassID' => 0,
+			'CIR' => $interfaceData->{'Limit'},
+			'Limit' => $interfaceData->{'Limit'},
+	});
+
 	return $interface->{'ID'};
 }
 
@@ -1852,141 +2170,6 @@ sub getInterfaceDefaultPool
 
 	# We don't really need the interface to return the default pool
 	return $globals->{'DefaultPool'};
-}
-
-
-
-# Function to create an interface class
-sub createInterfaceTrafficClass
-{
-	my $trafficClassData = shift;
-
-
-	my $trafficClass;
-
-	# Check if InterfaceID is valid
-	if (!defined($trafficClass->{'InterfaceID'} = isInterfaceIDValid($trafficClassData->{'InterfaceID'}))) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Failed to add interface traffic class as InterfaceID is invalid");
-		return;
-	}
-
-	# Check if TrafficClass is valid
-	if (!defined($trafficClass->{'TrafficClassID'} = isTrafficClassIDValid($trafficClassData->{'TrafficClassID'}))) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Failed to add interface traffic class as TrafficClassID is invalid");
-		return;
-	}
-
-	# Check CIR is valid
-	if (!defined($trafficClass->{'CIR'} = isNumber($trafficClassData->{'CIR'}))) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Failed to add interface as CIR is invalid");
-		return;
-	}
-
-	# Check Limit is valid
-	if (!defined($trafficClass->{'Limit'} = isNumber($trafficClassData->{'Limit'}))) {
-		$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Failed to add interface as Limit is invalid");
-		return;
-	}
-
-	# Add interface
-	$globals->{'Interfaces'}->{$trafficClass->{'InterfaceID'}}->{'TrafficClasses'}
-			->{$trafficClass->{'TrafficClassID'}} = $trafficClass;
-
-	return $trafficClass->{'TrafficClassID'};
-}
-
-
-
-# Function to change a traffic class
-sub changeInterfaceTrafficClass
-{
-	my $classData = shift;
-
-
-	# Check interface exists first
-	if (!isInterfaceIDValid($classData->{'InterfaceID'})) {
-		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process class change as there is no 'InterfaceID' attribute");
-		return;
-	}
-
-	if (
-			!defined(isNumber($classData->{'TrafficClassID'},ISNUMBER_ALLOW_ZERO)) ||
-			($classData->{'TrafficClassID'} && !isTrafficClassIDValid($classData->{'TrafficClassID'}))
-	) {
-		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process class change as there is no 'TrafficClassID' attribute");
-		return;
-	}
-
-	my $interfaceClass = getInterfaceTrafficClass($classData->{'InterfaceID'},$classData->{'TrafficClassID'});
-
-	my $changes = getHashChanges($interfaceClass,$classData,[CLASS_CHANGE_ATTRIBUTES]);
-	# Make changes...
-	foreach my $item (keys %{$changes}) {
-		$interfaceClass->{$item} = $changes->{$item};
-	}
-
-	# Bump up changes
-	$globals->{'StateChanged'}++;
-
-# FIXME - Add to change queue?
-# - Create getEffectiveTrafficClass
-#	$kernel->post('shaper' => 'class_change' => $classData->{'InterfaceID'} => $classData->{'TrafficClassID'});
-
-
-	# Return what was changed
-	return dclone($changes);
-}
-
-
-
-# FIXME
-# Function to return a class with any items changed as per class overrides
-sub getEffectiveInterfaceTrafficClass
-{
-	my ($interfaceID,$trafficClassID) = @_;
-
-
-	# Check everything exists first
-	if (!isInterfaceIDValid($interfaceID)) {
-		return;
-	}
-
-	if (!isTrafficClassIDValid($trafficClassID)) {
-		return;
-	}
-
-	my $class = $globals->{'Interfaces'}->{$interfaceID}->{'TrafficClasses'}->{$trafficClassID};
-
-	# FIXME
-#	# If we have applied class overrides, check out what changes there may be
-#	if (defined(my $appliedClassOverrides = $class->{'.applied_overrides'})) {
-#		my $classOverrideSet;
-#
-#		# Loop with class overrides in ascending fashion, least matches to most
-#		foreach my $poid ( sort { $appliedClassOverrides->{$a} <=> $appliedClassOverrides->{$b} } keys %{$appliedClassOverrides}) {
-#			my $classOverride = $classOverrides->{$poid};
-#
-#			# Loop with attributes and create our override set
-#			foreach my $attr (CLASS_OVERRIDE_CHANGESET_ATTRIBUTES) {
-#				# Set class override set attribute if the class override has defined it
-#				if (defined($classOverride->{$attr}) && $classOverride->{$attr} ne "") {
-#					$classOverrideSet->{$attr} = $classOverride->{$attr};
-#				}
-#			}
-#		}
-#
-#		# Set class overrides on pool
-#		if (defined($classOverrideSet)) {
-#			foreach my $attr (keys %{$classOverrideSet}) {
-#				$class->{$attr} = $classOverrideSet->{$attr};
-#			}
-#		}
-#	}
-
-	$class->{'InterfaceID'} = $interfaceID;
-	$class->{'TrafficClassID'} = $trafficClassID;
-
-	return $class;
 }
 
 
