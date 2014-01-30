@@ -1092,7 +1092,7 @@ sub _session_tick
 
 	# Loop through pool change queue
 	while (my ($pid, $pool) = each(%{$globals->{'PoolChangeQueue'}})) {
-		my $shaperState = getPoolShaperState($pool->{'ID'});
+		my $shaperState = getPoolShaperState($pid);
 
 		# Pool is newly added
 		if ($pool->{'Status'} == CFGM_NEW) {
@@ -1105,7 +1105,7 @@ sub _session_tick
 				);
 				$kernel->post('shaper' => 'pool_add' => $pid);
 				# Set pending online
-				setPoolShaperState($pool->{'ID'},SHAPER_PENDING);
+				setPoolShaperState($pid,SHAPER_PENDING);
 				$pool->{'Status'} = CFGM_ONLINE;
 				# Remove from queue
 				delete($globals->{'PoolChangeQueue'}->{$pid});
@@ -1149,7 +1149,7 @@ sub _session_tick
 				);
 				$kernel->post('shaper' => 'pool_change' => $pid);
 				# Set pending online
-				setPoolShaperState($pool->{'ID'},SHAPER_PENDING);
+				setPoolShaperState($pid,SHAPER_PENDING);
 				$pool->{'Status'} = CFGM_ONLINE;
 				# Remove from queue
 				delete($globals->{'PoolChangeQueue'}->{$pid});
@@ -1184,7 +1184,7 @@ sub _session_tick
 								$pid
 						);
 						$kernel->post('shaper' => 'pool_remove' => $pid);
-						setPoolShaperState($pool->{'ID'},SHAPER_PENDING);
+						setPoolShaperState($pid,SHAPER_PENDING);
 					} else {
 						$logger->log(LOG_NOTICE,"[CONFIGMANAGER] Pool '%s' [%s] marked offline, but still has pool members, ".
 								"aborting remove",
@@ -1223,13 +1223,13 @@ sub _session_tick
 				# Remove pool from name map
 				delete($globals->{'PoolNameMap'}->{$pool->{'InterfaceGroupID'}}->{$pool->{'Name'}});
 				# Remove pool member mapping
-				delete($globals->{'PoolMemberMap'}->{$pool->{'ID'}});
+				delete($globals->{'PoolMemberMap'}->{$pid});
 				# Remove from queue
 				delete($globals->{'PoolChangeQueue'}->{$pid});
 				# Cleanup pool overrides
-				_remove_pool_override($pool->{'ID'});
+				_remove_pool_override($pid);
 				# Remove pool
-				delete($globals->{'Pools'}->{$pool->{'ID'}});
+				delete($globals->{'Pools'}->{$pid});
 			}
 
 		} else {
@@ -1252,7 +1252,7 @@ sub _session_tick
 			next;
 		}
 
-		my $shaperState = getPoolMemberShaperState($poolMember->{'ID'});
+		my $shaperState = getPoolMemberShaperState($pmid);
 
 		# Pool member is newly added
 		if ($poolMember->{'Status'} == CFGM_NEW) {
@@ -1266,7 +1266,7 @@ sub _session_tick
 				);
 				$kernel->post('shaper' => 'poolmember_add' => $pmid);
 				# Set pending online
-				setPoolMemberShaperState($poolMember->{'ID'},SHAPER_PENDING);
+				setPoolMemberShaperState($pmid,SHAPER_PENDING);
 				$poolMember->{'Status'} = CFGM_ONLINE;
 				# Remove from queue
 				delete($globals->{'PoolMemberChangeQueue'}->{$pmid});
@@ -1315,7 +1315,7 @@ sub _session_tick
 				);
 				$kernel->post('shaper' => 'poolmember_change' => $pmid);
 				# Set pending online
-				setPoolMemberShaperState($poolMember->{'ID'},SHAPER_PENDING);
+				setPoolMemberShaperState($pmid,SHAPER_PENDING);
 				$poolMember->{'Status'} = CFGM_ONLINE;
 				# Remove from queue
 				delete($globals->{'PoolMemberChangeQueue'}->{$pmid});
@@ -1353,7 +1353,7 @@ sub _session_tick
 							$pmid
 					);
 					$kernel->post('shaper' => 'poolmember_remove' => $pmid);
-					setPoolMemberShaperState($poolMember->{'ID'},SHAPER_PENDING);
+					setPoolMemberShaperState($pmid,SHAPER_PENDING);
 
 				} else {
 					$logger->log(LOG_INFO,"[CONFIGMANAGER] Pool '%s' member '%s' [%s] marked offline and fresh, postponing",
@@ -1371,15 +1371,15 @@ sub _session_tick
 				);
 				# Unlink interface IP address map
 				delete($globals->{'InterfaceGroups'}->{$pool->{'InterfaceGroupID'}}->{'IPMap'}->{$poolMember->{'IPAddress'}}
-						->{$poolMember->{'ID'}});
+						->{$pmid});
 				# Unlink pool map
-				delete($globals->{'PoolMemberMap'}->{$pool->{'ID'}}->{$poolMember->{'ID'}});
+				delete($globals->{'PoolMemberMap'}->{$pool->{'ID'}}->{$pmid});
 				# Remove from queue
 				delete($globals->{'PoolMemberChangeQueue'}->{$pmid});
 				# We need to re-process the pool overrides after the member has been removed
 				_resolve_pool_override([$poolMember->{'PoolID'}]);
 				# Remove pool member
-				delete($globals->{'PoolMembers'}->{$poolMember->{'ID'}});
+				delete($globals->{'PoolMembers'}->{$pmid});
 
 				# FIXME - Recheck IP conflicts and mark at least one pool member as unconflicted
 			}
