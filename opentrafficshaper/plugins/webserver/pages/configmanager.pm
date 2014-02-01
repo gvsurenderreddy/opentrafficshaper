@@ -55,6 +55,7 @@ use opentrafficshaper::plugins::configmanager qw(
 	getAllTrafficClasses
 
 	getInterfaceTrafficClass
+	getEffectiveInterfaceTrafficClass2
 	changeInterfaceTrafficClass
 
 	isInterfaceIDValid
@@ -237,7 +238,12 @@ EOF
 		my $interface = getInterface($interfaceID);
 		my $encodedInterfaceID = encode_entities($interfaceID);
 		my $encodedInterfaceName = encode_entities($interface->{'Name'});
-		my $encodedInterfaceLimit = encode_entities($interface->{'Limit'});
+
+		# Root class
+		my $interfaceTrafficClass = getInterfaceTrafficClass($interfaceID,0);
+		my $effectiveInterfaceTrafficClass = getEffectiveInterfaceTrafficClass2($interfaceTrafficClass->{'ID'});
+
+		my $encodedInterfaceLimit = encode_entities($effectiveInterfaceTrafficClass->{'Limit'});
 
 
 		# Interface tab
@@ -289,9 +295,12 @@ EOF
 			my $trafficClass = getTrafficClass($trafficClassID);
 			my $encodedTrafficClassID = encode_entities($trafficClassID);
 			my $encodedTrafficClassName = encode_entities($trafficClass->{'Name'});
-			my $interfaceTrafficClass = getInterfaceTrafficClass($interfaceID,$trafficClassID);
-			my $encodedInterfaceTrafficClassCIR = encode_entities($interfaceTrafficClass->{'CIR'});
-			my $encodedInterfaceTrafficClassLimit = encode_entities($interfaceTrafficClass->{'Limit'});
+
+			$interfaceTrafficClass = getInterfaceTrafficClass($interfaceID,$trafficClassID);
+			$effectiveInterfaceTrafficClass = getEffectiveInterfaceTrafficClass2($interfaceTrafficClass->{'ID'});
+
+			my $encodedInterfaceTrafficClassCIR = encode_entities($effectiveInterfaceTrafficClass->{'CIR'});
+			my $encodedInterfaceTrafficClassLimit = encode_entities($effectiveInterfaceTrafficClass->{'Limit'});
 
 
 			# Sanitize params if we need to
