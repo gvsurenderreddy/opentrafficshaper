@@ -100,7 +100,6 @@ function awit_flot_draw_graph(options) {
 			{
 				position: 'right',
                 min: 0,
-				alignTicksWithAxis: true,
 				tickDecimals: false
 			}
 		]
