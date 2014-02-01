@@ -153,6 +153,7 @@ sub pool_list
 					<th>Friendly Name</th>
 					<th>Name</th>
 					<th>Expires</th>
+					<th>Members</th>
 					<th></th>
 					<th>Class</th>
 					<th>CIR (Kbps)</th>
@@ -192,6 +193,7 @@ EOF
 				($pool->{'Expires'} > 0) ? DateTime->from_epoch( epoch => $pool->{'Expires'} )->iso8601() : '-never-'
 		);
 
+		my $poolMemberCount = getPoolMembers($pool->{'ID'});
 
 
 		my $trafficClass = getTrafficClass($pool->{'TrafficClassID'});
@@ -226,10 +228,11 @@ EOF
 					<td>$poolFriendlyNameEncoded</td>
 					<td>$poolNameEncoded</td>
 					<td>$poolExpiresStr</td>
+					<td class="align-right">$poolMemberCount</td>
 					<td><span class="glyphicon glyphicon-arrow-right" /></td>
-					<td>$trafficClassNameEncoded</td>
-					<td>$poolCIRStr</td>
-					<td>$poolLimitStr</td>
+					<td class="align-center">$trafficClassNameEncoded</td>
+					<td class="align-center">$poolCIRStr</td>
+					<td class="align-center">$poolLimitStr</td>
 					<td>
 						<a href="$urlStatsPool"><span class="glyphicon glyphicon-stats"></span></a>
 						<a href="$urlPoolEdit"><span class="glyphicon glyphicon-wrench"></span></a>
@@ -1860,9 +1863,9 @@ EOF
 					<td>$poolOverrideIPAddressEncoded</td>
 					<td>$poolOverrideExpiresStr</td>
 					<td><span class="glyphicon glyphicon-arrow-right" /></td>
-					<td>$poolOverrideTrafficClassStr</td>
-					<td>$poolOverrideCIRStr</td>
-					<td>$poolOverrideLimitStr</td>
+					<td class="align-center">$poolOverrideTrafficClassStr</td>
+					<td class="align-center">$poolOverrideCIRStr</td>
+					<td class="align-center">$poolOverrideLimitStr</td>
 					<td>
 						<a href="$urlPoolOverrideEdit"><span class="glyphicon glyphicon-wrench" /></a>
 						<a href="$urlPoolOverrideRemove"><span class="glyphicon glyphicon-remove" /></a>
