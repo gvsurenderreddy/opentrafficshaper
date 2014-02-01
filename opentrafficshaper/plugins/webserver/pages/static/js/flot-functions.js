@@ -58,12 +58,12 @@ function awit_flot_draw_graph(options) {
 		grid: {
 			hoverable: true,
 			clickable: false,
-			tickColor: "#f9f9f9",
+			tickColor: "#F9F9F9",
 			borderWidth: 1
 		},
 
 		legend: {
-			labelBoxBorderColor: "#aaa"
+			labelBoxBorderColor: "#AAAAAA"
 		},
 
 		xaxes: [
@@ -134,7 +134,7 @@ function awit_flot_draw_pie(options) {
 					formatter: _flot_format_pie_label,
 					background: {
 						opacity: 0.5,
-						color: '#000'
+						color: '#000000'
 					}
             	}
 			}
