@@ -441,7 +441,7 @@ EOF
 			foreach my $identifier (@{$graph->{"${axis}Identifiers"}}) {
 				my $encodedName = encode_entities($identifier->{'Name'});
 				my $encodedLabel = encode_entities($identifier->{'Label'});
-				push(@{$axesIdentifiers->{$axis}},"'$encodedName': { label: '$encodedLabel' }");
+				push(@{$axesIdentifiers->{$axis}},"'$encodedName': { label: '$encodedLabel', maxTimespan: 900, maxCount: 0 }");
 			}
 			push(@axesStrList,
 					sprintf("%saxis: { '%s': { %s } }",lc($axis),$encodedCanvasName,join(',',@{$axesIdentifiers->{$axis}}))
