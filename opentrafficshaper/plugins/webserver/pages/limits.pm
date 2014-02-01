@@ -145,34 +145,20 @@ sub pool_list
 
 	# Header
 	$content .=<<EOF;
-		<legend><div style="float:left">Pool List</div>
-
-		<!-- Search Form -->
-		<div id="search" style="float:right; padding:10px">
-			<form id="searchform" class="form-search" name="searchform" method="get" action="/search">
-			<div class="input-prepend"> <span class="add-on"><i class="icon-search"></i></span></div>
-			<input type="text" value="" id="q" class="search-query" name="q">
-			<input type="submit" value="Search" class="btn btn-primary" name="submit">
-			</form>
-		</div>
-
-		</legend>
-
-
+		<legend>Pool List</legend>
 		<table class="table">
 			<thead>
 				<tr>
 					<th></th>
-					<th><a href="/limits?field=friendly_name&order=desc">Friendly Name</a></th>
-					<th><a href="/limits?field=name&order=desc">Name</a></th>
-					<th><a href="/limits?field=expires&order=desc">Expires</a></th>
-					<th><a href="/limits?field=members&order=desc">Members</a></th>
+					<th>Friendly Name</th>
+					<th>Name</th>
+					<th>Expires</th>
 					<th></th>
-					<th><a href="/limits?field=class&order=desc">Class</a></th>
-					<th><a href="/limits?field=cir&order=desc">CIR (Kbps)</a></th>
-					<th><a href="/limits?field=limit&order=desc">Limit (Kbps)</a></th>
+					<th>Class</th>
+					<th>CIR (Kbps)</th>
+					<th>Limit (Kbps)</th>
 					<th></th>
-			</tr>
+				</tr>
 			</thead>
 			<tbody>
 EOF
@@ -206,7 +192,6 @@ EOF
 				($pool->{'Expires'} > 0) ? DateTime->from_epoch( epoch => $pool->{'Expires'} )->iso8601() : '-never-'
 		);
 
-		my $poolMemberCount = getPoolMembers($pool->{'ID'});
 
 
 		my $trafficClass = getTrafficClass($pool->{'TrafficClassID'});
@@ -241,11 +226,10 @@ EOF
 					<td>$poolFriendlyNameEncoded</td>
 					<td>$poolNameEncoded</td>
 					<td>$poolExpiresStr</td>
-					<td class="align-right">$poolMemberCount</td>
 					<td><span class="glyphicon glyphicon-arrow-right" /></td>
-					<td class="align-center">$trafficClassNameEncoded</td>
-					<td class="align-center">$poolCIRStr</td>
-					<td class="align-center">$poolLimitStr</td>
+					<td>$trafficClassNameEncoded</td>
+					<td>$poolCIRStr</td>
+					<td>$poolLimitStr</td>
 					<td>
 						<a href="$urlStatsPool"><span class="glyphicon glyphicon-stats"></span></a>
 						<a href="$urlPoolEdit"><span class="glyphicon glyphicon-wrench"></span></a>
@@ -260,30 +244,13 @@ EOF
 	if (!@pools) {
 		$content .=<<EOF;
 				<tr class="info">
-					<td colspan="10"><p class="text-center">No Results</p></td>
+					<td colspan="8"><p class="text-center">No Results</p></td>
 				</tr>
 EOF
 	}
 
 	# Footer
 	$content .=<<EOF;
-
-				<tr>
-					<td align="center" colspan="10">
-
-						<ul class="pagination">
-							<li><a href="#">&laquo;</a></li>
-							<li class="active"><a href="#">1</a></li>
-							<li><a href="#">2</a></li>
-							<li><a href="#">3</a></li>
-							<li><a href="#">4</a></li>
-							<li><a href="#">5</a></li>
-							<li><a href="#">&raquo;</a></li>
-						</ul>
-
-					</td>
-				</tr>
-
 			</tbody>
 		</table>
 		<span class="glyphicon glyphicon-time" /> - Processing,
@@ -1893,9 +1860,9 @@ EOF
 					<td>$poolOverrideIPAddressEncoded</td>
 					<td>$poolOverrideExpiresStr</td>
 					<td><span class="glyphicon glyphicon-arrow-right" /></td>
-					<td class="align-center">$poolOverrideTrafficClassStr</td>
-					<td class="align-center">$poolOverrideCIRStr</td>
-					<td class="align-center">$poolOverrideLimitStr</td>
+					<td>$poolOverrideTrafficClassStr</td>
+					<td>$poolOverrideCIRStr</td>
+					<td>$poolOverrideLimitStr</td>
 					<td>
 						<a href="$urlPoolOverrideEdit"><span class="glyphicon glyphicon-wrench" /></a>
 						<a href="$urlPoolOverrideRemove"><span class="glyphicon glyphicon-remove" /></a>
