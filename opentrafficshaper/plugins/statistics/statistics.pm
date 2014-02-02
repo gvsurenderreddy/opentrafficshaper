@@ -796,10 +796,10 @@ sub getLastStats
 # Return stats by SID
 sub getStatsBySID
 {
-	my ($sid,$conversions) = @_;
+	my ($sid,$conversions,$startTimestamp,$endTimestamp) = @_;
 
 
-	my $statistics = _getStatsBySID($sid);
+	my $statistics = _getStatsBySID($sid,$startTimestamp,$endTimestamp);
 	if (!defined($statistics)) {
 		return;
 	}
@@ -1227,10 +1227,31 @@ sub _getAlignedTime
 # Internal function to get stats by SID
 sub _getStatsBySID
 {
-	my $sid = shift;
+	my ($sid,$startTimestamp,$endTimestamp) = @_;
 
 
 	my $now = time();
+
+	# Setup our timestamps if we need to
+	if (!defined($startTimestamp)) {
+		$startTimestamp = $now - 3600;
+	}
+	if (!defined($endTimestamp)) {
+		$endTimestamp = $now;
+	}
+
+	# Work out the timestamp
+	my $timespan = $endTimestamp - $startTimestamp;
+
+	# Find the best key to use...
+	my $statsKey = 0;
+	foreach my $key (sort {$b <=> $a} keys %{$statsConfig}) {
+		# Grab first key that will hve 50+ entries
+		if ($timespan / $statsConfig->{$key}->{'precision'} > 50) {
+			$statsKey = $key;
+			last;
+		}
+	}
 
 	# Prepare query
 	my $sth = $globals->{'DBHandle'}->prepare('
@@ -1245,10 +1266,9 @@ sub _getStatsBySID
 			AND `Timestamp` < ?
 		ORDER BY
 			`Timestamp` DESC
-		LIMIT 100
 	');
 	# Grab last 60 mins of data
-	$sth->execute($sid,0,$now - 3600, $now);
+	$sth->execute($sid,$statsKey,$startTimestamp,$endTimestamp);
 
 	my $statistics;
 	while (my $item = $sth->fetchrow_hashref()) {
@@ -1268,10 +1288,31 @@ sub _getStatsBySID
 # Internal function to get basic stats by SID
 sub _getStatsBasicBySID
 {
-	my $sid = shift;
+	my ($sid,$startTimestamp,$endTimestamp) = @_;
 
 
 	my $now = time();
+
+	# Setup our timestamps if we need to
+	if (!defined($startTimestamp)) {
+		$startTimestamp = $now - 3600;
+	}
+	if (!defined($endTimestamp)) {
+		$endTimestamp = $now;
+	}
+
+	# Work out the timestamp
+	my $timespan = $endTimestamp - $startTimestamp;
+
+	# Find the best key to use...
+	my $statsKey = 0;
+	foreach my $key (sort {$b <=> $a} keys %{$statsConfig}) {
+		# Grab first key that will hve 50+ entries
+		if ($timespan / $statsConfig->{$key}->{'precision'} > 50) {
+			$statsKey = $key;
+			last;
+		}
+	}
 
 	# Prepare query
 	my $sth = $globals->{'DBHandle'}->prepare('
@@ -1286,10 +1327,9 @@ sub _getStatsBasicBySID
 			AND `Timestamp` < ?
 		ORDER BY
 			`Timestamp` DESC
-		LIMIT 100
 	');
 	# Grab last 60 mins of data
-	$sth->execute($sid,0,$now - 3600, $now);
+	$sth->execute($sid,$statsKey,$startTimestamp,$endTimestamp);
 
 	my $statistics;
 	while (my $item = $sth->fetchrow_hashref()) {
