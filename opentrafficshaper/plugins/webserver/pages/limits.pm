@@ -247,7 +247,7 @@ EOF
 	if (!@pools) {
 		$content .=<<EOF;
 				<tr class="info">
-					<td colspan="8"><p class="text-center">No Results</p></td>
+					<td colspan="10"><p class="text-center">No Results</p></td>
 				</tr>
 EOF
 	}
