@@ -178,7 +178,6 @@ sub plugin_init
 			# Load resources
 			$resources->{'HTTP'}->{'statistics'} = {
 				'by-pool' => \&opentrafficshaper::plugins::webserver::pages::statistics::byPool,
-				'by-class' => \&opentrafficshaper::plugins::webserver::pages::statistics::byClass,
 
 				'jsondata' => \&opentrafficshaper::plugins::webserver::pages::statistics::jsondata
 			};

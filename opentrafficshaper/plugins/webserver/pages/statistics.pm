@@ -42,6 +42,7 @@ use URI::Escape qw(
 
 use awitpt::util qw(
 	parseURIQuery
+	isNumber
 );
 use opentrafficshaper::logger;
 use opentrafficshaper::plugins;
@@ -60,6 +61,15 @@ use opentrafficshaper::plugins::configmanager qw(
 
 use opentrafficshaper::plugins::statistics::statistics;
 
+# Graphs to display on pools stat page
+sub POOL_GRAPHS {
+	{
+		3600 => 'Last Hour',
+		86400 => 'Last 24 Hours',
+		604800 => 'Last 7 Days',
+		2419200 => 'Last Month'
+	}
+};
 
 
 # Graphs by pool
@@ -69,182 +79,176 @@ sub byPool
 
 
 	# Header
-	my $content = <<EOF;
-		<div id="header">
-			<h2>Pool Stats View</h2>
-		</div>
-EOF
-
-	my $pool;
+	my $content = "";
 
 	# Check request
-	if ($request->method eq "GET") {
-		# Parse GET data
-		my $queryParams = parseURIQuery($request);
-		# We need our PID
-		if (!defined($queryParams->{'pool'})) {
-			$content .=<<EOF;
-				<tr class="info">
-					<td colspan="8"><p class="text-center">No "pool" in Query String</p></td>
-				</tr>
+	if ($request->method ne "GET") {
+		$content .=<<EOF;
+			<p class="info text-center">Invalid Method</p>
 EOF
-			goto END;
-		}
-
-		# Check we have an interface group ID and pool name
-		my ($interfaceGroupID,$poolName) = split(/:/,$queryParams->{'pool'}->{'value'});
-		if (!defined($interfaceGroupID) || !defined($poolName)) {
-			$content .=<<EOF;
-				<tr class="info">
-					<td colspan="8"><p class="text-center">Format of "pool" option is invalid, use InterfaceID:PoolName</p></td>
-				</tr>
-EOF
-			goto END;
-		}
-
-		# Check if we get some data back when pulling in the pool from the backend
-		if (!defined($pool = getPoolByName($interfaceGroupID,$poolName))) {
-			$content .=<<EOF;
-				<tr class="info">
-					<td colspan="8"><p class="text-center">No Results</p></td>
-				</tr>
-EOF
-			goto END;
-		}
+		goto END;
 	}
+
+	# Parse GET data
+	my $queryParams = parseURIQuery($request);
+	# We need our PID
+	if (!defined($queryParams->{'pool'})) {
+		$content .=<<EOF;
+			<p class="info text-center">No "pool" in Query String</p>
+EOF
+			goto END;
+	}
+
+	# Check we have an interface group ID and pool name
+	my ($interfaceGroupID,$poolName) = split(/:/,$queryParams->{'pool'}->{'value'});
+	if (!defined($interfaceGroupID) || !defined($poolName)) {
+		$content .=<<EOF;
+			<p class="info text-center">Format of "pool" option is invalid, use InterfaceID:PoolName</p>
+EOF
+			goto END;
+	}
+
+	# Check if we get some data back when pulling in the pool from the backend
+	my $pool;
+	if (!defined($pool = getPoolByName($interfaceGroupID,$poolName))) {
+		$content .=<<EOF;
+			<p class="info text-center">Pool Not Found</p>
+EOF
+			goto END;
+	}
+
+	# Header for the page
+	$content .= <<EOF;
+		<legend>
+			<a href="pool-list"><span class="glyphicon glyphicon-circle-arrow-left"></span></a>
+			Pool Stats View
+		</legend>
+EOF
+
+	# Menu setup
+	my $menu = [
+		{
+			'name' => 'Graphs',
+			'items' => [
+				{
+					'name' => 'Live',
+					'link' => sprintf("by-pool?pool=%s",uri_escape("$interfaceGroupID:$poolName"))
+				},
+				{
+					'name' => 'Historical',
+					'link' => sprintf("by-pool?pool=%s&static=1",uri_escape("$interfaceGroupID:$poolName"))
+				}
+			]
+		}
+	];
+
 
 	my $name = (defined($pool->{'FriendlyName'}) && $pool->{'FriendlyName'} ne "") ? $pool->{'FriendlyName'} :
 			$pool->{'Name'};
 	my $nameEncoded = encode_entities($name);
 
-	my $canvasName = "flotCanvas";
 
 	# Build content
-	$content = <<EOF;
-		<h4 style="color:#8f8f8f;">Latest Data For: $nameEncoded</h4>
-		<br/>
-		<div id="$canvasName" class="flotCanvas" style="width: 1000px; height: 400px"></div>
+	$content .= <<EOF;
 EOF
 
-	# Files loaded at end of HTML document
-	my @javascripts = (
-		'/static/flot/jquery.flot.min.js',
-		'/static/flot/jquery.flot.time.min.js',
-		'/static/js/flot-functions.js',
-		'/static/awit-flot-toolkit/js/jquery.flot.awitds.js'
-	);
+	# Graphs to display
+	my @graphs = ();
 
-	# Path to the json data, just use "data" as the tag
-	my $dataPath = sprintf('/statistics/jsondata?pool=%s:%s:%s',"tag1",$pool->{'InterfaceGroupID'},$pool->{'Name'});
+	# Check if we doing a static display or not
+	if (defined($queryParams->{'static'}) && $queryParams->{'static'}) {
+		# Loop with periods to display on this page
+		foreach my $period (sort { $a <=> $b } keys POOL_GRAPHS) {
+			my $canvasName = "flotCanvas$period";
+			my $graphName = POOL_GRAPHS->{$period};
 
-	# String put in <script> </script> tags after the above files are loaded
-	my $javascript = _getJavascript($canvasName,$dataPath);
+			my $now = time();
+			my $startTimestamp = $now - $period;
 
-END:
-
-	return (HTTP_OK,$content,{ 'javascripts' => \@javascripts, 'javascript' => $javascript });
-}
-
-
-
-# Graphs by class
-sub byClass
-{
-	my ($kernel,$system,$client_session_id,$request) = @_;
-
-
-	# Header
-	my $content = <<EOF;
-		<div id="header">
-			<h2>Class Stats View</h2>
-		</div>
+			$content .= <<EOF;
+				<h4 style="color: #8F8F8F;">Statistics: $nameEncoded - $graphName</h4>
+				<div id="$canvasName" class="flotCanvas" style="width: 800px; height: 240px" ></div>
 EOF
 
-	my $interface;
-	my $cid;
-
-	# Check if its a GET request...
-	if ($request->method eq "GET") {
-		# Parse GET data
-		my $queryParams = parseURIQuery($request);
-		# Grab the interface name
-		if (!defined($queryParams->{'interface'})) {
-			$content .=<<EOF;
-				<tr class="info">
-					<td colspan="8"><p class="text-center">No interface in Query String</p></td>
-				</tr>
-EOF
-			goto END;
+			# Static graphs
+			push(@graphs,{
+				'Type' => 'graph',
+				'Tag' => $canvasName,
+				'Title' => sprintf("Pool: %s",$pool->{'Name'}),
+				'Datasources' => [
+					{
+						'Type' => 'ajax',
+						'Subscriptions' => [
+							{
+								'Type' => 'pool',
+								'Data' => sprintf('%s:%s',$pool->{'InterfaceGroupID'},$pool->{'Name'}),
+								'StartTimestamp' => $startTimestamp,
+								'EndTimestamp' => $now
+							}
+						]
+					}
+				],
+				'XIdentifiers' => [
+					{ 'Name' => 'tx.cir', 'Label' => "TX Cir", 'Timespan' => $period, 'Count' => 0 },
+					{ 'Name' => 'tx.limit', 'Label' => "TX Limit", 'Timespan' => $period, 'Count' => 0 },
+					{ 'Name' => 'tx.rate', 'Label' => "TX Rate", 'Timespan' => $period, 'Count' => 0 },
+					{ 'Name' => 'rx.cir', 'Label' => "RX Cir", 'Timespan' => $period, 'Count' => 0 },
+					{ 'Name' => 'rx.limit', 'Label' => "RX Limit", 'Timespan' => $period, 'Count' => 0 },
+					{ 'Name' => 'rx.rate', 'Label' => "RX Rate", 'Timespan' => $period, 'Count' => 0 }
+				]
+			});
 		}
-		# Check if we get some data back when pulling the interface from the backend
-		if (!defined($interface = getInterface($queryParams->{'interface'}->{'value'}))) {
-			$content .=<<EOF;
-				<tr class="info">
-					<td colspan="8"><p class="text-center">No Interface Results</p></td>
-				</tr>
-EOF
-			goto END;
-		}
-		# Grab the class
-		if (!defined($queryParams->{'class'})) {
-			$content .=<<EOF;
-				<tr class="info">
-					<td colspan="8"><p class="text-center">No class in Query String</p></td>
-				</tr>
-EOF
-			goto END;
-		}
-		# Check if our traffic class is valid
-		if (!defined($cid = isTrafficClassIDValid($queryParams->{'class'}->{'value'})) &&
-				$queryParams->{'class'}->{'value'} ne "0"
-		) {
-			$content .=<<EOF;
-				<tr class="info">
-					<td colspan="8"><p class="text-center">No Class Results</p></td>
-				</tr>
-EOF
-			goto END;
-		}
-	}
 
-	my $trafficClass = getTrafficClass($cid);
-
-	my $interfaceNameEncoded = encode_entities($interface->{'Name'});
-
-	my $trafficClassNameEncoded;
-	if ($cid) {
-		$trafficClassNameEncoded = encode_entities($trafficClass->{'Name'});
+	# Display live graph
 	} else {
-		$trafficClassNameEncoded = $interfaceNameEncoded;
+		my $canvasName = "flotCanvas";
+
+		$content .= <<EOF;
+			<h4 style="color: #8F8F8F;">Live Statistics: $nameEncoded</h4>
+			<div id="$canvasName" class="flotCanvas" style="width: 1000px; height: 400px" />
+EOF
+
+		# Live graph
+		push(@graphs,{
+			'Type' => 'graph',
+			'Tag' => $canvasName,
+			'Title' => sprintf("Pool: %s",$pool->{'Name'}),
+			'Datasources' => [
+				{
+					'Type' => 'websocket',
+					'Subscriptions' => [
+						sprintf('pool=%s:%s',$pool->{'InterfaceGroupID'},$pool->{'Name'})
+					]
+				}
+			],
+			'XIdentifiers' => [
+				{ 'Name' => 'tx.cir', 'Label' => "TX Cir", 'Timespan' => 900, 'Count' => 0 },
+				{ 'Name' => 'tx.limit', 'Label' => "TX Limit", 'Timespan' => 900, 'Count' => 0 },
+				{ 'Name' => 'tx.rate', 'Label' => "TX Rate", 'Timespan' => 900, 'Count' => 0 },
+				{ 'Name' => 'rx.cir', 'Label' => "RX Cir", 'Timespan' => 900, 'Count' => 0 },
+				{ 'Name' => 'rx.limit', 'Label' => "RX Limit", 'Timespan' => 900, 'Count' => 0 },
+				{ 'Name' => 'rx.rate', 'Label' => "RX Rate", 'Timespan' => 900, 'Count' => 0 }
+			]
+		});
 	}
 
-	my $canvasName = "flotCanvas";
-
-	# Build content
-	$content = <<EOF;
-			<h4 style="color:#8f8f8f;">Latest Data For: $trafficClassNameEncoded on $interfaceNameEncoded</h4>
-			<br/>
-			<div id="flotCanvas" class="flotCanvas" style="width: 1000px; height: 400px"></div>
-EOF
+	# Build graphs
+	my $javascript = _buildGraphJavascript(\@graphs);
 
 	# Files loaded at end of HTML document
 	my @javascripts = (
 		'/static/flot/jquery.flot.min.js',
 		'/static/flot/jquery.flot.time.min.js',
+		'/static/flot/jquery.flot.pie.min.js',
 		'/static/js/flot-functions.js',
 		'/static/awit-flot-toolkit/js/jquery.flot.awitds.js'
 	);
-
-	# Build our data path using the URI module to make sure its nice and clean
-	my $dataPath = '/statistics/jsondata?counter=ConfigManager:TotalLimits&interface-group=eth4,eth5';
-
-
-	# String put in <script> </script> tags after the above files are loaded
-	my $javascript = _getJavascript($canvasName,$dataPath);
+	my @stylesheets = (
+		'/static/awit-flot-toolkit/css/awit-flot-toolkit.css'
+	);
 
 END:
-
-	return (HTTP_OK,$content,{ 'javascripts' => \@javascripts, 'javascript' => $javascript });
+	return (HTTP_OK,$content,{ 'menu' => $menu, 'javascripts' => \@javascripts, 'javascript' => $javascript });
 }
 
 
@@ -272,6 +276,8 @@ EOF
 	my @interfaceGroups = sort(getInterfaceGroups());
 	my @trafficClasses = sort(getAllTrafficClasses());
 
+	my $timespan = 900;
+
 	foreach my $interfaceGroupID (@interfaceGroups) {
 		my $interfaceGroup = getInterfaceGroup($interfaceGroupID);
 
@@ -282,31 +288,41 @@ EOF
 				'Type' => 'graph',
 				'Title' => sprintf("%s: %s",$interfaceGroup->{'Name'},$trafficClass->{'Name'}),
 				'Datasources' => [
-					sprintf('class=%s:%s',$interfaceGroupID,$trafficClassID),
-					sprintf('counter=configmanager.classpools.%s',$trafficClassID)
+					{
+						'Type' => 'websocket',
+						'Subscriptions' => [
+							sprintf('class=%s:%s',$interfaceGroupID,$trafficClassID),
+							sprintf('counter=configmanager.classpools.%s',$trafficClassID)
+						]
+					}
 				],
 				'XIdentifiers' => [
-					{ 'Name' => 'tx.cir', 'Label' => "TX Cir" },
-					{ 'Name' => 'tx.limit', 'Label' => "TX Limit" },
-					{ 'Name' => 'tx.rate', 'Label' => "TX Rate" },
-					{ 'Name' => 'rx.cir', 'Label' => "RX Cir" },
-					{ 'Name' => 'rx.limit', 'Label' => "RX Limit" },
-					{ 'Name' => 'rx.rate', 'Label' => "RX Rate" }
+					{ 'Name' => 'tx.cir', 'Label' => "TX Cir", 'Timespan' => $timespan, 'Count' => 0 },
+					{ 'Name' => 'tx.limit', 'Label' => "TX Limit", 'Timespan' => $timespan, 'Count' => 0 },
+					{ 'Name' => 'tx.rate', 'Label' => "TX Rate", 'Timespan' => $timespan, 'Count' => 0 },
+					{ 'Name' => 'rx.cir', 'Label' => "RX Cir", 'Timespan' => $timespan, 'Count' => 0 },
+					{ 'Name' => 'rx.limit', 'Label' => "RX Limit", 'Timespan' => $timespan, 'Count' => 0 },
+					{ 'Name' => 'rx.rate', 'Label' => "RX Rate", 'Timespan' => $timespan, 'Count' => 0 }
 				],
 				'YIdentifiers' => [
-					{ 'Name' => sprintf('configmanager.classpools.%s',$trafficClassID), 'Label' => "Pool Count" },
+					{
+						'Name' => sprintf('configmanager.classpools.%s',$trafficClassID),
+						'Label' => "Pool Count",
+						'Timespan' => $timespan,
+						'Count' => 0
+					},
 				]
 			});
 		}
 	}
 
 	# Pool distribution
-	my @datasources = ();
+	my @dataSubscriptions = ();
 	my @xidentifiers = ();
 	foreach my $trafficClassID (@trafficClasses) {
 		my $trafficClass = getTrafficClass($trafficClassID);
 
-		push(@datasources,sprintf('counter=configmanager.classpools.%s',$trafficClassID));
+		push(@dataSubscriptions,sprintf('counter=configmanager.classpools.%s',$trafficClassID));
 		push(@xidentifiers,{
 				'Name' => sprintf('configmanager.classpools.%s',$trafficClassID),
 				'Label' => $trafficClass->{'Name'}
@@ -315,7 +331,12 @@ EOF
 	push(@rightGraphs,{
 		'Type' => 'pie',
 		'Title' => "Pool Distribution",
-		'Datasources' => \@datasources,
+		'Datasources' => [
+			{
+				'Type' => 'websocket',
+				'Subscriptions' => \@dataSubscriptions
+			}
+		],
 		'XIdentifiers' => \@xidentifiers
 	});
 
@@ -409,6 +430,10 @@ EOF
 	}
 
 
+	# Build graphs
+	my $javascript = _buildGraphJavascript(\@graphs);
+
+
 	# Files loaded at end of HTML document
 	my @javascripts = (
 		'/static/flot/jquery.flot.min.js',
@@ -420,57 +445,6 @@ EOF
 	my @stylesheets = (
 		'/static/awit-flot-toolkit/css/awit-flot-toolkit.css'
 	);
-
-	my $javascript = "";
-
-	foreach my $graph (@graphs) {
-		my $encodedCanvasName = encode_entities($graph->{'Tag'});
-
-		# Items we going to need...
-		my @datasources = ();
-		my $axesIdentifiers = { 'X' => [ ], 'Y' => [ ] };
-		my @axesStrList;
-		# Loop with and build the JS for our datasources
-		foreach my $datasource (@{$graph->{'Datasources'}}) {
-			my $encodedDatasource = encode_entities($datasource);
-
-			push(@datasources,"{ 'function': 'subscribe', args: ['$encodedCanvasName','$encodedDatasource'] }");
-		}
-		# Loop with axes and build our axes structure
-		foreach my $axis (keys %{$axesIdentifiers}) {
-			foreach my $identifier (@{$graph->{"${axis}Identifiers"}}) {
-				my $encodedName = encode_entities($identifier->{'Name'});
-				my $encodedLabel = encode_entities($identifier->{'Label'});
-				push(@{$axesIdentifiers->{$axis}},"'$encodedName': { label: '$encodedLabel', maxTimespan: 900, maxCount: 0 }");
-			}
-			push(@axesStrList,
-					sprintf("%saxis: { '%s': { %s } }",lc($axis),$encodedCanvasName,join(',',@{$axesIdentifiers->{$axis}}))
-			);
-		}
-		# Build final JS
-		my $datasourceStr = join(',',@datasources);
-		my $axesStr = join(',',@axesStrList);
-
-		$javascript .=<<EOF;
-			awit_flot_draw_$graph->{'Type'}({
-				id: '$encodedCanvasName',
-				awitds: {
-					sources: [
-						{
-							type: 'websocket',
-							uri: 'ws://ots-devel:8088/statistics/graphdata',
-							shared: true,
-							// Websocket specific
-							onconnect: [
-								$datasourceStr
-							]
-						}
-					],
-					$axesStr
-				}
-			});
-EOF
-	}
 
 END:
 
@@ -507,6 +481,16 @@ sub jsondata
 	my $queryParams = parseURIQuery($request);
 
 	my $rawData = { };
+
+	# Check for some things that apply to all types of data
+	my $startTimestamp;
+	my $endTimestamp;
+	if (defined($queryParams->{'start'})) {
+		$startTimestamp = isNumber($queryParams->{'start'}->{'value'});
+	}
+	if (defined($queryParams->{'end'})) {
+		$endTimestamp = isNumber($queryParams->{'end'}->{'value'});
+	}
 
 	# Process pools
 	if (defined($queryParams->{'pool'})) {
@@ -579,8 +563,7 @@ sub jsondata
 			}
 
 			# Pull in stats data
-			my $statsData = opentrafficshaper::plugins::statistics::getStatsBySID($sid);
-
+			my $statsData = opentrafficshaper::plugins::statistics::getStatsBySID($sid,undef,$startTimestamp,$endTimestamp);
 			# Loop with timestamps
 			foreach my $timestamp (sort keys %{$statsData}) {
 				# Grab the stat
@@ -678,9 +661,12 @@ sub jsondata
 							{ 'type' => 'json' });
 				}
 				# Pull in stats data, override direction used
-				my $statsData = opentrafficshaper::plugins::statistics::getStatsBySID($sid,{
-						'direction' => lc($direction)
-				});
+				my $statsData = opentrafficshaper::plugins::statistics::getStatsBySID(
+						$sid,
+						{ 'direction' => lc($direction)	},
+						$startTimestamp,
+						$endTimestamp
+				);
 
 				# Loop with timestamps
 				foreach my $timestamp (sort keys %{$statsData}) {
@@ -757,9 +743,12 @@ sub jsondata
 				}
 
 				# Pull in stats data, override direction used
-				my $statsData = opentrafficshaper::plugins::statistics::getStatsBySID($sid,{
-						'direction' => lc($direction)
-				});
+				my $statsData = opentrafficshaper::plugins::statistics::getStatsBySID(
+						$sid,
+						{ 'direction' => lc($direction) },
+						$startTimestamp,
+						$endTimestamp
+				);
 
 				# Loop with timestamps
 				foreach my $timestamp (sort keys %{$statsData}) {
@@ -840,67 +829,122 @@ sub jsondata
 
 
 
-# Return javascript for the graph
-sub _getJavascript
+# Function to build the javascript we need to display graphs in a canvas
+sub _buildGraphJavascript
 {
-	my ($canvasName,$dataPath) = @_;
+	my $graphs = shift;
 
+	my $javascript = "";
 
-	# Encode canvasname
-	my $encodedCanvasName = encode_entities($canvasName);
-	# Build our data path using the URI module to make sure its nice and clean
-	my $dataPathURI = URI->new($dataPath);
-	my $dataPathStr = $dataPathURI->as_string();
+	foreach my $graph (@{$graphs}) {
+		my $encodedCanvasName = encode_entities($graph->{'Tag'});
 
-	my $javascript =<<EOF;
-	awit_flot_draw_graph({
-		id: '$encodedCanvasName',
+		# Items we going to need...
+		my @datasources = ();
+		my $axesIdentifiers = { 'X' => [ ], 'Y' => [ ] };
+		my @axesStrList;
+		# Loop with and build the JS for our datasources
+		foreach my $datasource (@{$graph->{'Datasources'}}) {
+			# Websocket based data
+			if ($datasource->{'Type'} eq "websocket") {
 
-		awitds: {
-			sources: [
-				{
-					type: 'ajax',
-					url: '$dataPathStr'
+				# Create Subscriptions
+				my @subscriptions;
+				foreach my $subscription (@{$datasource->{'Subscriptions'}}) {
+					my $encodedSubscription = encode_entities($subscription);
+					push(@subscriptions,"{ 'function': 'subscribe', args: ['$encodedCanvasName','$encodedSubscription'] }");
 				}
-			],
-			xaxis: {
-				'tag1': {
-					'tx.cir': {
-						label: 'TX Cir'
-					},
-					'tx.limit': {
-						label: 'TX Limit'
-					},
-					'tx.rate': {
-						label: 'TX Rate'
-					},
-					'rx.cir': {
-						label: 'RX Cir'
-					},
-					'rx.limit': {
-						label: 'RX Limit'
-					},
-					'rx.rate': {
-						label: 'RX Rate'
+
+				# Create subscription string
+				my $subscriptionStr = join(',',@subscriptions);
+
+				# Add datasource
+				push(@datasources,<<EOF);
+						{
+							type: 'websocket',
+							uri: 'ws://'+window.location.host+'/statistics/graphdata',
+							shared: true,
+							// Websocket specific
+							onconnect: [
+								$subscriptionStr
+							]
+						}
+EOF
+			# JSON based data
+			} elsif ($datasource->{'Type'} eq "ajax") {
+				# Create Subscriptions
+				my @subscriptions;
+				foreach my $subscription (@{$datasource->{'Subscriptions'}}) {
+					my $encodedType = encode_entities($subscription->{'Type'});
+					my $encodedData = encode_entities($subscription->{'Data'});
+
+					# Data we nee dto pull
+					push(@subscriptions,sprintf(
+						"%s=%s:%s",
+						$encodedType,
+						$encodedCanvasName,
+						$encodedData
+					));
+					# Check if we have a start period
+					if (defined($subscription->{'StartTimestamp'})) {
+						push(@subscriptions,sprintf("start=%s",$subscription->{'StartTimestamp'}));
+					}
+					# Check if we have an end period
+					if (defined($subscription->{'EndTimestamp'})) {
+						push(@subscriptions,sprintf("end=%s",$subscription->{'EndTimestamp'}));
 					}
 				}
+				# Create subscription string
+				my $subscriptionStr = join('&',@subscriptions);
+
+				# Add datasource
+				push(@datasources,<<EOF);
+						{
+							type: 'ajax',
+							url: '///'+window.location.host+'/statistics/jsondata?$subscriptionStr'
+						}
+EOF
 			}
 		}
-	});
+		# Loop with axes and build our axes structure
+		foreach my $axis (keys %{$axesIdentifiers}) {
+			foreach my $identifier (@{$graph->{"${axis}Identifiers"}}) {
+				# Our first identifier option is the label
+				my @options = (
+						sprintf("label: '%s'", encode_entities($identifier->{'Label'}))
+				);
+				# Set limiting factors if there are any
+				if (defined($identifier->{'Timespan'})) {
+					push(@options,sprintf("maxTimespan: %s",$identifier->{'Timespan'}));
+				}
+				if (defined($identifier->{'Count'})) {
+					push(@options,sprintf("maxCount: %s",$identifier->{'Count'}));
+				}
+				# Join everything up
+				my $optionsStr = join(' ,',@options);
+				# Add to axes
+				push(@{$axesIdentifiers->{$axis}},sprintf("'%s': { %s }",encode_entities($identifier->{'Name'}),$optionsStr));
+			}
+			push(@axesStrList,
+					sprintf("%saxis: { '%s': { %s } }",lc($axis),$encodedCanvasName,join(',',@{$axesIdentifiers->{$axis}}))
+			);
+		}
+		# Build final JS
+		my $datasourceStr = join(',',@datasources);
+		my $axesStr = join(',',@axesStrList);
+
+		$javascript .=<<EOF;
+			awit_flot_draw_$graph->{'Type'}({
+				id: '$encodedCanvasName',
+				awitds: {
+					sources: [
+						$datasourceStr
+					],
+					$axesStr
+				}
+			});
 EOF
-#	my $javascript =<<EOF;
-#	awit_flot_draw_graph({
-#		url: '$dataPathStr',
-#		yaxes: [
-#			{
-#				labels: ['Total Pools'],
-#				position: 'right',
-#				tickDecimals: 0,
-#				min: 0
-#			}
-#		]
-#	});
-#EOF
+	}
 
 	return $javascript;
 }
