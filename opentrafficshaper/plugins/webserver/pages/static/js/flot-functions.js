@@ -69,24 +69,7 @@ function awit_flot_draw_graph(options) {
 		xaxes: [
 			{
 				mode: "time",
-
-				tickSize: [5, "minute"]
-//				tickLength: 10
-/*
-				tickFormatter: function (v, axis) {
-					var date = new Date(v);
-					if (date.getSeconds() % 160 == 0) {
-					//if (v % m == 0) {
-						var hours = date.getHours() < 10 ? "0" + date.getHours() : date.getHours();
-						var minutes = date.getMinutes() < 10 ? "0" + date.getMinutes() : date.getMinutes();
-						var seconds = date.getSeconds() < 10 ? "0" + date.getSeconds() : date.getSeconds();
-
-						return hours + ":" + minutes + ":" + seconds;
-					} else {
-						return "";
-					}
-				}
-*/
+				tickLength: 10
 			}
 
 		],
