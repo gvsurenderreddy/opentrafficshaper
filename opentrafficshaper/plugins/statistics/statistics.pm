@@ -239,8 +239,8 @@ sub plugin_init
 				`IdentifierID`, `Timestamp` - (`Timestamp` % ?) AS TimestampM,
 				`Direction`,
 				MAX(`CIR`) AS `CIR`, MAX(`Limit`) AS `Limit`, MAX(`Rate`) AS `Rate`, MAX(`PPS`) AS `PPS`,
-				MAX(`Queue_Len`) AS `Queue_Len`, AVG(`Total_Bytes`) AS `Total_Bytes`, AVG(`Total_Packets`) AS `Total_Packets`,
-				AVG(`Total_Overlimits`) AS `Total_Overlimits`, AVG(`Total_Dropped`) AS `Total_Dropped`
+				MAX(`Queue_Len`) AS `Queue_Len`, MAX(`Total_Bytes`) AS `Total_Bytes`, MAX(`Total_Packets`) AS `Total_Packets`,
+				MAX(`Total_Overlimits`) AS `Total_Overlimits`, MAX(`Total_Dropped`) AS `Total_Dropped`
 			FROM
 				stats
 			WHERE
@@ -479,11 +479,16 @@ sub _session_tick
 		if ($res) {
 			# Loop with items returned
 			while (my $item = $sthStatsBasicConsolidate->fetchrow_hashref()) {
-				$item->{'Key'} = $key;
-				$item->{'Timestamp'} = $item->{'timestampm'};
+				my $stat = {
+					'IdentifierID' => $item->{'identifierid'},
+					'Key' => $key,
+					'Timestamp' => $item->{'timestampm'},
+					'Counter' => $item->{'counter'}
+				};
+
 
 				# Queue for insert
-				push(@{$globals->{'StatsQueue'}},$item);
+				push(@{$globals->{'StatsQueue'}},$stat);
 
 				$numStatsBasicConsolidated++;
 			}
@@ -498,11 +503,24 @@ sub _session_tick
 		if ($res) {
 			# Loop with items returned
 			while (my $item = $sthStatsConsolidate->fetchrow_hashref()) {
-				$item->{'Key'} = $key;
-				$item->{'Timestamp'} = $item->{'timestampm'};
+				my $stat = {
+					'IdentifierID' => $item->{'identifierid'},
+					'Key' => $key,
+					'Timestamp' => $item->{'timestampm'},
+					'Direction' => $item->{'direction'},
+					'CIR' => $item->{'cir'},
+					'Limit' => $item->{'limit'},
+					'Rate' => $item->{'rate'},
+					'PPS' => $item->{'pps'},
+					'QueueLen' => $item->{'queue_len'},
+					'TotalBytes' => $item->{'total_bytes'},
+					'TotalPackets' => $item->{'total_packets'},
+					'TotalOverLimits' => $item->{'total_overlimits'},
+					'TotalDropped' => $item->{'total_dropped'}
+				};
 
 				# Queue for insert
-				push(@{$globals->{'StatsQueue'}},$item);
+				push(@{$globals->{'StatsQueue'}},$stat);
 
 				$numStatsConsolidated++;
 			}
