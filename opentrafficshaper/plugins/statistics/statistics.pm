@@ -1309,32 +1309,32 @@ sub _fixStatDirection
 	my ($stat,$conversions) = @_;
 
 
-	# Pull in constants
-	my $tx = STATISTICS_DIR_TX; my $rx = STATISTICS_DIR_RX;
+	my $res;
 
-	# Depending which direction, grab the key to use below
-	my $oldStat;
-	my $oldKey;
-	if (defined($oldStat = $stat->{$tx})) {
-		$oldKey = 'tx';
-	} elsif (defined($oldStat = $stat->{$rx})) {
-		$oldKey = 'rx';
-	}
-
-	# Loop and remove the direction, instead, adding it to the item
-	my $newStat;
-	foreach my $item (keys %{$oldStat}) {
-		# If we have conversions defined...
-		my $newKey;
-		if (defined($conversions) && defined($conversions->{'Direction'})) {
-			$newKey = sprintf("%s.%s",$conversions->{'Direction'},$item);
-		} else {
-			$newKey = sprintf("%s.%s",$oldKey,$item);
+	# Loop with directions, maybe we have more than one with this stat
+	while ((my $direction, my $oldStat) = each(%{$stat})) {
+		# Depending which direction, grab the key to use below
+		my $oldKey;
+		if ($direction == STATISTICS_DIR_TX) {
+			$oldKey = 'tx';
+		} elsif ($direction == STATISTICS_DIR_RX) {
+			$oldKey = 'rx';
 		}
-		$newStat->{$newKey} = $oldStat->{$item};
+
+		# Loop and remove the direction, instead, adding it to the item
+		foreach my $item (keys %{$oldStat}) {
+			# If we have conversions defined...
+			my $newKey;
+			if (defined($conversions) && defined($conversions->{'Direction'})) {
+				$newKey = sprintf("%s.%s",$conversions->{'Direction'},$item);
+			} else {
+				$newKey = sprintf("%s.%s",$oldKey,$item);
+			}
+			$res->{$newKey} = $oldStat->{$item};
+		}
 	}
 
-	return $newStat;
+	return $res;
 }
 
 
