@@ -396,7 +396,7 @@ EOF
 
 					my $sectionName = encode_entities($section->{'name'});
 					$menuItem .=<<EOF;
-							<li class="nav-header">$sectionName</li>
+							<li class="active text-center"><a href="#">$sectionName</a></li>
 EOF
 					# Loop with menu items
 					foreach my $item (@{$section->{'items'}}) {
@@ -407,7 +407,7 @@ EOF
 
 						# Build sections
 						$menuItem .=<<EOF;
-							<li><a href="$itemLink">$itemName</a></li>
+							<li class="text-center"><a href="$itemLink">$itemName</a></li>
 EOF
 					}
 
