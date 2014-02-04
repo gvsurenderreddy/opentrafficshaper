@@ -428,7 +428,7 @@ sub _session_socket_read
 					# Change the details
 					my $changes = changePool({
 							'ID' => $pid,
-							'ClassID' => $trafficClassID,
+							'TrafficClassID' => $trafficClassID,
 							'TxCIR' => $txCIR,
 							'RxCIR' => $rxCIR,
 							'TxLimit' => $txLimit,
@@ -472,7 +472,7 @@ sub _session_socket_read
 					'FriendlyName' => $ipAddress,
 					'Name' => $poolName,
 					'InterfaceGroupID' => $config->{'interface_group'},
-					'ClassID' => $trafficClassID,
+					'TrafficClassID' => $trafficClassID,
 					'TxCIR' => $txCIR,
 					'RxCIR' => $rxCIR,
 					'TxLimit' => $txLimit,
