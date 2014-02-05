@@ -120,7 +120,7 @@ EOF
 	# Header for the page
 	$content .= <<EOF;
 		<legend>
-			<a href="pool-list"><span class="glyphicon glyphicon-circle-arrow-left"></span></a>
+			<a href="/limits/pool-list"><span class="glyphicon glyphicon-circle-arrow-left"></span></a>
 			Pool Stats View
 		</legend>
 EOF
@@ -240,8 +240,10 @@ EOF
 		'/static/flot/jquery.flot.min.js',
 		'/static/flot/jquery.flot.time.min.js',
 		'/static/flot/jquery.flot.pie.min.js',
+		'/static/flot/jquery.flot.resize.min.js',
 		'/static/js/flot-functions.js',
-		'/static/awit-flot-toolkit/js/jquery.flot.awitds.js'
+		'/static/awit-flot-toolkit/js/jquery.flot.awitds.js',
+		'/static/awit-flot-toolkit/js/resize.js'
 	);
 	my @stylesheets = (
 		'/static/awit-flot-toolkit/css/awit-flot-toolkit.css'
@@ -350,12 +352,13 @@ EOF
 EOF
 		# LHS - Begin
 		$content .= <<EOF;
-				<div class="col-xs-8">
+				<div class="col-md-8">
 EOF
 		# Loop with 2 sets of normal graphs per row
 		for (my $row = 0; $row < 2; $row++) {
 			# LHS - Begin Row
 			$content .= <<EOF;
+					<!-- 2 sets of normal graphs per row: [$row] -->
 					<div class="row">
 						<div class="col-xs-6">
 EOF
@@ -367,7 +370,7 @@ EOF
 				$content .= <<EOF;
 							<h4 style="color:#8f8f8f;">$graph->{'Title'}</h4>
 							<div id="$graph->{'Tag'}" class="flotCanvas"
-									style="width: 520px; height: 150px; border: 1px dashed black">
+									style="width: 600px; height: 250px; border: 1px dashed black">
 							</div>
 EOF
 				push(@graphs,$graph);
@@ -385,7 +388,7 @@ EOF
 				$content .= <<EOF;
 							<h4 style="color:#8f8f8f;">$graph->{'Title'}</h4>
 							<div id="$graph->{'Tag'}" class="flotCanvas"
-									style="width: 520px; height: 150px; border: 1px dashed black">
+									style="width: 600px; height: 250px; border: 1px dashed black">
 							</div>
 EOF
 				push(@graphs,$graph);
@@ -403,7 +406,7 @@ EOF
 
 		# RHS - Begin Row
 		$content .= <<EOF;
-				<div class="col-xs-4">
+				<div class="col-md-4">
 EOF
 		# Graph
 		if (defined(my $graph = shift(@rightGraphs))) {
@@ -413,7 +416,7 @@ EOF
 			$content .= <<EOF;
 					<h4 style="color:#8f8f8f;">$graph->{'Title'}</h4>
 					<div id="$graph->{'Tag'}" class="flotCanvas"
-							style="width: 520px; height: 340px; border: 1px dashed black">
+							style="width: 600px; height: 340px; border: 1px dashed black">
 					</div>
 EOF
 			push(@graphs,$graph);
@@ -439,8 +442,10 @@ EOF
 		'/static/flot/jquery.flot.min.js',
 		'/static/flot/jquery.flot.time.min.js',
 		'/static/flot/jquery.flot.pie.min.js',
+		'/static/flot/jquery.flot.resize.min.js',
 		'/static/js/flot-functions.js',
-		'/static/awit-flot-toolkit/js/jquery.flot.awitds.js'
+		'/static/awit-flot-toolkit/js/jquery.flot.awitds.js',
+		'/static/awit-flot-toolkit/js/resize.js'
 	);
 	my @stylesheets = (
 		'/static/awit-flot-toolkit/css/awit-flot-toolkit.css'
