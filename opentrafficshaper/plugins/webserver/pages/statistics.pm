@@ -294,7 +294,7 @@ EOF
 						'Type' => 'websocket',
 						'Subscriptions' => [
 							sprintf('class=%s:%s',$interfaceGroupID,$trafficClassID),
-							sprintf('counter=configmanager.classpools.%s',$trafficClassID)
+							sprintf('counter=configmanager.classpoolmembers.%s',$trafficClassID)
 						]
 					}
 				],
@@ -308,7 +308,7 @@ EOF
 				],
 				'YIdentifiers' => [
 					{
-						'Name' => sprintf('configmanager.classpools.%s',$trafficClassID),
+						'Name' => sprintf('configmanager.classpoolmembers.%s',$trafficClassID),
 						'Label' => "Pool Count",
 						'Timespan' => $timespan
 					},
