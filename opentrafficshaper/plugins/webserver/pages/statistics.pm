@@ -167,7 +167,7 @@ EOF
 
 			$content .= <<EOF;
 				<h4 style="color: #8F8F8F;">Statistics: $nameEncoded - $graphName</h4>
-				<div id="$canvasName" class="flotCanvas poolCanvas" style="width: 800px; height: 240px" ></div>
+				<div id="$canvasName" class="flotCanvas" style="width: 800px; height: 240px" ></div>
 EOF
 
 			# Static graphs
@@ -189,12 +189,12 @@ EOF
 					}
 				],
 				'XIdentifiers' => [
-					{ 'Name' => 'tx.cir', 'Label' => "TX Cir", 'Timespan' => $period },
-					{ 'Name' => 'tx.limit', 'Label' => "TX Limit", 'Timespan' => $period },
-					{ 'Name' => 'tx.rate', 'Label' => "TX Rate", 'Timespan' => $period },
-					{ 'Name' => 'rx.cir', 'Label' => "RX Cir", 'Timespan' => $period },
-					{ 'Name' => 'rx.limit', 'Label' => "RX Limit", 'Timespan' => $period },
-					{ 'Name' => 'rx.rate', 'Label' => "RX Rate", 'Timespan' => $period }
+					{ 'Name' => 'tx.cir', 'Label' => "TX Cir", 'Timespan' => $period, 'Count' => 0 },
+					{ 'Name' => 'tx.limit', 'Label' => "TX Limit", 'Timespan' => $period, 'Count' => 0 },
+					{ 'Name' => 'tx.rate', 'Label' => "TX Rate", 'Timespan' => $period, 'Count' => 0 },
+					{ 'Name' => 'rx.cir', 'Label' => "RX Cir", 'Timespan' => $period, 'Count' => 0 },
+					{ 'Name' => 'rx.limit', 'Label' => "RX Limit", 'Timespan' => $period, 'Count' => 0 },
+					{ 'Name' => 'rx.rate', 'Label' => "RX Rate", 'Timespan' => $period, 'Count' => 0 }
 				]
 			});
 		}
@@ -205,7 +205,7 @@ EOF
 
 		$content .= <<EOF;
 			<h4 style="color: #8F8F8F;">Live Statistics: $nameEncoded</h4>
-			<div id="$canvasName" class="flotCanvas poolCanvas" style="width: 1000px; height: 400px" />
+			<div id="$canvasName" class="flotCanvas" style="width: 1000px; height: 400px" />
 EOF
 
 		# Live graph
@@ -222,12 +222,12 @@ EOF
 				}
 			],
 			'XIdentifiers' => [
-				{ 'Name' => 'tx.cir', 'Label' => "TX Cir", 'Timespan' => 900 },
-				{ 'Name' => 'tx.limit', 'Label' => "TX Limit", 'Timespan' => 900 },
-				{ 'Name' => 'tx.rate', 'Label' => "TX Rate", 'Timespan' => 900 },
-				{ 'Name' => 'rx.cir', 'Label' => "RX Cir", 'Timespan' => 900 },
-				{ 'Name' => 'rx.limit', 'Label' => "RX Limit", 'Timespan' => 900 },
-				{ 'Name' => 'rx.rate', 'Label' => "RX Rate", 'Timespan' => 900 }
+				{ 'Name' => 'tx.cir', 'Label' => "TX Cir", 'Timespan' => 900, 'Count' => 0 },
+				{ 'Name' => 'tx.limit', 'Label' => "TX Limit", 'Timespan' => 900, 'Count' => 0 },
+				{ 'Name' => 'tx.rate', 'Label' => "TX Rate", 'Timespan' => 900, 'Count' => 0 },
+				{ 'Name' => 'rx.cir', 'Label' => "RX Cir", 'Timespan' => 900, 'Count' => 0 },
+				{ 'Name' => 'rx.limit', 'Label' => "RX Limit", 'Timespan' => 900, 'Count' => 0 },
+				{ 'Name' => 'rx.rate', 'Label' => "RX Rate", 'Timespan' => 900, 'Count' => 0 }
 			]
 		});
 	}
@@ -294,23 +294,24 @@ EOF
 						'Type' => 'websocket',
 						'Subscriptions' => [
 							sprintf('class=%s:%s',$interfaceGroupID,$trafficClassID),
-							sprintf('counter=configmanager.classpoolmembers.%s',$trafficClassID)
+							sprintf('counter=configmanager.classpools.%s',$trafficClassID)
 						]
 					}
 				],
 				'XIdentifiers' => [
-					{ 'Name' => 'tx.cir', 'Label' => "TX Cir", 'Timespan' => $timespan },
-					{ 'Name' => 'tx.limit', 'Label' => "TX Limit", 'Timespan' => $timespan },
-					{ 'Name' => 'tx.rate', 'Label' => "TX Rate", 'Timespan' => $timespan },
-					{ 'Name' => 'rx.cir', 'Label' => "RX Cir", 'Timespan' => $timespan },
-					{ 'Name' => 'rx.limit', 'Label' => "RX Limit", 'Timespan' => $timespan },
-					{ 'Name' => 'rx.rate', 'Label' => "RX Rate", 'Timespan' => $timespan }
+					{ 'Name' => 'tx.cir', 'Label' => "TX Cir", 'Timespan' => $timespan, 'Count' => 0 },
+					{ 'Name' => 'tx.limit', 'Label' => "TX Limit", 'Timespan' => $timespan, 'Count' => 0 },
+					{ 'Name' => 'tx.rate', 'Label' => "TX Rate", 'Timespan' => $timespan, 'Count' => 0 },
+					{ 'Name' => 'rx.cir', 'Label' => "RX Cir", 'Timespan' => $timespan, 'Count' => 0 },
+					{ 'Name' => 'rx.limit', 'Label' => "RX Limit", 'Timespan' => $timespan, 'Count' => 0 },
+					{ 'Name' => 'rx.rate', 'Label' => "RX Rate", 'Timespan' => $timespan, 'Count' => 0 }
 				],
 				'YIdentifiers' => [
 					{
-						'Name' => sprintf('configmanager.classpoolmembers.%s',$trafficClassID),
+						'Name' => sprintf('configmanager.classpools.%s',$trafficClassID),
 						'Label' => "Pool Count",
-						'Timespan' => $timespan
+						'Timespan' => $timespan,
+						'Count' => 0
 					},
 				]
 			});
@@ -368,7 +369,7 @@ EOF
 
 				$content .= <<EOF;
 							<h4 style="color:#8f8f8f;">$graph->{'Title'}</h4>
-							<div id="$graph->{'Tag'}" class="flotCanvas dashboard"
+							<div id="$graph->{'Tag'}" class="flotCanvas"
 									style="width: 600px; height: 250px; border: 1px dashed black">
 							</div>
 EOF
@@ -386,7 +387,7 @@ EOF
 
 				$content .= <<EOF;
 							<h4 style="color:#8f8f8f;">$graph->{'Title'}</h4>
-							<div id="$graph->{'Tag'}" class="flotCanvas dashboard"
+							<div id="$graph->{'Tag'}" class="flotCanvas"
 									style="width: 600px; height: 250px; border: 1px dashed black">
 							</div>
 EOF
@@ -414,7 +415,7 @@ EOF
 
 			$content .= <<EOF;
 					<h4 style="color:#8f8f8f;">$graph->{'Title'}</h4>
-					<div id="$graph->{'Tag'}" class="flotCanvas dashboard"
+					<div id="$graph->{'Tag'}" class="flotCanvas"
 							style="width: 600px; height: 340px; border: 1px dashed black">
 					</div>
 EOF
