@@ -116,6 +116,16 @@ sub plugin_init
 # Start the plugin
 sub plugin_start
 {
+	my @interfaces = getInterfaces();
+
+
+	my $now = time();
+
+	# Initialize last stats
+	foreach my $interfaceID (@interfaces)	{
+		$globals->{'LastStats'}->{$interfaceID} = $now;
+	}
+
 	$logger->log(LOG_INFO,"[TCSTATS] Started");
 }
 
@@ -164,19 +174,15 @@ sub _session_tick
 	# Now
 	my $now = time();
 
-	my @interfaces = getInterfaces();
+	# Get sorted list of interfaces
+	my @interfaces = sort { $globals->{'LastStats'}->{$a} <=> $globals->{'LastStats'}->{$b} } getInterfaces();
 
-	# Loop with interfaces that need stats
-	my $interfaceCount = 0;
-	foreach my $interfaceID (@interfaces)	{
+	# Grab the first interface in the list to process
+	my $interfaceID = shift(@interfaces);
+
+	# Check if its old enough to process stats for
+	if ($now - $globals->{'LastStats'}->{$interfaceID} > opentrafficshaper::plugins::statistics::STATISTICS_PERIOD) {
 		my $interface = getInterface($interfaceID);
-
-		# Skip to next if we've already run for this interface
-		if (defined($globals->{'LastStats'}->{$interfaceID}) &&
-				$globals->{'LastStats'}->{$interfaceID} + opentrafficshaper::plugins::statistics::STATISTICS_PERIOD > $now
-		) {
-			next;
-		}
 
 		$logger->log(LOG_INFO,"[TCSTATS] Generating stats for '%s'",$interfaceID);
 
@@ -213,17 +219,28 @@ sub _session_tick
 		$logger->log(LOG_DEBUG,"[TCSTATS] TASK/%s: Starting '%s' as %s with PID %s",$task->ID,$cmdStr,$task->ID,$task->PID);
 
 		# Set last time we were run to now
-		$globals->{'LastStats'}->{$interface} = $now;
+		$globals->{'LastStats'}->{$interfaceID} = $now;
 
-		# NK: Space the stats out, this will cause TICK_PERIOD to elapse before we do another interface
-		$interfaceCount++;
-		last;
+		# Grab next one for below calcs...
+		$interfaceID = shift(@interfaces);
 	}
 
-	# If we didn't fire up any stats, re-tick
-	if (!$interfaceCount) {
-		$kernel->delay('_tick' => TICK_PERIOD);
+	# Set default tick period
+	my $tickPeriod = opentrafficshaper::plugins::statistics::STATISTICS_PERIOD;
+	# Calculate optimal wait time
+	if (defined($interfaceID)) {
+		$tickPeriod = opentrafficshaper::plugins::statistics::STATISTICS_PERIOD - ($now - $globals->{'LastStats'}->{$interfaceID});
 	}
+	# Make sure wait time is not too long
+	if ($tickPeriod > opentrafficshaper::plugins::statistics::STATISTICS_PERIOD) {
+		$tickPeriod = opentrafficshaper::plugins::statistics::STATISTICS_PERIOD;
+	}
+	# Make sure wait time is not too short
+	if ($tickPeriod < opentrafficshaper::plugins::statistics::STATISTICS_PERIOD) {
+		$tickPeriod = opentrafficshaper::plugins::statistics::STATISTICS_PERIOD;
+	}
+
+	$kernel->delay('_tick' => $tickPeriod);
 };
 
 
@@ -333,9 +350,6 @@ sub _task_child_close
 	delete($heap->{task_by_pid}->{$task->PID});
 	delete($heap->{task_by_wid}->{$task_id});
 	delete($heap->{task_data}->{$task_id});
-
-	# Fire up next tick
-	$kernel->delay('_tick' => TICK_PERIOD);
 }
 
 
