@@ -193,6 +193,15 @@ sub CLASS_OVERRIDE_CHANGESET_ATTRIBUTES {
 	)
 }
 
+# Class attributes that can be overidden
+sub CLASS_OVERRIDE_PERSISTENT_ATTRIBUTES {
+	qw(
+		InterfaceID
+		TrafficClassID
+		CIR Limit
+	)
+}
+
 # Mandatory pool member attributes
 sub POOLMEMBER_REQUIRED_ATTRIBUTES {
 	qw(
@@ -3706,6 +3715,26 @@ sub _load_statefile
 	# Grab the object handle
 	my $state = tied( %stateHash );
 
+	# Loop with interface traffic class overrides
+	foreach my $section ($state->GroupMembers('interface_traffic_class.override')) {
+		my $classOverride = $stateHash{$section};
+
+		# Loop with the persistent attributes and create our hash
+		my $cClassOverride;
+		foreach my $attr (CLASS_OVERRIDE_PERSISTENT_ATTRIBUTES) {
+			if (defined($classOverride->{$attr})) {
+				# If its an array, join all the items
+				if (ref($classOverride->{$attr}) eq "ARRAY") {
+					$classOverride->{$attr} = join("\n",@{$classOverride->{$attr}});
+				}
+				$cClassOverride->{$attr} = $classOverride->{$attr};
+			}
+		}
+
+		# XXX - Hack, Proces this class override
+		changeInterfaceTrafficClass($cClassOverride);
+	}
+
 	# Loop with user pool overrides
 	foreach my $section ($state->GroupMembers('pool.override')) {
 		my $poolOverride = $stateHash{$section};
@@ -3819,6 +3848,34 @@ sub _write_statefile
 
 	# Create new state file object
 	my $state = new Config::IniFiles();
+
+	# XXX - Hack, loop with class overrides
+	while ((my $itcid, my $interfaceTrafficClass) = each(%{$globals->{'InterfaceTrafficClasses'}})) {
+		# Skip over non-overridden classes
+		if (!defined($interfaceTrafficClass->{'.applied_overrides'})) {
+			next;
+		}
+
+		# Create a section name
+		my $section = "interface_traffic_class.override " . $itcid;
+
+		# Add a section for this class override
+		$state->AddSection($section);
+		# XXX - Hack, Attributes we want to save for this traffic class override
+		foreach my $attr (CLASS_OVERRIDE_PERSISTENT_ATTRIBUTES) {
+			# Set items up
+			if (defined(my $value = $interfaceTrafficClass->{$attr})) {
+				$state->newval($section,$attr,$value);
+			}
+		}
+		# XXX - Hack, loop with the override
+		foreach my $attr (CLASS_OVERRIDE_PERSISTENT_ATTRIBUTES) {
+			# Set items up
+			if (defined(my $value = $interfaceTrafficClass->{'.applied_overrides'}->{'change'}->{$attr})) {
+				$state->newval($section,$attr,$value);
+			}
+		}
+	}
 
 	# Loop with pool overrides
 	while ((my $poid, my $poolOverride) = each(%{$globals->{'PoolOverrides'}})) {
