@@ -21,10 +21,10 @@ package opentrafficshaper::plugins::statistics;
 use strict;
 use warnings;
 
-use DBI;
 use POE;
 use Storable qw( dclone );
 
+use awitpt::db::dblayer;
 use opentrafficshaper::constants;
 use opentrafficshaper::logger;
 
@@ -75,7 +75,95 @@ use constant {
 	STATISTICS_DIR_RX => 2,
 
 	STATISTICS_MAXFLUSH_PER_PERIOD => 10000,
+
+	# SQL Statements
+	SQL_ADD_IDENTIFIER => 'INSERT INTO identifiers (`Identifier`) VALUES (?)',
+	SQL_GET_IDENTIFIER => 'SELECT ID FROM identifiers WHERE `Identifier` = ?',
+	SQL_CONSOLIDATE_STATS => '
+		SELECT
+			`IdentifierID`, `Timestamp` - (`Timestamp` % ?) AS Timestamp,
+			`Direction`,
+			MAX(`CIR`) AS `CIR`, MAX(`Limit`) AS `Limit`, MAX(`Rate`) AS `Rate`, MAX(`PPS`) AS `PPS`,
+			MAX(`QueueLen`) AS `QueueLen`, MAX(`TotalBytes`) AS `TotalBytes`, MAX(`TotalPackets`) AS `TotalPackets`,
+			MAX(`TotalOverlimits`) AS `TotalOverlimits`, MAX(`TotalDropped`) AS `TotalDropped`
+		FROM
+			stats
+		WHERE
+			`Key` = ?
+			AND `Timestamp` > ?
+			AND `Timestamp` < ?
+		GROUP BY
+			`IdentifierID`, `Timestamp`, `Direction`
+	',
+	SQL_CONSOLIDATE_STATS_BASIC => '
+		SELECT
+			`IdentifierID`, `Timestamp` - (`Timestamp` % ?) AS Timestamp,
+			MAX(`Counter`) AS `Counter`
+		FROM
+			stats_basic
+		WHERE
+			`Key` = ?
+			AND `Timestamp` > ?
+			AND `Timestamp` < ?
+		GROUP BY
+			`IdentifierID`, `Timestamp`
+	',
+	SQL_GET_STATS => '
+		SELECT
+			`Timestamp`, `Direction`, `Rate`, `PPS`, `CIR`, `Limit`
+		FROM
+			stats
+		WHERE
+			`IdentifierID` = ?
+			AND `Key` = ?
+			AND `Timestamp` > ?
+			AND `Timestamp` < ?
+		ORDER BY
+			`Timestamp` DESC
+	',
+	SQL_GET_STATS_BASIC => '
+		SELECT
+			`Timestamp`, `Counter`
+		FROM
+			stats_basic
+		WHERE
+			`IdentifierID` = ?
+			AND `Key` = ?
+			AND `Timestamp` > ?
+			AND `Timestamp` < ?
+		ORDER BY
+			`Timestamp` DESC
+	',
+	SQL_CLEANUP_STATS => 'DELETE FROM stats WHERE `Key` = ? AND `Timestamp` < ?',
+	SQL_CLEANUP_STATS_BASIC => 'DELETE FROM stats_basic WHERE `Key` = ? AND `Timestamp` < ?'
+
 };
+
+sub STATS_CONFIG
+{
+	{
+		1 => {
+			'precision' => 300, # 5min
+			'retention' => 4, # 4 days
+		},
+		2 => {
+			'precision' => 900, # 15min
+			'retention' => 14, # 14 days
+		},
+		3 => {
+			'precision' => 3600, # 1hr
+			'retention' => 28 * 2, # 2 months
+		},
+		4 => {
+			'precision' => 21600, # 6hr
+			'retention' => 28 * 6, # 6 months
+		},
+		5 => {
+			'precision' => 86400, # 24hr
+			'retention' => 28 * 12 * 2, # 2 years
+		}
+	}
+}
 
 
 # Plugin info
@@ -92,42 +180,13 @@ our $pluginInfo = {
 my $globals;
 my $logger;
 
-# Our configuration
-my $config = {
-	'db_dsn' => undef,
-	'db_username' => "",
-	'db_password' => "",
-};
-
-# Stats configuration
-my $statsConfig = {
-	1 => {
-		'precision' => 300, # 5min
-		'retention' => 4, # 4 days
-	},
-	2 => {
-		'precision' => 900, # 15min
-		'retention' => 14, # 14 days
-	},
-	3 => {
-		'precision' => 3600, # 1hr
-		'retention' => 28 * 2, # 2 months
-	},
-	4 => {
-		'precision' => 21600, # 6hr
-		'retention' => 28 * 6, # 6 months
-	},
-	5 => {
-		'precision' => 86400, # 24hr
-		'retention' => 28 * 12 * 2, # 2 years
-	}
-};
-
 
 # Handle of DBI
 #
-# $globals->{'DBHandle'}
-# $globals->{'DBPreparedStatements'}
+# $globals->{'Database'}->{'Handle'}
+# $globals->{'Database'}->{'DSN'}
+# $globals->{'Database'}->{'Username'}
+# $globals->{'Database'}->{'Password'}
 
 # DB identifier map
 #
@@ -159,8 +218,7 @@ sub plugin_init
 	$logger->log(LOG_NOTICE,"[STATISTICS] OpenTrafficShaper Statistics v%s - Copyright (c) 2007-2014, AllWorldIT",VERSION);
 
 	# Initialize
-	$globals->{'DBHandle'} = undef;
-	$globals->{'DBPreparedStatements'} = { };
+	$globals->{'Database'} = undef;
 
 	$globals->{'IdentifierMap'} = { };
 
@@ -176,18 +234,19 @@ sub plugin_init
 
 	# Check our interfaces
 	if (defined(my $dbdsn = $globals->{'file.config'}->{'plugin.statistics'}->{'db_dsn'})) {
-		$logger->log(LOG_INFO,"[STATISTICS] Set db_dsn to '%s'",$dbdsn);
-		$config->{'db_dsn'} = $dbdsn;
+		$logger->log(LOG_INFO,"[STATISTICS] Set database DSN to '%s'",$dbdsn);
+		$globals->{'Database'}->{'DSN'} = $dbdsn;
+
+		if (defined(my $dbuser = $globals->{'file.config'}->{'plugin.statistics'}->{'db_username'})) {
+			$logger->log(LOG_INFO,"[STATISTICS] Set database username to '%s'",$dbuser);
+			$globals->{'Database'}->{'Username'} = $dbuser;
+		}
+		if (defined(my $dbpass = $globals->{'file.config'}->{'plugin.statistics'}->{'db_password'})) {
+			$logger->log(LOG_INFO,"[STATISTICS] Set database password to '%s'",$dbpass);
+			$globals->{'Database'}->{'Password'} = $dbpass;
+		}
 	} else {
-		$logger->log(LOG_WARN,"[STATISTICS] No db_dsn to specified in configuration file. Stats storage disabled!");
-	}
-	if (defined(my $dbuser = $globals->{'file.config'}->{'plugin.statistics'}->{'db_username'})) {
-		$logger->log(LOG_INFO,"[STATISTICS] Set db_username to '%s'",$dbuser);
-		$config->{'db_username'} = $dbuser;
-	}
-	if (defined(my $dbpass = $globals->{'file.config'}->{'plugin.statistics'}->{'db_password'})) {
-		$logger->log(LOG_INFO,"[STATISTICS] Set db_password to '%s'",$dbpass);
-		$config->{'db_password'} = $dbpass;
+		$logger->log(LOG_WARN,"[STATISTICS] No database DSN to specified in configuration file. Stats storage disabled!");
 	}
 
 	# This is our main stats session
@@ -203,100 +262,34 @@ sub plugin_init
 	);
 
 	# Create DBI agent
-	if (defined($config->{'db_dsn'})) {
-		$globals->{'DBHandle'} = DBI->connect(
-				$config->{'db_dsn'}, $config->{'db_username'}, $config->{'db_password'},
-				{
-					'AutoCommit' => 1,
-					'RaiseError' => 0,
-					'FetchHashKeyName' => 'NAME_lc'
-				}
-		);
-		if (!defined($globals->{'DBHandle'})) {
-			$logger->log(LOG_ERR,"[STATISTICS] Failed to connect to database: %s",$DBI::errstr);
-		}
-
-		# Prepare identifier add statement
-		if ($globals->{'DBHandle'} && (my $res = $globals->{'DBHandle'}->prepare('INSERT INTO identifiers (`Identifier`) VALUES (?)'))) {
-			$globals->{'DBPreparedStatements'}->{'identifier_add'} = $res;
+	if (defined($globals->{'Database'})) {
+		$globals->{'Database'}->{'Handle'} = DBInit({
+			'DSN' => $globals->{'Database'}->{'DSN'},
+			'Username' => $globals->{'Database'}->{'Username'},
+			'Password' => $globals->{'Database'}->{'Password'}
+		});
+		# Check if handle is defined
+		if (defined($globals->{'Database'}->{'Handle'})) {
+			# Try connect (0 is success)
+			if (!DBConnect()) {
+				$logger->log(LOG_INFO,"[STATISTICS] Connected to database");
+			} else {
+				$logger->log(LOG_ERR,"[STATISTICS] Failed to connect to database: %s (DATABASE DISABLED)",
+						awitpt::db::dblayer::Error());
+				# Don't try again
+				delete($globals->{'Database'});
+			}
+		# If the handle is not defined, the database won't work
 		} else {
-			$logger->log(LOG_ERR,"[STATISTICS] Failed to prepare statement 'identifier_add': %s",$DBI::errstr);
-			$globals->{'DBHandle'}->disconnect();
-			$globals->{'DBHandle'} = undef;
-		}
-		# Prepare identifier get statement
-		if ($globals->{'DBHandle'} && (my $res = $globals->{'DBHandle'}->prepare('SELECT ID FROM identifiers WHERE `Identifier` = ?'))) {
-			$globals->{'DBPreparedStatements'}->{'identifier_get'} = $res;
-		} else {
-			$logger->log(LOG_ERR,"[STATISTICS] Failed to prepare statement 'identifier_get': %s",$DBI::errstr);
-			$globals->{'DBHandle'}->disconnect();
-			$globals->{'DBHandle'} = undef;
-		}
-
-		# Prepare stats consolidation statements
-		if ($globals->{'DBHandle'} && (my $res = $globals->{'DBHandle'}->prepare('
-			SELECT
-				`IdentifierID`, `Timestamp` - (`Timestamp` % ?) AS TimestampM,
-				`Direction`,
-				MAX(`CIR`) AS `CIR`, MAX(`Limit`) AS `Limit`, MAX(`Rate`) AS `Rate`, MAX(`PPS`) AS `PPS`,
-				MAX(`Queue_Len`) AS `Queue_Len`, MAX(`Total_Bytes`) AS `Total_Bytes`, MAX(`Total_Packets`) AS `Total_Packets`,
-				MAX(`Total_Overlimits`) AS `Total_Overlimits`, MAX(`Total_Dropped`) AS `Total_Dropped`
-			FROM
-				stats
-			WHERE
-				`Key` = ?
-				AND `Timestamp` > ?
-				AND `Timestamp` < ?
-			GROUP BY
-				`IdentifierID`, `TimestampM`, `Direction`
-		'))) {
-			$globals->{'DBPreparedStatements'}->{'stats_consolidate'} = $res;
-		} else {
-			$logger->log(LOG_ERR,"[STATISTICS] Failed to prepare statement 'stats_consolidate': %s",$DBI::errstr);
-			$globals->{'DBHandle'}->disconnect();
-			$globals->{'DBHandle'} = undef;
-		}
-		if ($globals->{'DBHandle'} && (my $res = $globals->{'DBHandle'}->prepare('
-			SELECT
-				`IdentifierID`, `Timestamp` - (`Timestamp` % ?) AS TimestampM,
-				MAX(`Counter`) AS `Counter`
-			FROM
-				stats_basic
-			WHERE
-				`Key` = ?
-				AND `Timestamp` > ?
-				AND `Timestamp` < ?
-			GROUP BY
-				`IdentifierID`, `TimestampM`
-		'))) {
-			$globals->{'DBPreparedStatements'}->{'stats_basic_consolidate'} = $res;
-		} else {
-			$logger->log(LOG_ERR,"[STATISTICS] Failed to prepare statement 'stats_basic_consolidate': %s",$DBI::errstr);
-			$globals->{'DBHandle'}->disconnect();
-			$globals->{'DBHandle'} = undef;
-		}
-
-		# Prepare stats cleanup statements
-		if ($globals->{'DBHandle'} && (my $res = $globals->{'DBHandle'}->prepare('DELETE FROM stats WHERE `Key` = ? AND `Timestamp` < ?'))) {
-			$globals->{'DBPreparedStatements'}->{'stats_cleanup'} = $res;
-		} else {
-			$logger->log(LOG_ERR,"[STATISTICS] Failed to prepare statement 'stats_cleanup': %s",$DBI::errstr);
-			$globals->{'DBHandle'}->disconnect();
-			$globals->{'DBHandle'} = undef;
-		}
-		if ($globals->{'DBHandle'} && (my $res = $globals->{'DBHandle'}->prepare('DELETE FROM stats_basic WHERE `Key` = ? AND `Timestamp` < ?'))) {
-			$globals->{'DBPreparedStatements'}->{'stats_basic_cleanup'} = $res;
-		} else {
-			$logger->log(LOG_ERR,"[STATISTICS] Failed to prepare statement 'stats_basic_cleanup': %s",$DBI::errstr);
-			$globals->{'DBHandle'}->disconnect();
-			$globals->{'DBHandle'} = undef;
+			$logger->log(LOG_ERR,"[STATISTICS] Failed to initailize database: %s (DATABASE DISABLED)",
+					awitpt::db::dblayer::Error());
 		}
 
 		# Set last cleanup to now
 		my $now = time();
-		foreach my $key (keys %{$statsConfig}) {
+		foreach my $key (keys %{STATS_CONFIG()}) {
 			# Get aligned time so we cleanup sooner
-			$globals->{'LastCleanup'}->{$key} = _getAlignedTime($now,$statsConfig->{$key}->{'precision'});
+			$globals->{'LastCleanup'}->{$key} = _getAlignedTime($now,STATS_CONFIG()->{$key}->{'precision'});
 		}
 		$globals->{'LastConfigManagerStats'} = $now;
 	}
@@ -357,19 +350,13 @@ sub _session_tick
 	my ($kernel,$heap) = @_[KERNEL,HEAP];
 
 
-	# If we don't have a DB handle, just skip...
-	if (!$globals->{'DBHandle'}) {
+	# If we don't have a database, just skip...
+	if (!$globals->{'Database'}) {
 		return;
 	}
 
 	my $now = time();
 	my $timer1 = [gettimeofday];
-
-	# Pull in statements
-	my $sthStatsConsolidate = $globals->{'DBPreparedStatements'}->{'stats_consolidate'};
-	my $sthStatsCleanup = $globals->{'DBPreparedStatements'}->{'stats_cleanup'};
-	my $sthStatsBasicConsolidate = $globals->{'DBPreparedStatements'}->{'stats_basic_consolidate'};
-	my $sthStatsBasicCleanup = $globals->{'DBPreparedStatements'}->{'stats_basic_cleanup'};
 
 	# Even out flushing over 10s to absorb spikes
 	my $totalFlush = @{$globals->{'StatsQueue'}};
@@ -408,36 +395,36 @@ sub _session_tick
 
 	# If we got things to insert, do it
 	if (@insertBasicHolders > 0) {
-		my $res = $globals->{'DBHandle'}->do('
+		my $res = DBDo('
 			INSERT DELAYED INTO stats_basic
 				(
 					`IdentifierID`, `Key`, `Timestamp`,
 					`Counter`
 				)
 			VALUES
-				'.join(',',@insertBasicHolders),undef,@insertBasicData
+				'.join(',',@insertBasicHolders),@insertBasicData
 		);
 		# Check for error
 		if (!defined($res)) {
-			$logger->log(LOG_ERR,"[STATISTICS] Failed to execute delayed stats_basic insert: %s",$DBI::errstr);
+			$logger->log(LOG_ERR,"[STATISTICS] Failed to execute delayed stats_basic insert: %s",awitpt::db::dblayer::Error());
 		}
 	}
 	# And normal stats...
 	if (@insertHolders > 0) {
-		my $res = $globals->{'DBHandle'}->do('
+		my $res = DBDo('
 			INSERT DELAYED INTO stats
 				(
 					`IdentifierID`, `Key`, `Timestamp`,
 					`Direction`,
-					`CIR`, `Limit`, `Rate`, `PPS`, `Queue_Len`,
-					`Total_Bytes`, `Total_Packets`, `Total_Overlimits`, `Total_Dropped`
+					`CIR`, `Limit`, `Rate`, `PPS`, `QueueLen`,
+					`TotalBytes`, `TotalPackets`, `TotalOverlimits`, `TotalDropped`
 				)
 			VALUES
-				'.join(',',@insertHolders),undef,@insertData
+				'.join(',',@insertHolders),@insertData
 		);
 		# Check for error
 		if (!defined($res)) {
-			$logger->log(LOG_ERR,"[STATISTICS] Failed to execute delayed stats insert: %s",$DBI::errstr);
+			$logger->log(LOG_ERR,"[STATISTICS] Failed to execute delayed stats insert: %s",awitpt::db::dblayer::Error());
 		}
 	}
 
@@ -446,19 +433,19 @@ sub _session_tick
 	if ($numFlush) {
 		my $timediff2 = tv_interval($timer1,$timer2);
 		$logger->log(LOG_INFO,"[STATISTICS] Total stats flush time %s/%s records: %s",
-				$numFlush,
-				$totalFlush,
-				sprintf('%.3fs',$timediff2)
+			$numFlush,
+			$totalFlush,
+			sprintf('%.3fs',$timediff2)
 		);
 	}
 
 	my $res;
 
 	# Loop with our stats consolidation configuration
-	foreach my $key (sort keys %{$statsConfig}) {
+	foreach my $key (sort keys %{STATS_CONFIG()}) {
 		my $timerA = [gettimeofday];
 
-		my $precision = $statsConfig->{$key}->{'precision'};
+		my $precision = STATS_CONFIG()->{$key}->{'precision'};
 		my $thisPeriod = _getAlignedTime($now,$precision);
 		my $lastPeriod = $thisPeriod - $precision;
 		my $prevKey = $key - 1;
@@ -475,60 +462,44 @@ sub _session_tick
 		my $consolidateUpTo = $lastPeriod - $precision;
 
 		# Execute and pull in consolidated stats
-		$res = $sthStatsBasicConsolidate->execute($precision,$prevKey,$consolidateFrom,$consolidateUpTo);
+		$res = DBSelect(SQL_CONSOLIDATE_STATS_BASIC,$precision,$prevKey,$consolidateFrom,$consolidateUpTo);
 		if ($res) {
 			# Loop with items returned
-			while (my $item = $sthStatsBasicConsolidate->fetchrow_hashref()) {
-				my $stat = {
-					'IdentifierID' => $item->{'identifierid'},
-					'Key' => $key,
-					'Timestamp' => $item->{'timestampm'},
-					'Counter' => $item->{'counter'}
-				};
-
+			while (my $item = hashifyLCtoMC($res->fetchrow_hashref(),'IdentifierID','Timestamp','Counter')) {
+				$item->{'Key'} = $key;
 
 				# Queue for insert
-				push(@{$globals->{'StatsQueue'}},$stat);
+				push(@{$globals->{'StatsQueue'}},$item);
 
 				$numStatsBasicConsolidated++;
 			}
+			DBFreeRes($res);
 		# If there was an error, make sure we report it
 		} else {
 			$logger->log(LOG_ERR,"[STATISTICS] Failed to execute stats_basic consolidation statement: %s",
-					$sthStatsBasicConsolidate->errstr()
-			);
+					awitpt::db::dblayer::Error());
 		}
 		# And the normal stats...
-		$res = $sthStatsConsolidate->execute($precision,$prevKey,$consolidateFrom,$consolidateUpTo);
+		$res = DBSelect(SQL_CONSOLIDATE_STATS,$precision,$prevKey,$consolidateFrom,$consolidateUpTo);
 		if ($res) {
 			# Loop with items returned
-			while (my $item = $sthStatsConsolidate->fetchrow_hashref()) {
-				my $stat = {
-					'IdentifierID' => $item->{'identifierid'},
-					'Key' => $key,
-					'Timestamp' => $item->{'timestampm'},
-					'Direction' => $item->{'direction'},
-					'CIR' => $item->{'cir'},
-					'Limit' => $item->{'limit'},
-					'Rate' => $item->{'rate'},
-					'PPS' => $item->{'pps'},
-					'QueueLen' => $item->{'queue_len'},
-					'TotalBytes' => $item->{'total_bytes'},
-					'TotalPackets' => $item->{'total_packets'},
-					'TotalOverLimits' => $item->{'total_overlimits'},
-					'TotalDropped' => $item->{'total_dropped'}
-				};
+			while (my $item = hashifyLCtoMC(
+				$res->fetchrow_hashref(),
+				'IdentifierID','Timestamp','Direction','CIR','Limit','Rate','PPS','QueueLen','TotalBytes','TotalPackets',
+				'TotalOverLimits','TotalDropped'
+			)) {
+				$item->{'Key'} = $key;
 
 				# Queue for insert
-				push(@{$globals->{'StatsQueue'}},$stat);
+				push(@{$globals->{'StatsQueue'}},$item);
 
 				$numStatsConsolidated++;
 			}
+			DBFreeRes($res);
 		# If there was an error, make sure we report it
 		} else {
 			$logger->log(LOG_ERR,"[STATISTICS] Failed to execute stats consolidation statement: %s",
-					$sthStatsConsolidate->errstr()
-			);
+					awitpt::db::dblayer::Error());
 		}
 
 		# Set last cleanup to now
@@ -538,14 +509,14 @@ sub _session_tick
 		my $timediffB = tv_interval($timerA,$timerB);
 
 		$logger->log(LOG_INFO,"[STATISTICS] Stats consolidation: key %s in %s (%s basic, %s normal), period %s - %s [%s - %s]",
-				$key,
-				sprintf('%.3fs',$timediffB),
-				$numStatsBasicConsolidated,
-				$numStatsConsolidated,
-				$consolidateFrom,
-				$consolidateUpTo,
-				scalar(localtime($consolidateFrom)),
-				scalar(localtime($consolidateUpTo))
+			$key,
+			sprintf('%.3fs',$timediffB),
+			$numStatsBasicConsolidated,
+			$numStatsConsolidated,
+			$consolidateFrom,
+			$consolidateUpTo,
+			scalar(localtime($consolidateFrom)),
+			scalar(localtime($consolidateUpTo))
 		);
 	}
 
@@ -555,98 +526,97 @@ sub _session_tick
 	# We only need to run as often as the first precision
 	# - If cleanup has not yet run?
 	# - or if the 0 cleanup plus precision of the first key is in the past (data is now stale?)
-	if (!defined($globals->{'LastCleanup'}->{'0'}) || $globals->{'LastCleanup'}->{'0'} + $statsConfig->{1}->{'precision'} < $now) {
+	if (!defined($globals->{'LastCleanup'}->{'0'}) || $globals->{'LastCleanup'}->{'0'} + STATS_CONFIG()->{1}->{'precision'} < $now) {
 		# We're going to clean up for the first stats precision * 3, which should be enough
-		my $cleanUpTo = $now - ($statsConfig->{1}->{'precision'} * 3);
+		my $cleanUpTo = $now - (STATS_CONFIG()->{1}->{'precision'} * 3);
 
 		# Streamed stats is removed 3 time periods past the first precision
 		my $timerA = [gettimeofday];
-		if ($res = $sthStatsBasicCleanup->execute(0, $cleanUpTo)) {
+		if ($res = DBDo(SQL_CLEANUP_STATS_BASIC,0,$cleanUpTo)) {
 			my $timerB = [gettimeofday];
 			my $timerdiffA = tv_interval($timerA,$timerB);
 
 			# We get 0E0 for 0 when none were removed
 			if ($res ne "0E0") {
 				$logger->log(LOG_INFO,"[STATISTICS] Cleanup streamed stats_basic, %s items in %s, up to %s [%s]",
-						$res,
-						sprintf('%.3fs',$timerdiffA),
-						$cleanUpTo,
-						scalar(localtime($cleanUpTo)),
+					$res,
+					sprintf('%.3fs',$timerdiffA),
+					$cleanUpTo,
+					scalar(localtime($cleanUpTo)),
 				);
 			}
 		} else {
 			$logger->log(LOG_ERR,"[STATISTICS] Failed to execute stats_basic cleanup statement: %s",
-					$sthStatsBasicCleanup->errstr()
-			);
+					awitpt::db::dblayer::Error());
 		}
 
 		# And the normal stats...
 		$timerA = [gettimeofday];
-		if ($res = $sthStatsCleanup->execute(0, $cleanUpTo)) {
+		if ($res = DBDo(SQL_CLEANUP_STATS,0,$cleanUpTo)) {
 			my $timerB = [gettimeofday];
 			my $timerdiffA = tv_interval($timerA,$timerB);
 
 			# We get 0E0 for 0 when none were removed
 			if ($res ne "0E0") {
 				$logger->log(LOG_INFO,"[STATISTICS] Cleanup streamed stats, %s items in %s, up to %s [%s]",
-						$res,
-						sprintf('%.3fs',$timerdiffA),
-						$cleanUpTo,scalar(localtime($cleanUpTo))
+					$res,
+					sprintf('%.3fs',$timerdiffA),
+					$cleanUpTo,scalar(localtime($cleanUpTo))
 				);
 			}
 		} else {
 			$logger->log(LOG_ERR,"[STATISTICS] Failed to execute stats cleanup statement: %s",
-					$sthStatsCleanup->errstr()
+				awitpt::db::dblayer::Error()
 			);
 		}
 
 		# Loop and remove retained stats
-		foreach my $key (keys %{$statsConfig}) {
+		foreach my $key (keys %{STATS_CONFIG()}) {
 			# Work out timestamp to clean up to by multiplying the retention period by days
-			$cleanUpTo = $now - ($statsConfig->{$key}->{'retention'} * 86400);
+			$cleanUpTo = $now - (STATS_CONFIG()->{$key}->{'retention'} * 86400);
 
 			# Retention period is in # days
 			my $timerA = [gettimeofday];
-			if ($res = $sthStatsBasicCleanup->execute($key, $cleanUpTo)) {
+			if ($res = DBDo(SQL_CLEANUP_STATS_BASIC,$key,$cleanUpTo)) {
 				# We get 0E0 for 0 when none were removed
 				if ($res ne "0E0") {
 					my $timerB = [gettimeofday];
 					my $timerdiffA = tv_interval($timerA,$timerB);
 
 					$logger->log(LOG_INFO,"[STATISTICS] Cleanup stats_basic key %s in %s, %s items up to %s [%s]",
-							$key,
-							sprintf('%.3fs',$timerdiffA),
-							$res,
-							$cleanUpTo,
-							scalar(localtime($cleanUpTo))
+						$key,
+						sprintf('%.3fs',$timerdiffA),
+						$res,
+						$cleanUpTo,
+						scalar(localtime($cleanUpTo))
 					);
 				}
 			} else {
 				$logger->log(LOG_ERR,"[STATISTICS] Failed to execute stats_basic cleanup statement for key %s: %s",
-						$key,
-						$sthStatsBasicCleanup->errstr()
+					$key,
+					awitpt::db::dblayer::Error()
 				);
 			}
 			# And normal stats...
 			$timerA = [gettimeofday];
-			if ($res = $sthStatsCleanup->execute($key, $cleanUpTo)) {
+			if ($res = DBDo(SQL_CLEANUP_STATS,$key,$cleanUpTo)) {
 				# We get 0E0 for 0 when none were removed
 				if ($res ne "0E0") {
 					my $timerB = [gettimeofday];
 					my $timerdiffA = tv_interval($timerA,$timerB);
 
 					$logger->log(LOG_INFO,"[STATISTICS] Cleanup stats key %s in %s, %s items up to %s [%s]",
-							$key,
-							sprintf('%.3fs',$timerdiffA),
-							$res,
-							$cleanUpTo,
-							scalar(localtime($cleanUpTo))
+						$key,
+						sprintf('%.3fs',$timerdiffA),
+						$res,
+						$cleanUpTo,
+						scalar(localtime($cleanUpTo))
 					);
 				}
 			} else {
 				$logger->log(LOG_ERR,"[STATISTICS] Failed to execute stats cleanup statement for key %s: %s",
-						$key,
-						$sthStatsCleanup->errstr()
+					$key,
+					awitpt::db::dblayer::Error()
 				);
 			}
 		}
@@ -657,7 +627,7 @@ sub _session_tick
 		my $timer4 = [gettimeofday];
 		my $timediff4 = tv_interval($timer3,$timer4);
 		$logger->log(LOG_INFO,"[STATISTICS] Total stats cleanup time: %s",
-				sprintf('%.3fs',$timediff4)
+			sprintf('%.3fs',$timediff4)
 		);
 	}
 
@@ -684,11 +654,6 @@ sub _session_update
 	my ($kernel, $statsData) = @_[KERNEL, ARG0];
 
 
-	# TODO? This requires DB access
-	if (!$globals->{'DBHandle'}) {
-		return;
-	}
-
 	_processStatistics($kernel,$statsData);
 }
 
@@ -701,9 +666,9 @@ sub subscribe
 
 
 	$logger->log(LOG_INFO,"[STATISTICS] Got subscription request for '%s': handler='%s', event='%s'",
-			$sid,
-			$handler,
-			$event
+		$sid,
+		$handler,
+		$event
 	);
 
 	# Grab next SSID
@@ -737,13 +702,13 @@ sub unsubscribe
 	my $item = $globals->{'SSIDMap'}->{$ssid};
 	if (!defined($item)) {
 		$logger->log(LOG_ERR,"[STATISTICS] Got unsubscription request for SSID '%s' that doesn't exist",
-				$ssid
+			$ssid
 		);
 		return
 	}
 
 	$logger->log(LOG_INFO,"[STATISTICS] Got unsubscription request for SSID '%s'",
-			$ssid
+		$ssid
 	);
 
 	# Remove subscriber
@@ -1180,15 +1145,21 @@ sub _getSIDFromIdentifier
 		return $sid;
 	}
 
+	# We need the DB to be alive to do this...
+	if (!defined($globals->{'Database'})) {
+		return undef;
+	}
+
 	# Try grab it from DB
-	my $identifierGetSTH = $globals->{'DBPreparedStatements'}->{'identifier_get'};
-	if (my $res = $identifierGetSTH->execute($identifier)) {
+	if (my $res = DBSelect(SQL_GET_IDENTIFIER,$identifier)) {
 		# Grab first row and return
-		if (my $row = $identifierGetSTH->fetchrow_hashref()) {
+		if (my $row = $res->fetchrow_hashref()) {
+			DBFreeRes($res);
 			return $globals->{'IdentifierMap'}->{$identifier} = $row->{'id'};
 		}
+		DBFreeRes($res);
 	} else {
-		$logger->log(LOG_ERR,"[STATISTICS] Failed to get SID from identifier '%s': %s",$identifier,$identifierGetSTH->errstr);
+		$logger->log(LOG_ERR,"[STATISTICS] Failed to get SID from identifier '%s': %s",$identifier,awitpt::db::dblayer::Error());
 	}
 
 	return undef;
@@ -1202,12 +1173,16 @@ sub _setSIDFromIdentifier
 	my $identifier = shift;
 
 
+	# We need the DB to be alive to do this...
+	if (!defined($globals->{'Database'})) {
+		return undef;
+	}
+
 	# Try add it to the DB
-	my $identifierAddSTH = $globals->{'DBPreparedStatements'}->{'identifier_add'};
-	if (my $res = $identifierAddSTH->execute($identifier)) {
-		return $globals->{'IdentifierMap'}->{$identifier} = $globals->{'DBHandle'}->last_insert_id("","","","");
+	if (my $res = DBDo(SQL_ADD_IDENTIFIER,$identifier)) {
+		return $globals->{'IdentifierMap'}->{$identifier} = DBLastInsertID("","");
 	} else {
-		$logger->log(LOG_ERR,"[STATISTICS] Failed to get SID from identifier '%s': %s",$identifier,$identifierAddSTH->errstr);
+		$logger->log(LOG_ERR,"[STATISTICS] Failed to set SID from identifier '%s': %s",$identifier,awitpt::db::dblayer::Error());
 	}
 
 	return undef;
@@ -1245,33 +1220,29 @@ sub _getStatsBySID
 
 	# Find the best key to use...
 	my $statsKey = 0;
-	foreach my $key (sort {$b <=> $a} keys %{$statsConfig}) {
+	foreach my $key (sort {$b <=> $a} keys %{STATS_CONFIG()}) {
 		# Grab first key that will hve 50+ entries
-		if ($timespan / $statsConfig->{$key}->{'precision'} > 50) {
+		if ($timespan / STATS_CONFIG()->{$key}->{'precision'} > 50) {
 			$statsKey = $key;
 			last;
 		}
 	}
 
-	# Prepare query
-	my $sth = $globals->{'DBHandle'}->prepare('
-		SELECT
-			`Timestamp`, `Direction`, `Rate`, `PPS`, `CIR`, `Limit`
-		FROM
-			stats
-		WHERE
-			`IdentifierID` = ?
-			AND `Key` = ?
-			AND `Timestamp` > ?
-			AND `Timestamp` < ?
-		ORDER BY
-			`Timestamp` DESC
-	');
-	# Grab last 60 mins of data
-	$sth->execute($sid,$statsKey,$startTimestamp,$endTimestamp);
+	my $statistics = { };
 
-	my $statistics;
-	while (my $item = $sth->fetchrow_hashref()) {
+	# We need the DB below this point
+	if (!defined($globals->{'Database'})) {
+		return $statistics;
+	}
+
+	# Grab last 60 mins of data
+	my $res = DBSelect(SQL_GET_STATS,$sid,$statsKey,$startTimestamp,$endTimestamp);
+	if (!defined($res)) {
+		$logger->log(LOG_ERR,"[STATISTICS] Failed to get stats for SID '%s': %s",$sid,awitpt::db::dblayer::Error());
+		return $statistics;
+	}
+
+	while (my $item = $res->fetchrow_hashref()) {
 		$statistics->{$item->{'timestamp'}}->{$item->{'direction'}} = {
 			'rate' => $item->{'rate'},
 			'pps' => $item->{'pps'},
@@ -1279,6 +1250,7 @@ sub _getStatsBySID
 			'limit' => $item->{'limit'},
 		}
 	}
+	DBFreeRes($res);
 
 	return $statistics;
 }
@@ -1306,37 +1278,30 @@ sub _getStatsBasicBySID
 
 	# Find the best key to use...
 	my $statsKey = 0;
-	foreach my $key (sort {$b <=> $a} keys %{$statsConfig}) {
+	foreach my $key (sort {$b <=> $a} keys %{STATS_CONFIG()}) {
 		# Grab first key that will hve 50+ entries
-		if ($timespan / $statsConfig->{$key}->{'precision'} > 50) {
+		if ($timespan / STATS_CONFIG()->{$key}->{'precision'} > 50) {
 			$statsKey = $key;
 			last;
 		}
 	}
 
-	# Prepare query
-	my $sth = $globals->{'DBHandle'}->prepare('
-		SELECT
-			`Timestamp`, `Counter`
-		FROM
-			stats_basic
-		WHERE
-			`IdentifierID` = ?
-			AND `Key` = ?
-			AND `Timestamp` > ?
-			AND `Timestamp` < ?
-		ORDER BY
-			`Timestamp` DESC
-	');
-	# Grab last 60 mins of data
-	$sth->execute($sid,$statsKey,$startTimestamp,$endTimestamp);
+	my $statistics = { };
 
-	my $statistics;
-	while (my $item = $sth->fetchrow_hashref()) {
+	# We need the DB below this point
+	if (!defined($globals->{'Database'})) {
+		return $statistics;
+	}
+
+	# Prepare query
+	my $res = DBSelect(SQL_GET_STATS_BASIC,$sid,$statsKey,$startTimestamp,$endTimestamp);
+
+	while (my $item = $res->fetchrow_hashref()) {
 		$statistics->{$item->{'timestamp'}} = {
 			'counter' => $item->{'counter'},
 		}
 	}
+	DBFreeRes($res);
 
 	return $statistics;
 }
