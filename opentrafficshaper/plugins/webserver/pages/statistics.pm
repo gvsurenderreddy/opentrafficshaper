@@ -369,7 +369,7 @@ EOF
 				$content .= <<EOF;
 							<h4 style="color:#8f8f8f;">$graph->{'Title'}</h4>
 							<div id="$graph->{'Tag'}" class="flotCanvas dashboardCanvas"
-									style="width: 600px; height: 250px; border: 1px dashed black">
+									style="width: 600px; height: 250px">
 							</div>
 EOF
 				push(@graphs,$graph);
@@ -387,7 +387,7 @@ EOF
 				$content .= <<EOF;
 							<h4 style="color:#8f8f8f;">$graph->{'Title'}</h4>
 							<div id="$graph->{'Tag'}" class="flotCanvas dashboardCanvas"
-									style="width: 600px; height: 250px; border: 1px dashed black">
+									style="width: 600px; height: 250px">
 							</div>
 EOF
 				push(@graphs,$graph);
@@ -415,7 +415,7 @@ EOF
 			$content .= <<EOF;
 					<h4 style="color:#8f8f8f;">$graph->{'Title'}</h4>
 					<div id="$graph->{'Tag'}" class="flotCanvas dashboardCanvas"
-							style="width: 600px; height: 340px; border: 1px dashed black">
+							style="width: 600px; height: 340px">
 					</div>
 EOF
 			push(@graphs,$graph);
