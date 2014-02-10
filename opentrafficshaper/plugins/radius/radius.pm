@@ -383,16 +383,33 @@ sub _session_socket_read
 	}
 
 	# Check if we have a pool transform
-	my $tPoolName;
+	my $poolName;
 	if (defined($config->{'username_to_pool_transform'})) {
 		# Check if transform matches, if it does set pool name
 		if ($username =~ $config->{'username_to_pool_transform'}) {
-			my $tPoolName = $1;
+			$poolName = $1;
 		}
 	}
 
-	# Check what to use for the pool name, by default its the username
-	my $poolName = $tPoolName || $username;
+	# Check if the pool name is being overridden
+	if (my $attrRawVal = $pkt->vsattr(IANA_PEN,'OpenTrafficShaper-Traffic-Pool')) {
+		$poolName = @{ $attrRawVal }[0];
+	}
+
+	# If we got a pool name, check if it exists
+	if (defined($poolName)) {
+		if (!defined(getPoolByName($poolName))) {
+			$logger->log(LOG_NOTICE,"[RADIUS] Pool '%s' not found, using username '%s' instead",
+				$poolName,
+				$username
+			);
+			$poolName = $username;
+		}
+	# If we didn't get the pool name, just use the username
+	} else {
+		$poolName = $username;
+	}
+
 	# Try grab the pool
 	my $pool = getPoolByName($poolName);
 	my $pid = defined($pool) ? $pool->{'ID'} : undef;
