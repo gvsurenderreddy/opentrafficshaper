@@ -158,9 +158,9 @@ EOF
 	# Check if we doing a static display or not
 	if (defined($queryParams->{'static'}) && $queryParams->{'static'}) {
 		# Loop with periods to display on this page
-		foreach my $period (sort { $a <=> $b } keys POOL_GRAPHS) {
+		foreach my $period (sort { $a <=> $b } keys %{POOL_GRAPHS()}) {
 			my $canvasName = "flotCanvas$period";
-			my $graphName = POOL_GRAPHS->{$period};
+			my $graphName = POOL_GRAPHS()->{$period};
 
 			my $now = time();
 			my $startTimestamp = $now - $period;
@@ -573,7 +573,7 @@ sub jsondata
 				# Grab the stat
 				my $tstat = $statsData->{$timestamp};
 				# Loop with its keys
-				foreach my $item (keys $tstat) {
+				foreach my $item (keys %{$tstat}) {
 					# Add the keys to the data to return
 					push(@{$rawData->{$tag}->{$item}->{'data'}},[
 							$timestamp,
@@ -677,7 +677,7 @@ sub jsondata
 					# Grab the stat
 					my $tstat = $statsData->{$timestamp};
 					# Loop with its keys
-					foreach my $item (keys $tstat) {
+					foreach my $item (keys %{$tstat}) {
 						# Add the keys to the data to return
 						push(@{$rawData->{$tag}->{$item}->{'data'}},[
 								$timestamp,
@@ -759,7 +759,7 @@ sub jsondata
 					# Grab the stat
 					my $tstat = $statsData->{$timestamp};
 					# Loop with its keys
-					foreach my $item (keys $tstat) {
+					foreach my $item (keys %{$tstat}) {
 						# Add the keys to the data to return
 						push(@{$rawData->{$tag}->{$item}->{'data'}},[
 								$timestamp,
@@ -817,7 +817,7 @@ sub jsondata
 				# Grab the stat
 				my $tstat = $statsData->{$timestamp};
 				# Loop with its keys
-				foreach my $item (keys $tstat) {
+				foreach my $item (keys %{$tstat}) {
 					# Add the keys to the data to return
 					push(@{$rawData->{$tag}->{$item}->{'data'}},[
 							$timestamp,
