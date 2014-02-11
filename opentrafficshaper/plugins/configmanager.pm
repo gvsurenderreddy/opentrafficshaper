@@ -2804,7 +2804,7 @@ sub getEffectivePool
 
 
 # Function to create a pool member
-sub	createPoolMember
+sub createPoolMember
 {
 	my $poolMemberData = shift;
 
@@ -3891,7 +3891,6 @@ sub _write_statefile
 				$state->newval($section,$attr,$value);
 			}
 		}
-
 	}
 
 	# Loop with pools
