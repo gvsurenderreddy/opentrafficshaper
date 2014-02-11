@@ -46,7 +46,7 @@ use Storable qw(
 use awitpt::util qw(
 	parseURIQuery
 	parseFormContent
-	isUsername
+	isUsername ISUSERNAME_ALLOW_ATSIGN
 	isIPv4
 	isNumber
 	prettyUndef
@@ -373,7 +373,7 @@ sub pool_addedit
 
 		# Check POST data
 		my $name;
-		if (!defined($name = isUsername($formData->{'Name'}))) {
+		if (!defined($name = isUsername($formData->{'Name'},ISUSERNAME_ALLOW_ATSIGN))) {
 			push(@errors,"Name is not valid");
 		}
 		my $interfaceGroupID;
@@ -1052,7 +1052,7 @@ sub poolmember_addedit
 
 		# Check POST data
 		my $username;
-		if (!defined($username = isUsername($formData->{'Username'}))) {
+		if (!defined($username = isUsername($formData->{'Username'},ISUSERNAME_ALLOW_ATSIGN))) {
 			push(@errors,"Username is not valid");
 		}
 		my $ipAddress;
@@ -1447,7 +1447,7 @@ sub limit_add
 
 		# Check POST data
 		my $username;
-		if (!defined($username = isUsername($formData->{'Username'}))) {
+		if (!defined($username = isUsername($formData->{'Username'},ISUSERNAME_ALLOW_ATSIGN))) {
 			push(@errors,"Username is not valid");
 		}
 		my $ipAddress;
@@ -2012,8 +2012,8 @@ sub pool_override_addedit
 		}
 
 		# Make sure we have at least a pool name, username or IP address
-		my $poolName = isUsername($formData->{'PoolName'});
-		my $username = isUsername($formData->{'Username'});
+		my $poolName = isUsername($formData->{'PoolName'},ISUSERNAME_ALLOW_ATSIGN);
+		my $username = isUsername($formData->{'Username'},ISUSERNAME_ALLOW_ATSIGN);
 		my $ipAddress = isIPv4($formData->{'IPAddress'});
 		if (!defined($poolName) && !defined($username) && !defined($ipAddress)) {
 			push(@errors,"A pool name and/or IP address and/or Username must be specified");
