@@ -167,7 +167,7 @@ sub _session_websocket_send
 			# Grab the stat
 			my $tstat = $ssidStat->{$timestamp};
 			# Loop with its keys
-			foreach my $item (keys $tstat) {
+			foreach my $item (keys %{$tstat}) {
 				# Add the keys to the data to return
 				push(@{$rawData->{$item}->{'data'}},[
 						$timestamp,
@@ -249,7 +249,7 @@ sub graphdata_websocket_onrequest
 	if ($request->{'function'} eq "subscribe") {
 
 		# Grab the first parameter as our tag
-		my $tag = shift($request->{'args'});
+		my $tag = shift(@{$request->{'args'}});
 		if (!defined($tag) || ref($tag) ne "") {
 			return (
 					opentrafficshaper::plugins::webserver::WS_ERROR,
