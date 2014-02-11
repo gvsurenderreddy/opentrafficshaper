@@ -33,7 +33,7 @@ use Time::HiRes qw(
 use awitpt::util qw(
 	isNumber ISNUMBER_ALLOW_ZERO
 	isIPv4
-	isUsername
+	isUsername ISUSERNAME_ALLOW_ATSIGN
 
 	prettyUndef
 
@@ -2832,7 +2832,7 @@ sub	createPoolMember
 		return;
 	}
 	# Now check if Username its valid
-	if (!defined(isUsername($poolMember->{'Username'} = $poolMemberData->{'Username'}))) {
+	if (!defined(isUsername($poolMember->{'Username'} = $poolMemberData->{'Username'}, ISUSERNAME_ALLOW_ATSIGN))) {
 		$logger->log(LOG_WARN,"[CONFIGMANAGER] Cannot process pool member add as Username is invalid");
 		return;
 	}
