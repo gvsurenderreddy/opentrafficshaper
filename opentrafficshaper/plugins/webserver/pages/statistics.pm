@@ -103,7 +103,7 @@ EOF
 	my ($interfaceGroupID,$poolName) = split(/:/,$queryParams->{'pool'}->{'value'});
 	if (!defined($interfaceGroupID) || !defined($poolName)) {
 		$content .=<<EOF;
-			<p class="info text-center">Format of "pool" option is invalid, use InterfaceID:PoolName</p>
+			<p class="info text-center">Format of "pool" option is invalid, use InterfaceGroupID:PoolName</p>
 EOF
 			goto END;
 	}
