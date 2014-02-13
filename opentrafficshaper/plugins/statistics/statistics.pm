@@ -118,8 +118,6 @@ use constant {
 			AND `Key` = ?
 			AND `Timestamp` > ?
 			AND `Timestamp` < ?
-		ORDER BY
-			`Timestamp` DESC
 	',
 	SQL_GET_STATS_BASIC => '
 		SELECT
@@ -131,8 +129,6 @@ use constant {
 			AND `Key` = ?
 			AND `Timestamp` > ?
 			AND `Timestamp` < ?
-		ORDER BY
-			`Timestamp` DESC
 	',
 	SQL_CLEANUP_STATS => 'DELETE FROM stats WHERE `Key` = ? AND `Timestamp` < ?',
 	SQL_CLEANUP_STATS_BASIC => 'DELETE FROM stats_basic WHERE `Key` = ? AND `Timestamp` < ?'
