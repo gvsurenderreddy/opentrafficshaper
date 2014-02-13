@@ -48,12 +48,7 @@ sub _catchall
 		goto END;
 	}
 
-	($res,$content,$opts) = opentrafficshaper::plugins::webserver::pages::statistics::_dashboard($kernel,$globals,
-			$client_session_id,$request
-	);
-
-END:
-	return ($res,$content,$opts);
+	return (HTTP_TEMPORARY_REDIRECT,"statistics/dashboard");
 }
 
 
