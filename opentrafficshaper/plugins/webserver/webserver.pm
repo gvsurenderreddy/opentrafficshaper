@@ -180,7 +180,11 @@ sub plugin_init
 				'by-pool' => \&opentrafficshaper::plugins::webserver::pages::statistics::byPool,
 				'by-class' => \&opentrafficshaper::plugins::webserver::pages::statistics::byClass,
 
-				'jsondata' => \&opentrafficshaper::plugins::webserver::pages::statistics::jsondata
+				'jsondata' => \&opentrafficshaper::plugins::webserver::pages::statistics::jsondata,
+
+				'dashboard' => \&opentrafficshaper::plugins::webserver::pages::statistics::dashboard,
+
+				'igdashboard' => \&opentrafficshaper::plugins::webserver::pages::statistics::igdashboard
 			};
 			$logger->log(LOG_INFO,"[WEBSERVER] Loaded statistics pages as statistics module is loaded");
 		}
