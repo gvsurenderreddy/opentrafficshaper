@@ -654,20 +654,22 @@ EOF
 		for (my $row = 0; $row < 2; $row++) {
 			# LHS - Begin Row
 			$content .= <<EOF;
-					<!-- 2 sets of normal graphs per row: [$row] -->
 					<div class="row">
 						<div class="col-xs-6">
 EOF
 			# Graph 1
 			if (defined(my $graph = shift(@leftGraphs))) {
+				my $uriData = $graph->{'.URIData'};
+
 				# Assign this graph a tag
 				$graph->{'Tag'} = "tag".$graphCounter++;
 
 				$content .= <<EOF;
 							<h4 style="color:#8f8f8f;">$graph->{'Title'}</h4>
-							<div id="$graph->{'Tag'}" class="flotCanvas dashboardCanvas"
-									style="width: 600px; height: 250px">
-							</div>
+							<a href="/statistics/by-class?class=$uriData">
+								<div id="$graph->{'Tag'}" class="flotCanvas dashboardCanvas"
+										style="width: 600px; height: 250px"></div>
+							</a>
 EOF
 				push(@graphs,$graph);
 			}
@@ -678,14 +680,17 @@ EOF
 EOF
 			# Graph 2
 			if (defined(my $graph = shift(@leftGraphs))) {
+				my $uriData = $graph->{'.URIData'};
+
 				# Assign this graph a tag
 				$graph->{'Tag'} = "tag".$graphCounter++;
 
 				$content .= <<EOF;
 							<h4 style="color:#8f8f8f;">$graph->{'Title'}</h4>
-							<div id="$graph->{'Tag'}" class="flotCanvas dashboardCanvas"
-									style="width: 600px; height: 250px">
-							</div>
+							<a href="/statistics/by-class?class=$uriData">
+								<div id="$graph->{'Tag'}" class="flotCanvas dashboardCanvas"
+										style="width: 600px; height: 250px"></div>
+							</a>
 EOF
 				push(@graphs,$graph);
 			}
