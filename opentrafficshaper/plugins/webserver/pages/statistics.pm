@@ -716,9 +716,7 @@ EOF
 
 			$content .= <<EOF;
 					<h4 style="color:#8f8f8f;">$graph->{'Title'}</h4>
-					<div id="$graph->{'Tag'}" class="flotCanvas dashboardCanvas"
-							style="width: 600px; height: 340px">
-					</div>
+					<div id="$graph->{'Tag'}" class="flotCanvas dashboardCanvas" style="width: 600px; height: 340px"></div>
 EOF
 			push(@graphs,$graph);
 		}
