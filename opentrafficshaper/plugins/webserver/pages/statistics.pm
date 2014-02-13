@@ -650,7 +650,7 @@ sub jsondata
 			}
 
 			# Grab data for each direction associated with a class ID on an inteface group
-			foreach my $direction ('tx','rx') {
+			foreach my $direction ('Tx','Rx') {
 				# Grab stats ID
 				my $sid = opentrafficshaper::plugins::statistics::getSIDFromCID($interfaceGroup->{"${direction}Interface"},
 						$trafficClassID);
@@ -667,7 +667,7 @@ sub jsondata
 				# Pull in stats data, override direction used
 				my $statsData = opentrafficshaper::plugins::statistics::getStatsBySID(
 						$sid,
-						{ 'direction' => lc($direction)	},
+						{ 'Direction' => lc($direction)	},
 						$startTimestamp,
 						$endTimestamp
 				);
@@ -749,7 +749,7 @@ sub jsondata
 				# Pull in stats data, override direction used
 				my $statsData = opentrafficshaper::plugins::statistics::getStatsBySID(
 						$sid,
-						{ 'direction' => lc($direction) },
+						{ 'Direction' => lc($direction) },
 						$startTimestamp,
 						$endTimestamp
 				);
