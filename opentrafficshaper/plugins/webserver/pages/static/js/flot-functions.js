@@ -118,7 +118,7 @@ function awit_flot_draw_pie(options) {
 						opacity: 0.5,
 						color: '#000000'
 					}
-            	}
+				}
 			}
 		}
 	}

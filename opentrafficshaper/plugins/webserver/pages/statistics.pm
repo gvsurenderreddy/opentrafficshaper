@@ -702,7 +702,7 @@ EOF
 		}
 		# LHS - End
 		$content .= <<EOF;
-			</div>
+				</div>
 EOF
 
 		# RHS - Begin Row
