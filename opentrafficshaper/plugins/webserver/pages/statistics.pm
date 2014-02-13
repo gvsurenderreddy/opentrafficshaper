@@ -309,11 +309,15 @@ EOF
 			goto END;
 	}
 
+	# Escape things we need
+	my $interfaceGroupEscaped = uri_escape($interfaceGroupID);
 
 	# Header for the page
 	$content .= <<EOF;
 		<legend>
-			<a href="/limits/pool-list"><span class="glyphicon glyphicon-circle-arrow-left"></span></a>
+			<a href="/statistics/igdashboard?interface-group=$interfaceGroupEscaped">
+				<span class="glyphicon glyphicon-circle-arrow-left"></span>
+			</a>
 			Class Stats View
 		</legend>
 EOF
