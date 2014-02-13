@@ -255,18 +255,319 @@ END:
 
 
 
+# Graphs by class
+sub byClass
+{
+	my ($kernel,$system,$client_session_id,$request) = @_;
+
+
+	# Header
+	my $content = "";
+
+	# Check request
+	if ($request->method ne "GET") {
+		$content .=<<EOF;
+			<p class="info text-center">Invalid Method</p>
+EOF
+		goto END;
+	}
+
+	# Parse GET data
+	my $queryParams = parseURIQuery($request);
+	# We need our class definition
+	if (!defined($queryParams->{'class'})) {
+		$content .=<<EOF;
+			<p class="info text-center">No "class" in Query String</p>
+EOF
+			goto END;
+	}
+
+	# Check we have an interface group ID and traffic class id
+	my ($interfaceGroupID,$trafficClassID) = split(/:/,$queryParams->{'class'}->{'value'});
+	if (!defined($interfaceGroupID) || !defined($trafficClassID)) {
+		$content .=<<EOF;
+			<p class="info text-center">Format of "class" option is invalid, use InterfaceGroupID:ClassID</p>
+EOF
+			goto END;
+	}
+
+	# Check if we get some data back when pulling in the interface group from the backend
+	my $interfaceGroup;
+	if (!defined($interfaceGroup = getInterfaceGroup($interfaceGroupID))) {
+		$content .=<<EOF;
+			<p class="info text-center">Interface Group Not Found</p>
+EOF
+			goto END;
+	}
+
+	# Check if we get some data back when pulling in the traffic class from the backend
+	my $trafficClass;
+	if (!defined($trafficClass = getTrafficClass($trafficClassID))) {
+		$content .=<<EOF;
+			<p class="info text-center">Traffic Class Not Found</p>
+EOF
+			goto END;
+	}
+
+
+	# Header for the page
+	$content .= <<EOF;
+		<legend>
+			<a href="/limits/pool-list"><span class="glyphicon glyphicon-circle-arrow-left"></span></a>
+			Class Stats View
+		</legend>
+EOF
+
+	# Menu setup
+	my $menu = [
+		{
+			'name' => 'Graphs',
+			'items' => [
+				{
+					'name' => 'Live',
+					'link' => sprintf("by-class?class=%s",uri_escape("$interfaceGroupID:$trafficClassID"))
+				},
+				{
+					'name' => 'Historical',
+					'link' => sprintf("by-class?class=%s&static=1",uri_escape("$interfaceGroupID:$trafficClassID"))
+				}
+			]
+		}
+	];
+
+
+	my $nameEncoded = encode_entities($trafficClass->{'Name'});
+
+
+	# Build content
+	$content .= <<EOF;
+EOF
+
+	# Graphs to display
+	my @graphs = ();
+
+	# Check if we doing a static display or not
+	if (defined($queryParams->{'static'}) && $queryParams->{'static'}) {
+		# Loop with periods to display on this page
+		foreach my $period (sort { $a <=> $b } keys %{POOL_GRAPHS()}) {
+			my $canvasName = "flotCanvas$period";
+			my $graphName = POOL_GRAPHS()->{$period};
+
+			my $now = time();
+			my $startTimestamp = $now - $period;
+
+			$content .= <<EOF;
+				<h4 style="color: #8F8F8F;">Class Statistics: $nameEncoded - $graphName</h4>
+				<div id="$canvasName" class="flotCanvas poolCanvas" style="width: 800px; height: 240px" ></div>
+EOF
+
+			# Static graphs
+			push(@graphs,{
+				'Type' => 'graph',
+				'Tag' => $canvasName,
+				'Title' => sprintf("Class: %s",$trafficClass->{'Name'}),
+				'Datasources' => [
+					{
+						'Type' => 'ajax',
+						'Subscriptions' => [
+							{
+								'Type' => 'class',
+								'Data' => sprintf('%s:%s',$interfaceGroupID,$trafficClassID),
+								'StartTimestamp' => $startTimestamp,
+								'EndTimestamp' => $now
+							}
+						]
+					}
+				],
+				'XIdentifiers' => [
+					{ 'Name' => 'tx.cir', 'Label' => "TX Cir", 'Timespan' => $period },
+					{ 'Name' => 'tx.limit', 'Label' => "TX Limit", 'Timespan' => $period },
+					{ 'Name' => 'tx.rate', 'Label' => "TX Rate", 'Timespan' => $period },
+					{ 'Name' => 'rx.cir', 'Label' => "RX Cir", 'Timespan' => $period },
+					{ 'Name' => 'rx.limit', 'Label' => "RX Limit", 'Timespan' => $period },
+					{ 'Name' => 'rx.rate', 'Label' => "RX Rate", 'Timespan' => $period }
+				]
+			});
+		}
+
+	# Display live graph
+	} else {
+		my $canvasName = "flotCanvas";
+
+		$content .= <<EOF;
+			<h4 style="color: #8F8F8F;">Live Statistics: $nameEncoded</h4>
+			<div id="$canvasName" class="flotCanvas poolCanvas" style="width: 1000px; height: 400px" />
+EOF
+
+		# Live graph
+		push(@graphs,{
+			'Type' => 'graph',
+			'Tag' => $canvasName,
+			'Title' => sprintf("Class: %s",$trafficClass->{'Name'}),
+			'Datasources' => [
+				{
+					'Type' => 'websocket',
+					'Subscriptions' => [
+						sprintf('class=%s:%s',$interfaceGroupID,$trafficClassID)
+					]
+				}
+			],
+			'XIdentifiers' => [
+				{ 'Name' => 'tx.cir', 'Label' => "TX Cir", 'Timespan' => 900 },
+				{ 'Name' => 'tx.limit', 'Label' => "TX Limit", 'Timespan' => 900 },
+				{ 'Name' => 'tx.rate', 'Label' => "TX Rate", 'Timespan' => 900 },
+				{ 'Name' => 'rx.cir', 'Label' => "RX Cir", 'Timespan' => 900 },
+				{ 'Name' => 'rx.limit', 'Label' => "RX Limit", 'Timespan' => 900 },
+				{ 'Name' => 'rx.rate', 'Label' => "RX Rate", 'Timespan' => 900 }
+			]
+		});
+	}
+
+	# Build graphs
+	my $javascript = _buildGraphJavascript(\@graphs);
+
+	# Files loaded at end of HTML document
+	my @javascripts = (
+		'/static/flot/jquery.flot.min.js',
+		'/static/flot/jquery.flot.time.min.js',
+		'/static/flot/jquery.flot.pie.min.js',
+		'/static/flot/jquery.flot.resize.min.js',
+		'/static/js/flot-functions.js',
+		'/static/awit-flot-toolkit/js/jquery.flot.awitds.js',
+		'/static/awit-flot-toolkit/js/resize.js'
+	);
+	my @stylesheets = (
+		'/static/awit-flot-toolkit/css/awit-flot-toolkit.css'
+	);
+
+END:
+	return (HTTP_OK,$content,{ 'menu' => $menu, 'javascripts' => \@javascripts, 'javascript' => $javascript });
+}
+
+
+
 # Dashboard display
-sub _dashboard
+sub dashboard
 {
 	my ($kernel,$system,$client_session_id,$request) = @_;
 
 
 	# Header
 	my $content = <<EOF;
-		<div id="header">
-			<h2>Dashboard View</h2>
-		</div>
+		<legend>
+			Dashboard View
+		</legend>
 EOF
+
+	# Build list of graphs for the left hand side
+	my @interfaceGroups = sort(getInterfaceGroups());
+	my @trafficClasses = sort(getAllTrafficClasses());
+
+	my $timespan = 900;
+
+	my @graphs;
+	my $graphCounter = 0;
+
+	foreach my $interfaceGroupID (@interfaceGroups) {
+		my $interfaceGroup = getInterfaceGroup($interfaceGroupID);
+
+		push(@graphs,{
+			'.InterfaceGroup' => $interfaceGroup->{'ID'},
+			'Tag' => sprintf('tag%s',$graphCounter++),
+			'Type' => 'graph',
+			'Title' => sprintf("%s: Main",$interfaceGroup->{'Name'}),
+			'Datasources' => [
+				{
+					'Type' => 'websocket',
+					'Subscriptions' => [
+						sprintf('interface-group=%s',$interfaceGroupID),
+					]
+				}
+			],
+			'XIdentifiers' => [
+				{ 'Name' => 'tx.rate', 'Label' => "TX Rate", 'Timespan' => $timespan },
+				{ 'Name' => 'rx.rate', 'Label' => "RX Rate", 'Timespan' => $timespan }
+			]
+		});
+	}
+
+
+	foreach my $graph (@graphs) {
+		my $interfaceGroupEscaped = uri_escape($graph->{'.InterfaceGroup'});
+
+		$content .= <<EOF;
+			<div class="row">
+				<h4 class="text-center" style="color:#8f8f8f;">$graph->{'Title'}</h4>
+				<a href="/statistics/igdashboard?interface-group=$interfaceGroupEscaped">
+					<div id="$graph->{'Tag'}" class="flotCanvas poolCanvas"
+							style="width: 1000px; height: 250px; margin-left: auto; margin-right: auto;">
+					</div>
+				</a>
+			</div>
+EOF
+	}
+
+	# Build graphs
+	my $javascript = _buildGraphJavascript(\@graphs);
+
+
+	# Files loaded at end of HTML document
+	my @javascripts = (
+		'/static/flot/jquery.flot.min.js',
+		'/static/flot/jquery.flot.time.min.js',
+		'/static/flot/jquery.flot.pie.min.js',
+		'/static/flot/jquery.flot.resize.min.js',
+		'/static/js/flot-functions.js',
+		'/static/awit-flot-toolkit/js/jquery.flot.awitds.js',
+		'/static/awit-flot-toolkit/js/resize.js'
+	);
+	my @stylesheets = (
+		'/static/awit-flot-toolkit/css/awit-flot-toolkit.css'
+	);
+
+	return (HTTP_OK,$content,{
+			'javascripts' => \@javascripts,
+			'javascript' => $javascript,
+			'stylesheets' => \@stylesheets
+	});
+}
+
+
+
+
+
+# Dashboard display for interface groups
+sub igdashboard
+{
+	my ($kernel,$system,$client_session_id,$request) = @_;
+
+
+	# Header
+	my $content = <<EOF;
+		<legend>
+			<a href="/statistics/dashboard"><span class="glyphicon glyphicon-circle-arrow-left"></span></a>
+			Interface Dashboard View
+		</legend>
+EOF
+
+	# Get query params
+	my $queryParams = parseURIQuery($request);
+
+	# We need our PID
+	if (!defined($queryParams->{'interface-group'})) {
+		$content .=<<EOF;
+			<p class="info text-center">No "interface-group" in Query String</p>
+EOF
+		return (HTTP_TEMPORARY_REDIRECT,"/statistics");
+	}
+
+	my $interfaceGroup = getInterfaceGroup($queryParams->{'interface-group'}->{'value'});
+	if (!defined($interfaceGroup)) {
+		$content .=<<EOF;
+			<p class="info text-center">Invalid "interface-group" in Query String</p>
+EOF
+		return (HTTP_TEMPORARY_REDIRECT,"/statistics");
+	}
 
 	# Left and right graphs are added to the main graph list
 	my @graphs = ();
@@ -275,46 +576,42 @@ EOF
 	my @rightGraphs = ();
 
 	# Build list of graphs for the left hand side
-	my @interfaceGroups = sort(getInterfaceGroups());
 	my @trafficClasses = sort(getAllTrafficClasses());
 
 	my $timespan = 900;
 
-	foreach my $interfaceGroupID (@interfaceGroups) {
-		my $interfaceGroup = getInterfaceGroup($interfaceGroupID);
+	foreach my $trafficClassID (@trafficClasses) {
+		my $trafficClass = getTrafficClass($trafficClassID);
 
-		foreach my $trafficClassID (@trafficClasses) {
-			my $trafficClass = getTrafficClass($trafficClassID);
-
-			push(@leftGraphs,{
-				'Type' => 'graph',
-				'Title' => sprintf("%s: %s",$interfaceGroup->{'Name'},$trafficClass->{'Name'}),
-				'Datasources' => [
-					{
-						'Type' => 'websocket',
-						'Subscriptions' => [
-							sprintf('class=%s:%s',$interfaceGroupID,$trafficClassID),
-							sprintf('counter=configmanager.classpoolmembers.%s',$trafficClassID)
-						]
-					}
-				],
-				'XIdentifiers' => [
-					{ 'Name' => 'tx.cir', 'Label' => "TX Cir", 'Timespan' => $timespan },
-					{ 'Name' => 'tx.limit', 'Label' => "TX Limit", 'Timespan' => $timespan },
-					{ 'Name' => 'tx.rate', 'Label' => "TX Rate", 'Timespan' => $timespan },
-					{ 'Name' => 'rx.cir', 'Label' => "RX Cir", 'Timespan' => $timespan },
-					{ 'Name' => 'rx.limit', 'Label' => "RX Limit", 'Timespan' => $timespan },
-					{ 'Name' => 'rx.rate', 'Label' => "RX Rate", 'Timespan' => $timespan }
-				],
-				'YIdentifiers' => [
-					{
-						'Name' => sprintf('configmanager.classpoolmembers.%s',$trafficClassID),
-						'Label' => "Pool Count",
-						'Timespan' => $timespan
-					},
-				]
-			});
-		}
+		push(@leftGraphs,{
+			'Type' => 'graph',
+			'Title' => sprintf("%s: %s",$interfaceGroup->{'Name'},$trafficClass->{'Name'}),
+			'.URIData' => uri_escape(sprintf('%s:%s',$interfaceGroup->{'ID'},$trafficClassID)),
+			'Datasources' => [
+				{
+					'Type' => 'websocket',
+					'Subscriptions' => [
+						sprintf('class=%s:%s',$interfaceGroup->{'ID'},$trafficClassID),
+						sprintf('counter=configmanager.classpoolmembers.%s',$trafficClassID)
+					]
+				}
+			],
+			'XIdentifiers' => [
+				{ 'Name' => 'tx.cir', 'Label' => "TX Cir", 'Timespan' => $timespan },
+				{ 'Name' => 'tx.limit', 'Label' => "TX Limit", 'Timespan' => $timespan },
+				{ 'Name' => 'tx.rate', 'Label' => "TX Rate", 'Timespan' => $timespan },
+				{ 'Name' => 'rx.cir', 'Label' => "RX Cir", 'Timespan' => $timespan },
+				{ 'Name' => 'rx.limit', 'Label' => "RX Limit", 'Timespan' => $timespan },
+				{ 'Name' => 'rx.rate', 'Label' => "RX Rate", 'Timespan' => $timespan }
+			],
+			'YIdentifiers' => [
+				{
+					'Name' => sprintf('configmanager.classpoolmembers.%s',$trafficClassID),
+					'Label' => "Pool Count",
+					'Timespan' => $timespan
+				},
+			]
+		});
 	}
 
 	# Pool distribution
