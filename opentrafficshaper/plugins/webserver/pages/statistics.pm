@@ -125,6 +125,10 @@ EOF
 		</legend>
 EOF
 
+	my $timespan = 900;
+	my $now = time();
+	my $startTimestamp = $now - $timespan;
+
 	# Menu setup
 	my $menu = [
 		{
@@ -219,15 +223,26 @@ EOF
 					'Subscriptions' => [
 						sprintf('pool=%s:%s',$pool->{'InterfaceGroupID'},$pool->{'Name'})
 					]
+				},
+				{
+					'Type' => 'ajax',
+					'Subscriptions' => [
+						{
+							'Type' => 'pool',
+							'Data' => sprintf('%s:%s',$pool->{'InterfaceGroupID'},$pool->{'Name'}),
+							'StartTimestamp' => $startTimestamp,
+							'EndTimestamp' => $now
+						}
+					]
 				}
 			],
 			'XIdentifiers' => [
-				{ 'Name' => 'tx.cir', 'Label' => "TX Cir", 'Timespan' => 900 },
-				{ 'Name' => 'tx.limit', 'Label' => "TX Limit", 'Timespan' => 900 },
-				{ 'Name' => 'tx.rate', 'Label' => "TX Rate", 'Timespan' => 900 },
-				{ 'Name' => 'rx.cir', 'Label' => "RX Cir", 'Timespan' => 900 },
-				{ 'Name' => 'rx.limit', 'Label' => "RX Limit", 'Timespan' => 900 },
-				{ 'Name' => 'rx.rate', 'Label' => "RX Rate", 'Timespan' => 900 }
+				{ 'Name' => 'tx.cir', 'Label' => "TX Cir", 'Timespan' => $timespan },
+				{ 'Name' => 'tx.limit', 'Label' => "TX Limit", 'Timespan' => $timespan },
+				{ 'Name' => 'tx.rate', 'Label' => "TX Rate", 'Timespan' => $timespan },
+				{ 'Name' => 'rx.cir', 'Label' => "RX Cir", 'Timespan' => $timespan },
+				{ 'Name' => 'rx.limit', 'Label' => "RX Limit", 'Timespan' => $timespan },
+				{ 'Name' => 'rx.rate', 'Label' => "RX Rate", 'Timespan' => $timespan }
 			]
 		});
 	}
@@ -468,6 +483,8 @@ EOF
 	my @trafficClasses = sort(getAllTrafficClasses());
 
 	my $timespan = 900;
+	my $now = time();
+	my $startTimestamp = $now - $timespan;
 
 	my @graphs;
 	my $graphCounter = 0;
@@ -485,6 +502,17 @@ EOF
 					'Type' => 'websocket',
 					'Subscriptions' => [
 						sprintf('interface-group=%s',$interfaceGroupID),
+					]
+				},
+				{
+					'Type' => 'ajax',
+					'Subscriptions' => [
+						{
+							'Type' => 'interface-group',
+							'Data' => $interfaceGroupID,
+							'StartTimestamp' => $startTimestamp,
+							'EndTimestamp' => $now
+						}
 					]
 				}
 			],
@@ -583,6 +611,8 @@ EOF
 	my @trafficClasses = sort(getAllTrafficClasses());
 
 	my $timespan = 900;
+	my $now = time();
+	my $startTimestamp = $now - $timespan;
 
 	foreach my $trafficClassID (@trafficClasses) {
 		my $trafficClass = getTrafficClass($trafficClassID);
@@ -597,6 +627,28 @@ EOF
 					'Subscriptions' => [
 						sprintf('class=%s:%s',$interfaceGroup->{'ID'},$trafficClassID),
 						sprintf('counter=configmanager.classpoolmembers.%s',$trafficClassID)
+					]
+				},
+				{
+					'Type' => 'ajax',
+					'Subscriptions' => [
+						{
+							'Type' => 'class',
+							'Data' => sprintf('%s:%s',$interfaceGroup->{'ID'},$trafficClassID),
+							'StartTimestamp' => $startTimestamp,
+							'EndTimestamp' => $now
+						}
+					]
+				},
+				{
+					'Type' => 'ajax',
+					'Subscriptions' => [
+						{
+							'Type' => 'counter',
+							'Data' => sprintf('configmanager.classpoolmembers.%s',$trafficClassID),
+							'StartTimestamp' => $startTimestamp,
+							'EndTimestamp' => $now
+						}
 					]
 				}
 			],
