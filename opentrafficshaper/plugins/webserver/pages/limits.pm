@@ -807,7 +807,7 @@ EOF
 	my $poolFriendlyNameEncoded = encode_entities($poolFriendlyName);
 	my $poolNameEncoded = encode_entities($pool->{'Name'});
 
-	my $urlPoolMemberAdd = sprintf('/limits/poolmember-add?pid=%s',uri_escape($pool->{'ID'}));
+	my $urlPoolMemberAdd = sprintf('poolmember-add?pid=%s',uri_escape($pool->{'ID'}));
 
 	# Menu
 	$customMenu = [
