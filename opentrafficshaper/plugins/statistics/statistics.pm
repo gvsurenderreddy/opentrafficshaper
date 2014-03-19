@@ -259,11 +259,7 @@ sub plugin_init
 
 	# Create DBI agent
 	if (defined($globals->{'Database'})) {
-		$globals->{'Database'}->{'Handle'} = DBInit({
-			'DSN' => $globals->{'Database'}->{'DSN'},
-			'Username' => $globals->{'Database'}->{'Username'},
-			'Password' => $globals->{'Database'}->{'Password'}
-		});
+		$globals->{'Database'}->{'Handle'} = DBInit($globals->{'Database'});
 		# Check if handle is defined
 		if (defined($globals->{'Database'}->{'Handle'})) {
 			# Try connect (0 is success)
