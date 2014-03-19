@@ -33,7 +33,7 @@
 # the same terms as Perl 5.10.
 ##
 
-package POE::Filter::HybridHTTP::WebSocketFrame;
+package opentrafficshaper::POE::Filter::HybridHTTP::WebSocketFrame;
 
 use bytes;
 

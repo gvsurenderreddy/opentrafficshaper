@@ -30,7 +30,7 @@
 # and from HTTPD filters, they should submit their request as a patch.
 ##
 
-package POE::Filter::TCStatistics;
+package opentrafficshaper::POE::Filter::TCStatistics;
 
 use warnings;
 use strict;

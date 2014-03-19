@@ -28,7 +28,7 @@
 # and from HTTPD filters, they should submit their request as a patch.
 ##
 
-package POE::Filter::HybridHTTP;
+package opentrafficshaper::POE::Filter::HybridHTTP;
 
 use warnings;
 use strict;
@@ -36,7 +36,7 @@ use strict;
 use bytes;
 
 use POE::Filter;
-use POE::Filter::HybridHTTP::WebSocketFrame;
+use opentrafficshaper::POE::Filter::HybridHTTP::WebSocketFrame;
 
 use vars qw($VERSION @ISA);
 # NOTE - Should be #.### (three decimal places)
@@ -160,7 +160,7 @@ sub put
 		foreach my $response (@{$responses}) {
 			# If we don't have a websocket state, create one
 			if (!$self->{'websocket_state'}) {
-				$self->{'websocket_state'} = new POE::Filter::HybridHTTP::WebSocketFrame();
+				$self->{'websocket_state'} = new opentrafficshaper::POE::Filter::HybridHTTP::WebSocketFrame();
 			}
 			# Don't mask replies from server to client RFC6455 secion 5.1.
 			$self->{'websocket_state'}->masked(0);
@@ -404,7 +404,7 @@ sub _get_one_websocket_record
 
 	# If we don't have a websocket state, create one
 	if (!$self->{'websocket_state'}) {
-		$self->{'websocket_state'} = new POE::Filter::HybridHTTP::WebSocketFrame();
+		$self->{'websocket_state'} = new opentrafficshaper::POE::Filter::HybridHTTP::WebSocketFrame();
 	}
 	$self->{'websocket_state'}->append($self->{'buffer'});
 	# Blank our buffer

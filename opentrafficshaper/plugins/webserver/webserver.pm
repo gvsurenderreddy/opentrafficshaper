@@ -28,12 +28,12 @@ use HTTP::Response;
 use HTTP::Status qw( :constants :is );
 use JSON;
 use POE qw( Component::Server::TCP );
-use POE::Filter::HybridHTTP;
 use URI;
 
 
 use opentrafficshaper::logger;
 use opentrafficshaper::plugins;
+use opentrafficshaper::POE::Filter::HybridHTTP;
 
 # Pages (this is used a little below)
 use opentrafficshaper::plugins::webserver::pages::static;
@@ -159,7 +159,7 @@ sub plugin_init
 		ClientConnected => \&server_client_connected,
 		ClientDisconnected => \&server_client_disconnected,
 		# Filter to handle HTTP
-		ClientFilter => 'POE::Filter::HybridHTTP',
+		ClientFilter => 'opentrafficshaper::POE::Filter::HybridHTTP',
 		# Function to handle HTTP requests (as we passing through a filter)
 		ClientInput => \&server_request,
 		# Setup the sever
