@@ -398,7 +398,7 @@ sub _session_socket_read
 
 	# If we got a pool name, check if it exists
 	if (defined($poolName)) {
-		if (!defined(getPoolByName($poolName))) {
+		if (!defined(getPoolByName($config->{'interface_group'},$poolName))) {
 			$logger->log(LOG_NOTICE,"[RADIUS] Pool '%s' not found, using username '%s' instead",
 				$poolName,
 				$username
@@ -411,7 +411,7 @@ sub _session_socket_read
 	}
 
 	# Try grab the pool
-	my $pool = getPoolByName($poolName);
+	my $pool = getPoolByName($config->{'interface_group'},$poolName);
 	my $pid = defined($pool) ? $pool->{'ID'} : undef;
 
 	my $ipAddress = $pkt->attr('Framed-IP-Address');
