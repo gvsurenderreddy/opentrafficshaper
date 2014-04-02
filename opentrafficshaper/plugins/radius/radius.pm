@@ -362,7 +362,12 @@ sub _session_socket_read
 	if (my $attrRawVal = $pkt->vsattr(IANA_PEN,'OpenTrafficShaper-Traffic-Limit')) {
 		$trafficLimit = @{ $attrRawVal }[0];
 	}
-	# Grab rate limits from the string we got
+	# We assume below that we will have limits
+	if (!defined($trafficLimit)) {
+		$logger->log(LOG_NOTICE,"[RADIUS] No traffic limit set for user '%s', ignoring",$username);
+		return;
+	}
+	# Grab rate limits below from the string we got
 	my $rxCIR; my $txCIR;
 	my $rxLimit; my $txLimit;
 	if (defined($trafficLimit)) {
@@ -448,6 +453,7 @@ sub _session_socket_read
 							'TrafficClassID' => $trafficClassID,
 							'TxCIR' => $txCIR,
 							'RxCIR' => $rxCIR,
+							# These MUST be defined
 							'TxLimit' => $txLimit,
 							'RxLimit' => $rxLimit,
 							'Expires' => $now + DEFAULT_EXPIRY_PERIOD
