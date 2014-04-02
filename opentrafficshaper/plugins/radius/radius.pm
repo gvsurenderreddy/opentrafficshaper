@@ -569,14 +569,20 @@ sub _session_socket_read
 				# If there is only 1 pool member, then lets expire the pool in the removal expiry period
 				if (@poolMembers == 1) {
 					$logger->log(LOG_INFO,"[RADIUS] Expiring pool '$poolName'");
-					changePool($pool->{'ID'},{ 'Expires' => $now + REMOVE_EXPIRY_PERIOD });
+					changePool({
+							'ID' => $pool->{'ID'},
+							'Expires' => $now + REMOVE_EXPIRY_PERIOD
+					});
 				}
 			}
 
 			# Check if we have a pool member with this username and IP
 			if (my $pmid = getPoolMemberByUsernameIP($pool->{'ID'},$username,$ipAddress)) {
 				$logger->log(LOG_INFO,"[RADIUS] Expiring pool '$poolName' member '$username'");
-				changePoolMember($pmid,{ 'Expires' => $now + REMOVE_EXPIRY_PERIOD });
+				changePoolMember({
+						'ID' => $pmid,
+						'Expires' => $now + REMOVE_EXPIRY_PERIOD
+				});
 			}
 
 			$logger->log(LOG_INFO,"[RADIUS] Pool '$poolName' member '$username' set to expire as they're offline");
