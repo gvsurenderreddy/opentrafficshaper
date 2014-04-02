@@ -370,21 +370,30 @@ sub _session_socket_read
 	# Grab rate limits below from the string we got
 	my $rxCIR; my $txCIR;
 	my $rxLimit; my $txLimit;
-	if (defined($trafficLimit)) {
-		# Match rx-rate[/tx-rate] rx-burst-rate[/tx-burst-rate]
-		if ($trafficLimit =~ /^(\d+)([km])(?:\/(\d+)([km]))?(?: (\d+)([km])(?:\/(\d+)([km]))?)?/) {
-			$rxCIR = getKbit($1,$2);
-			$txCIR = getKbit($3,$4);
-			$rxLimit = getKbit($5,$6);
-			$txLimit = getKbit($7,$8);
-		} else {
-			$logger->log(LOG_DEBUG,"[RADIUS] The 'OpenTrafficShaper-Traffic-Limit' attribute appears to be invalid for user '%s'".
-					": '%s'",
-					$username,
-					$trafficLimit
-			);
-			return;
+	# Match rx-rate[/tx-rate] rx-burst-rate[/tx-burst-rate]
+	if ($trafficLimit =~ /^(\d+)([km])(?:\/(\d+)([km]))?(?: (\d+)([km])(?:\/(\d+)([km]))?)?/) {
+		$rxCIR = getKbit($1,$2);
+		$txCIR = getKbit($3,$4);
+		$rxLimit = getKbit($5,$6);
+		$txLimit = getKbit($7,$8);
+
+		# Set our limits if they not defined
+		if (!defined($rxLimit)) {
+			$rxLimit = $rxCIR;
+			$rxCIR = $rxCIR / 4;
 		}
+		if (!defined($txLimit)) {
+			$txLimit = $txCIR;
+			$txCIR = $txCIR / 4;
+		}
+
+	} else {
+		$logger->log(LOG_WARN,"[RADIUS] The 'OpenTrafficShaper-Traffic-Limit' attribute appears to be invalid for user '%s'".
+				": '%s'",
+				$username,
+				$trafficLimit
+		);
+		return;
 	}
 
 	# Check if we have a pool transform
