@@ -24,7 +24,7 @@ use warnings;
 
 use POE qw( Wheel::Run Filter::Line );
 
-use POE::Filter::TCStatistics;
+use opentrafficshaper::POE::Filter::TCStatistics;
 
 use opentrafficshaper::constants;
 use opentrafficshaper::logger;
@@ -193,7 +193,7 @@ sub _session_tick
 		my $task = POE::Wheel::Run->new(
 			Program => $cmd,
 			StdinFilter => POE::Filter::Line->new(),
-			StdoutFilter => POE::Filter::TCStatistics->new(),
+			StdoutFilter => opentrafficshaper::POE::Filter::TCStatistics->new(),
 			StderrFilter => POE::Filter::Line->new(),
 			StdoutEvent => '_task_child_stdout',
 			StderrEvent => '_task_child_stderr',
