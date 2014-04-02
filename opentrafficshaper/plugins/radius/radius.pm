@@ -465,6 +465,7 @@ sub _session_socket_read
 							# These MUST be defined
 							'TxLimit' => $txLimit,
 							'RxLimit' => $rxLimit,
+
 							'Expires' => $now + DEFAULT_EXPIRY_PERIOD
 					});
 
