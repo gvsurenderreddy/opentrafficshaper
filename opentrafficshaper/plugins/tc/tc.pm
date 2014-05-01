@@ -933,6 +933,7 @@ sub _tc_iface_init
 	]);
 
 	# Attach our main limit on the qdisc
+	my $burst = int(($interface->{'Limit'}/8) * 0.10); # 10% burst
 	$changeSet->add([
 			'/sbin/tc','class','add',
 				'dev',$interface->{'Device'},
@@ -940,7 +941,7 @@ sub _tc_iface_init
 				'classid','1:1',
 				'htb',
 					'rate',"$interface->{'Limit'}kbit",
-					'burst',"$interface->{'Limit'}kb",
+					'burst',"${burst}kb",
 	]);
 
 	# Class 0 is our interface, it points to 1 (the major TcClass)) : 1 (class below)
@@ -960,6 +961,8 @@ sub _tc_iface_init
 		my $tcClass = _getTcClassFromTrafficClassID($interfaceID,$trafficClassID);
 		my $trafficPriority = getTrafficClassPriority($trafficClassID);
 
+		$burst = int(($interfaceTrafficClass->{'Limit'}/8) * 0.10); # 10% burst
+
 		# Add class
 		$changeSet->add([
 				'/sbin/tc','class','add',
@@ -970,7 +973,7 @@ sub _tc_iface_init
 						'rate',"$interfaceTrafficClass->{'CIR'}kbit",
 						'ceil',"$interfaceTrafficClass->{'Limit'}kbit",
 						'prio',$trafficPriority,
-						'burst', "$interfaceTrafficClass->{'Limit'}kb",
+						'burst', "${burst}kb",
 		]);
 
 		# Setup interface traffic class details
@@ -991,13 +994,14 @@ sub _tc_iface_init
 		_tc_class_optimize($changeSet,$interfaceID,$defaultPoolTcClass,$interfaceTrafficClass->{'Limit'});
 
 		# Make the queue size big enough
-		my $queueSize = ($interface->{'Limit'} * 1024) / 4;
+		my $queueSize = int((($interface->{'Limit'} * 1000) / 8) * 5); # Should give a 5s queue time, eg. (100kbps * 1000 / 8) * 5
 
 		# RED metrics (sort of as per manpage)
 		my $redAvPkt = 1000;
-		my $redMax = int($queueSize * 0.50); # 50% mark at 100% probabilty
+		my $redMax = int($queueSize * 0.75); # 75% mark at 100% probabilty
 		my $redMin = int($queueSize * 0.10); # 10% mark start RED
-		my $redBurst = int( ($redMin+$redMax) / (2*$redAvPkt));
+#		my $redBurst = int( ($redMin+$redMax) / (2*$redAvPkt));
+		my $redBurst = int($queueSize * 0.10); # 10% burst
 		my $redLimit = $queueSize;
 
 		my $prioTcClass = _getPrioTcClass($interfaceID,$defaultPoolTcClass);
@@ -1539,7 +1543,7 @@ sub _tc_class_add
 	my $interface = getInterface($interfaceID);
 
 	# Set burst to a sane value
-	my $burst = int($ceil / 8 / 5);
+	my $burst = int(($ceil / 8) * 0.10); # 10% burst
 
 	# Create main rate limiting classes
 	$changeSet->add([
@@ -1570,7 +1574,7 @@ sub _tc_class_change
 	# Based on if ceil is avaiable, set burst
 	my $burst;
 	if (defined($ceil)) {
-		$burst = int($ceil / 8 / 5);
+		$burst = int(($ceil / 8) * 0.10);
 	} else {
 		# If ceil is not available, set burst and ceil
 		$burst = $ceil = $rate;
