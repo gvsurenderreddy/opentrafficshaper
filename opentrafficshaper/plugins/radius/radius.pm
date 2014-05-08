@@ -459,6 +459,7 @@ sub _session_socket_read
 					# Change the details
 					my $changes = changePool({
 							'ID' => $pid,
+							'FriendlyName' => $ipAddress,
 							'TrafficClassID' => $trafficClassID,
 							'TxCIR' => $txCIR,
 							'RxCIR' => $rxCIR,
