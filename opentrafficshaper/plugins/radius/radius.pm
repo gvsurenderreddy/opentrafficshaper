@@ -548,6 +548,12 @@ sub _session_socket_read
 					);
 				}
 
+				# TODO: Add output of updated items here too?
+				changePool({
+						'ID' => $pid,
+						'FriendlyName' => $ipAddress
+				});
+
 
 			# If not display message
 			} else {
@@ -569,6 +575,12 @@ sub _session_socket_read
 				'GroupID' => $group,
 				'Expires' => $now + $config->{'expiry_period'},
 				'Source' => "plugin.radius",
+			});
+
+			# TODO: Add output of updated items here too?
+			changePool({
+					'ID' => $pid,
+					'FriendlyName' => $ipAddress
 			});
 		}
 
