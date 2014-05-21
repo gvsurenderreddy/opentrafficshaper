@@ -654,10 +654,10 @@ sub getKbit
 	my ($counter,$quantifier) = @_;
 
 	# If there is no counter
-	return undef if (!defined($counter));
+	return if (!defined($counter));
 
 	# We need a quantifier
-	return undef if (!defined($quantifier));
+	return if (!defined($quantifier));
 
 	# Initialize counter
 	my $newCounter = $counter;
@@ -667,7 +667,7 @@ sub getKbit
 	} elsif ($quantifier =~ /^k$/i) {
 		$newCounter = $counter * 1;
 	} else {
-		return undef;
+		return;
 	}
 
 	return $newCounter;

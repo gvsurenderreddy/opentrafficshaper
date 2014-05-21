@@ -805,7 +805,7 @@ sub getSIDFromCID
 	# Grab identifier based on class ID
 	my $identifier = _getIdentifierFromCID($iface,$cid);
 	if (!defined($identifier)) {
-		return undef;
+		return;
 	}
 
 	# Return the SID fo the identifier
@@ -826,7 +826,7 @@ sub setSIDFromCID
 		# If not, grab the identifier
 		my $identifier = _getIdentifierFromCID($iface,$cid);
 		if (!defined($identifier)) {
-			return undef;
+			return;
 		}
 		# And setup a new SID
 		$sid = _setSIDFromIdentifier($identifier);
@@ -846,7 +846,7 @@ sub getSIDFromPID
 	# Grab identifier from a PID
 	my $identifier = _getIdentifierFromPID($pid);
 	if (!defined($identifier)) {
-		return undef;
+		return;
 	}
 
 	# Return the SID for the PID
@@ -866,7 +866,7 @@ sub setSIDFromPID
 		# If we can't, grab the identifier instead
 		my $identifier = _getIdentifierFromPID($pid);
 		if (!defined($identifier)) {
-			return undef;
+			return;
 		}
 		# And setup the SID
 		$sid = _setSIDFromIdentifier($identifier);
@@ -886,7 +886,7 @@ sub getSIDFromCounter
 	# Grab identifier from a counter
 	my $identifier = _getIdentifierFromCounter($counter);
 	if (!defined($identifier)) {
-		return undef;
+		return;
 	}
 
 	# Return the SID for the counter
@@ -907,7 +907,7 @@ sub setSIDFromCounter
 		# If we can't, grab the identifier instead
 		my $identifier = _getIdentifierFromCounter($counter);
 		if (!defined($identifier)) {
-			return undef;
+			return;
 		}
 		# And setup the SID
 		$sid = _setSIDFromIdentifier($identifier);
@@ -935,7 +935,7 @@ sub getTrafficDirection
 		return STATISTICS_DIR_RX;
 	}
 
-	return undef;
+	return;
 }
 
 
@@ -1097,7 +1097,7 @@ sub _getIdentifierFromPID
 
 	my $pool = getPool($pid);
 	if (!defined($pool)) {
-		return undef;
+		return;
 	}
 
 	return sprintf("Pool:%s/%s",$pool->{'InterfaceGroupID'},$pool->{'Name'});
@@ -1139,7 +1139,7 @@ sub _getSIDFromIdentifier
 
 	# We need the DB to be alive to do this...
 	if (!defined($globals->{'Database'})) {
-		return undef;
+		return;
 	}
 
 	# Try grab it from DB
@@ -1154,7 +1154,7 @@ sub _getSIDFromIdentifier
 		$logger->log(LOG_ERR,"[STATISTICS] Failed to get SID from identifier '%s': %s",$identifier,awitpt::db::dblayer::Error());
 	}
 
-	return undef;
+	return;
 }
 
 
@@ -1167,7 +1167,7 @@ sub _setSIDFromIdentifier
 
 	# We need the DB to be alive to do this...
 	if (!defined($globals->{'Database'})) {
-		return undef;
+		return;
 	}
 
 	# Try add it to the DB
@@ -1177,7 +1177,7 @@ sub _setSIDFromIdentifier
 		$logger->log(LOG_ERR,"[STATISTICS] Failed to set SID from identifier '%s': %s",$identifier,awitpt::db::dblayer::Error());
 	}
 
-	return undef;
+	return;
 }
 
 

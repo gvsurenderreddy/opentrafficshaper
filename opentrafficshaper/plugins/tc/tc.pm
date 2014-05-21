@@ -826,7 +826,7 @@ sub getPIDFromTcClass
 	# Return the pool ID if found
 	my $ref = __getRefByMinorTcClass($interfaceID,$majorTcClass,$minorTcClass);
 	if (!defined($ref) || substr($ref,0,13) ne "_pool_class_:") {
-		return undef;
+		return;
 	}
 
 	return substr($ref,13);
@@ -842,7 +842,7 @@ sub isPoolTcClass
 
 	my $pid = getPIDFromTcClass($interfaceID,$majorTcClass,$minorTcClass);
 	if (!defined($pid)) {
-		return undef;
+		return;
 	}
 
 	return $minorTcClass;
@@ -861,7 +861,7 @@ sub getCIDFromTcClass
 	my $ref = __getRefByMinorTcClass($interfaceID,$majorTcClass,$minorTcClass);
 	# If we're not a traffic class, just return
 	if (substr($ref,0,16) ne "_traffic_class_:") {
-		return undef;
+		return;
 	}
 
 	# Else return the part after the above tag
@@ -1675,7 +1675,7 @@ sub _disposePrioTcClass
 	# If we can grab the major class dipose of it
 	my $majorTcClass = _getPrioTcClass($interfaceID,$tcClass);
 	if (!defined($majorTcClass)) {
-		return undef;
+		return;
 	}
 
 	return __disposeMajorTcClass($interfaceID,$majorTcClass);
@@ -1760,7 +1760,7 @@ sub __getMinorTcClassByRef
 
 
 	if (!defined($globals->{'TcClasses'}->{$interfaceID}) || !defined($globals->{'TcClasses'}->{$interfaceID}->{$majorTcClass})) {
-		return undef;
+		return;
 	}
 
 	return $globals->{'TcClasses'}->{$interfaceID}->{$majorTcClass}->{'Reverse'}->{$ref};
@@ -1775,7 +1775,7 @@ sub __getMajorTcClassByRef
 
 
 	if (!defined($globals->{'TcClasses'}->{$interfaceID})) {
-		return undef;
+		return;
 	}
 
 	return $globals->{'TcClasses'}->{$interfaceID}->{'Reverse'}->{$ref};
@@ -1790,7 +1790,7 @@ sub __getRefByMinorTcClass
 
 
 	if (!defined($globals->{'TcClasses'}->{$interfaceID}) || !defined($globals->{'TcClasses'}->{$interfaceID}->{$majorTcClass})) {
-		return undef;
+		return;
 	}
 
 	return $globals->{'TcClasses'}->{$interfaceID}->{$majorTcClass}->{'Track'}->{$minorTcClass};
