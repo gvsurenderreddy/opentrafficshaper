@@ -859,6 +859,12 @@ sub getCIDFromTcClass
 
 	# Grab ref
 	my $ref = __getRefByMinorTcClass($interfaceID,$majorTcClass,$minorTcClass);
+
+	# If we're undefined return
+	if (!defined($ref)) {
+		return;
+	}
+
 	# If we're not a traffic class, just return
 	if (substr($ref,0,16) ne "_traffic_class_:") {
 		return;
