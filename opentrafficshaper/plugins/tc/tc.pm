@@ -445,11 +445,11 @@ sub _session_pool_remove
 	]);
 
 	# And recycle the classs
-	_disposePoolTcClass($txInterface,$txPoolTcClass);
-	_disposePoolTcClass($rxInterface,$rxPoolTcClass);
+	_disposePoolTcClass($txInterface->{'Device'},$txPoolTcClass);
+	_disposePoolTcClass($rxInterface->{'Device'},$rxPoolTcClass);
 
-	_disposePrioTcClass($txInterface,$txPoolTcClass);
-	_disposePrioTcClass($rxInterface,$rxPoolTcClass);
+	_disposePrioTcClass($txInterface->{'Device'},$txPoolTcClass);
+	_disposePrioTcClass($rxInterface->{'Device'},$rxPoolTcClass);
 
 	# Post changeset
 	$kernel->post("_tc" => "queue" => $changeSet);
