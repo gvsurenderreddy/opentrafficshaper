@@ -1390,7 +1390,43 @@ sub _session_tick
 				# Remove pool member
 				delete($globals->{'PoolMembers'}->{$pmid});
 
-				# FIXME - Recheck IP conflicts and mark at least one pool member as unconflicted
+				# Check if we have/had conflicts
+				if ((my @conflicts =
+					@{$globals->{'InterfaceGroups'}->{$pool->{'InterfaceGroupID'}}->{'IPMap'}->{$poolMember->{'IPAddress'}}}) > 0)
+				{
+					# We can only re-tag a pool member for adding if we have 1 pool member
+					if (@conflicts == 1) {
+						# Grab conflicted pool member, its index 0 in the conflicts array
+						my $cPoolMember = $globals->{'PoolMembers'}->{$conflicts[0]};
+						# Grab pool
+						my $cPool = $globals->{'Pools'}->{$cPoolMember->{'PoolID'}};
+						# Unset conflict state
+						unsetPoolMemberShaperState($cPoolMember->{'ID'},SHAPER_CONFLICT);
+						# Add to change queue
+						$globals->{'PoolMemberChangeQueue'}->{$poolMember->{'ID'}} = $poolMember;
+
+						$logger->log(LOG_NOTICE,"[CONFIGMANAGER] IP '%s' is no longer conflicted, removing conflict from  ".
+								"pool '%s' member '%s' [%s]",
+							$cPoolMember->{'IPAddress'},
+							$cPool->{'Name'},
+							$cPoolMember->{'Username'},
+							$cPoolMember->{'ID'}
+						);
+					} else {
+						# Loop wiht conflicts and build some log items to use
+						my @logItems;
+						foreach my $pmid (@conflicts) {
+							my $cPoolMember = $globals->{'PoolMembers'}->{$pmid};
+							my $cPool = $globals->{'Pools'}->{$cPoolMember->{'PoolID'}};
+							push(@logItems,sprintf("Pool:%s/Member:%s",$cPool->{'Name'},$cPoolMember->{'Username'}));
+						}
+
+						$logger->log(LOG_NOTICE,"[CONFIGMANAGER] IP '%s' is still in conflict: %s",
+							$poolMember->{'IPAddress'},
+							join(", ",@logItems)
+						);
+					}
+				}
 			}
 
 		} else {
@@ -2915,15 +2951,15 @@ sub createPoolMember
 				join(", ",@logItems)
 		);
 
+		# We don't have to add it to the queue, as its in a conflicted state
 		setPoolMemberShaperState($poolMember->{'ID'},SHAPER_CONFLICT);
 
-	# We don't have to add it to the queue
 	} else {
 		# Pool member needs updating
 		$globals->{'PoolMemberChangeQueue'}->{$poolMember->{'ID'}} = $poolMember;
 	}
 
-	# Link interface IP address map, we must do the check above FIRST, and that neds the pool to be added to the pool map
+	# Link interface IP address map, we must do the check above FIRST, as that needs the pool to be added to the pool map
 	$globals->{'InterfaceGroups'}->{$pool->{'InterfaceGroupID'}}->{'IPMap'}->{$poolMember->{'IPAddress'}}
 			->{$poolMember->{'ID'}} = $poolMember;
 
