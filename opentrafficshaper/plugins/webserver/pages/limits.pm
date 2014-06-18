@@ -199,10 +199,16 @@ EOF
 		my $trafficClass = getTrafficClass($pool->{'TrafficClassID'});
 		my $trafficClassNameEncoded = encode_entities($trafficClass->{'Name'});
 
+		my $poolShaperState = getPoolShaperState($pool->{'ID'});
+		my $poolMemberShaperState = getPoolMemberShaperState($pool->{'ID'});
+
 		# Display relevant icons depending on pool status
 		my $icons = "";
-		if (getPoolShaperState($pool->{'ID'}) & SHAPER_NOTLIVE || $pool->{'Status'} == CFGM_CHANGED) {
+		if (!($poolShaperState & SHAPER_NOTLIVE) || $pool->{'Status'} == CFGM_CHANGED) {
 			$icons .= '<span class="glyphicon glyphicon-time" />';
+		}
+		if ($poolMemberShaperState & SHAPER_CONFLICT) {
+			$icons .= '<span class="glyphicon glyphicon-random" />';
 		}
 		if ($pool->{'Status'} == CFGM_NEW) {
 			$icons .= '<span class="glyphicon glyphicon-import" />';
@@ -210,12 +216,6 @@ EOF
 		if ($pool->{'Status'} == CFGM_OFFLINE) {
 			$icons .= '<span class="glyphicon glyphicon-trash" />';
 		}
-#		if ($pool->{'Status'} eq 'conflict') {
-#			$icons .= '<span class="glyphicon glyphicon-random" />';
-#		}
-#		if ($pool->{'Status'} eq 'conflict') {
-#			$icons .= '<span class="glyphicon glyphicon-edit" />';
-#		}
 
 		my $urlStatsPool = sprintf('/statistics/by-pool?pool=%s',uri_escape("$pool->{'InterfaceGroupID'}:$pool->{'Name'}"));
 		my $urlPoolEdit = sprintf('/limits/pool-edit?pid=%s',uri_escape($pool->{'ID'}));
