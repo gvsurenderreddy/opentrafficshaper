@@ -1398,23 +1398,28 @@ sub _session_tick
 					if (@conflicts == 1) {
 						# Grab conflicted pool member, its index 0 in the conflicts array
 						my $cPoolMember = $globals->{'PoolMembers'}->{$conflicts[0]};
-						# Grab pool
-						my $cPool = $globals->{'Pools'}->{$cPoolMember->{'PoolID'}};
-						# Unset conflict state
-						unsetPoolMemberShaperState($cPoolMember->{'ID'},SHAPER_CONFLICT);
-						# Add to change queue
-						$globals->{'PoolMemberChangeQueue'}->{$cPoolMember->{'ID'}} = $cPoolMember;
+						my $cPoolMemberShaperState = getPoolMemberShaperState($cPoolMember->{'ID'});
 
-						$logger->log(LOG_NOTICE,"[CONFIGMANAGER] IP '%s' is no longer conflicted, removing conflict from  ".
-								"pool '%s' member '%s' [%s], was conflicted with pool '%s' member '%s' [%s]",
-							$cPoolMember->{'IPAddress'},
-							$cPool->{'Name'},
-							$cPoolMember->{'Username'},
-							$cPoolMember->{'ID'},
-							$pool->{'Name'},
-							$poolMember->{'Username'},
-							$poolMember->{'ID'}
-						);
+						# We only want to work with conflicts
+						if ($cPoolMemberShaperState & SHAPER_CONFLICT) {
+							# Grab pool
+							my $cPool = $globals->{'Pools'}->{$cPoolMember->{'PoolID'}};
+							# Unset conflict state
+							unsetPoolMemberShaperState($cPoolMember->{'ID'},SHAPER_CONFLICT);
+							# Add to change queue
+							$globals->{'PoolMemberChangeQueue'}->{$cPoolMember->{'ID'}} = $cPoolMember;
+
+							$logger->log(LOG_NOTICE,"[CONFIGMANAGER] IP '%s' is no longer conflicted, removing conflict from  ".
+									"pool '%s' member '%s' [%s], was conflicted with pool '%s' member '%s' [%s]",
+								$cPoolMember->{'IPAddress'},
+								$cPool->{'Name'},
+								$cPoolMember->{'Username'},
+								$cPoolMember->{'ID'},
+								$pool->{'Name'},
+								$poolMember->{'Username'},
+								$poolMember->{'ID'}
+							);
+						}
 
 					} else {
 						# Loop wiht conflicts and build some log items to use
