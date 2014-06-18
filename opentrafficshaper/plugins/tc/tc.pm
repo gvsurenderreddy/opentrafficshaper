@@ -319,10 +319,10 @@ sub _session_pool_add
 		return;
 	}
 
-	$logger->log(LOG_INFO,"[TC] Add pool '%s' to interface group '%s' [%s]",
+	$logger->log(LOG_INFO,"[TC] Add pool '%s' [%s] to interface group '%s'",
 			$pool->{'Name'},
+			$pool->{'ID'},
 			$pool->{'InterfaceGroupID'},
-			$pool->{'ID'}
 	);
 
 	# Grab our effective pool
@@ -541,10 +541,19 @@ sub _session_poolmember_add
 		return;
 	}
 
-	$logger->log(LOG_INFO,"[TC] Add pool member '%s' to pool '%s' [%s]",
+	# Grab the pool members associated pool
+	my $pool;
+	if (!defined($pool = getPool($poolMember->{'PoolID'}))) {
+		$logger->log(LOG_ERR,"[TC] Shaper 'poolmember_add' event with invalid PoolID");
+		return;
+	}
+
+	$logger->log(LOG_INFO,"[TC] Add pool member '%s' [%s] with IP '%s' to pool '%s' [%s]",
+			$poolMember->{'Username'},
+			$poolMember->{'ID'},
 			$poolMember->{'IPAddress'},
-			$poolMember->{'PoolID'},
-			$poolMember->{'ID'}
+			$pool->{'Name'},
+			$pool->{'ID'}
 	);
 
 	my $changeSet = TC::ChangeSet->new();
@@ -760,11 +769,12 @@ sub _session_poolmember_remove
 		return;
 	}
 
-	$logger->log(LOG_INFO,"[TC] Removing pool member '%s' with IP '%s' [%s] from pool '%s'",
+	$logger->log(LOG_INFO,"[TC] Remove pool member '%s' [%s] with IP '%s' from pool '%s' [%s]",
 			$poolMember->{'Username'},
-			$poolMember->{'IPAddress'},
 			$poolMember->{'ID'},
-			$pool->{'Name'}
+			$poolMember->{'IPAddress'},
+			$pool->{'Name'},
+			$pool->{'ID'}
 	);
 
 	# Grab our interfaces
@@ -2205,6 +2215,21 @@ sub extract
 	my $self = shift;
 
 	return @{$self->{'list'}};
+}
+
+
+
+# Return the list
+sub debug
+{
+	my $self = shift;
+
+	my @debug = ();
+	foreach my $item ($self->extract) {
+		push(@debug,join(' ',@{$item}));
+	}
+
+	return @debug;
 }
 
 
