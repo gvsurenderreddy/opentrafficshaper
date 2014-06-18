@@ -867,9 +867,11 @@ EOF
 		my $poolMemberExpiresStr = encode_entities(($poolMember->{'Expires'} > 0) ?
 				DateTime->from_epoch( epoch => $poolMember->{'Expires'} )->iso8601() : '-never-');
 
+		my $poolMemberShaperState = getPoolMemberShaperState($poolMember->{'ID'});
+
 		# Display relevant icons depending on pool status
 		my $icons = "";
-		if (!(getPoolMemberShaperState($poolMember->{'ID'}) & SHAPER_LIVE)) {
+		if (!($poolMemberShaperState & SHAPER_LIVE)) {
 			$icons .= '<span class="glyphicon glyphicon-time" />';
 		}
 		if ($poolMember->{'Status'} == CFGM_NEW) {
@@ -878,12 +880,9 @@ EOF
 		if ($poolMember->{'Status'} == CFGM_OFFLINE) {
 			$icons .= '<span class="glyphicon glyphicon-trash" />';
 		}
-#		if ($poolMember->{'Status'} eq 'conflict') {
-#			$icons .= '<span class="glyphicon glyphicon-random" />';
-#		}
-#		if ($pool->{'Status'} eq 'conflict') {
-#			$icons .= '<span class="glyphicon glyphicon-edit" />';
-#		}
+		if ($poolMemberShaperState & SHAPER_CONFLICT) {
+			$icons .= '<span class="glyphicon glyphicon-random" />';
+		}
 
 		my $urlPoolMemberEdit = sprintf('/limits/poolmember-edit?pmid=%s',uri_escape($poolMember->{'ID'}));
 		my $urlPoolMemberRemove = sprintf('/limits/poolmember-remove?pmid=%s',uri_escape($poolMember->{'ID'}));
