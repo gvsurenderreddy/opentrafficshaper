@@ -1403,15 +1403,19 @@ sub _session_tick
 						# Unset conflict state
 						unsetPoolMemberShaperState($cPoolMember->{'ID'},SHAPER_CONFLICT);
 						# Add to change queue
-						$globals->{'PoolMemberChangeQueue'}->{$poolMember->{'ID'}} = $poolMember;
+						$globals->{'PoolMemberChangeQueue'}->{$cPoolMember->{'ID'}} = $cPoolMember;
 
 						$logger->log(LOG_NOTICE,"[CONFIGMANAGER] IP '%s' is no longer conflicted, removing conflict from  ".
-								"pool '%s' member '%s' [%s]",
+								"pool '%s' member '%s' [%s], was conflicted with pool '%s' member '%s' [%s]",
 							$cPoolMember->{'IPAddress'},
 							$cPool->{'Name'},
 							$cPoolMember->{'Username'},
-							$cPoolMember->{'ID'}
+							$cPoolMember->{'ID'},
+							$pool->{'Name'},
+							$poolMember->{'Username'},
+							$poolMember->{'ID'}
 						);
+
 					} else {
 						# Loop wiht conflicts and build some log items to use
 						my @logItems;
