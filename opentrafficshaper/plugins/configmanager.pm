@@ -1391,8 +1391,8 @@ sub _session_tick
 				delete($globals->{'PoolMembers'}->{$pmid});
 
 				# Check if we have/had conflicts
-				if ((my @conflicts =
-					@{$globals->{'InterfaceGroups'}->{$pool->{'InterfaceGroupID'}}->{'IPMap'}->{$poolMember->{'IPAddress'}}}) > 0)
+				if ((my @conflicts = keys
+					%{$globals->{'InterfaceGroups'}->{$pool->{'InterfaceGroupID'}}->{'IPMap'}->{$poolMember->{'IPAddress'}}}) > 0)
 				{
 					# We can only re-tag a pool member for adding if we have 1 pool member
 					if (@conflicts == 1) {
