@@ -565,12 +565,6 @@ sub _session_poolmember_add
 	my $ip3 = $components[2];
 	my $ip4 = $components[3];
 
-	my $pool;
-	if (!defined($pool = getPool($poolMember->{'PoolID'}))) {
-		$logger->log(LOG_ERR,"[TC] Shaper 'poolmember_add' event with invalid PoolID");
-		return;
-	}
-
 	# Grab some variables we going to need below
 	my $txInterfaceID = getPoolTxInterface($pool->{'ID'});
 	my $rxInterfaceID = getPoolRxInterface($pool->{'ID'});
