@@ -294,7 +294,8 @@ sub server_request
 		}
 
 		# Support for HTTP/1.1 "Connection: close" header...
-		if ($request->header('Connection') eq "close") {
+		my $connection = $request->header('Connection');
+		if (defined($connection) && $connection eq "close") {
 			$closeWhenDone = 1;
 		}
 
