@@ -2004,7 +2004,7 @@ sub _task_run_next
 
 		# Create task
 		my $task = POE::Wheel::Run->new(
-			Program => [ '/sbin/tc', '-force', '-batch' ],
+			Program => [ '/sbin/tc', '-force', '-batch', '-' ],
 			Conduit => 'pipe',
 			StdioFilter => POE::Filter::Line->new( Literal => "\n" ),
 			StderrFilter => POE::Filter::Line->new( Literal => "\n" ),
