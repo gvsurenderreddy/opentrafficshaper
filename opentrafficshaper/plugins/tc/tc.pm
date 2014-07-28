@@ -564,6 +564,11 @@ sub _session_poolmember_add
 	my $ip2 = $components[1];
 	my $ip3 = $components[2];
 	my $ip4 = $components[3];
+	# Hex IP components
+	my $ip1Hex = sprintf('%02s',toHex($ip1));
+	my $ip2Hex = sprintf('%02s',toHex($ip2));
+	my $ip3Hex = sprintf('%02s',toHex($ip3));
+	my $ip4Hex = sprintf('%02s',toHex($ip4));
 
 	# Grab some variables we going to need below
 	my $txInterfaceID = getPoolTxInterface($pool->{'ID'});
@@ -607,8 +612,6 @@ sub _session_poolmember_add
 		$globals->{'TcFilterMappings'}->{$txInterfaceID}->{'dst'}->{$matchPriority}->{$ip1}->{$ip2}->{'id'} = $filterID;
 		# Grab some hash table ID's we need
 		my $ip1HtHex = $globals->{'TcFilterMappings'}->{$txInterfaceID}->{'dst'}->{$matchPriority}->{$ip1}->{'id'};
-		# And hex our IP component
-		my $ip2Hex = toHex($ip2);
 		$logger->log(LOG_DEBUG,"[TC] Linking 3rd level TX hash table to '%s' to '%s.%s.0.0/16', priority '%s'",
 				$filterID,
 				$ip1,
@@ -625,8 +628,6 @@ sub _session_poolmember_add
 		$globals->{'TcFilterMappings'}->{$rxInterfaceID}->{'src'}->{$matchPriority}->{$ip1}->{$ip2}->{'id'} = $filterID;
 		# Grab some hash table ID's we need
 		my $ip1HtHex = $globals->{'TcFilterMappings'}->{$rxInterfaceID}->{'src'}->{$matchPriority}->{$ip1}->{'id'};
-		# And hex our IP component
-		my $ip2Hex = toHex($ip2);
 		$logger->log(LOG_DEBUG,"[TC] Linking 3rd level RX hash table to '%s' to '%s.%s.0.0/16', priority '%s'",
 				$filterID,
 				$ip1,
@@ -645,8 +646,6 @@ sub _session_poolmember_add
 		$globals->{'TcFilterMappings'}->{$txInterfaceID}->{'dst'}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3}->{'id'} = $filterID;
 		# Grab some hash table ID's we need
 		my $ip2HtHex = $globals->{'TcFilterMappings'}->{$txInterfaceID}->{'dst'}->{$matchPriority}->{$ip1}->{$ip2}->{'id'};
-		# And hex our IP component
-		my $ip3Hex = toHex($ip3);
 		$logger->log(LOG_DEBUG,"[TC] Linking 4th level TX hash table to '%s' to '%s.%s.%s.0/24', priority '%s'",
 				$filterID,
 				$ip1,
@@ -664,8 +663,6 @@ sub _session_poolmember_add
 		$globals->{'TcFilterMappings'}->{$rxInterfaceID}->{'src'}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3}->{'id'} = $filterID;
 		# Grab some hash table ID's we need
 		my $ip2HtHex = $globals->{'TcFilterMappings'}->{$rxInterfaceID}->{'src'}->{$matchPriority}->{$ip1}->{$ip2}->{'id'};
-		# And hex our IP component
-		my $ip3Hex = toHex($ip3);
 		$logger->log(LOG_DEBUG,"[TC] Linking 4th level RX hash table to '%s' to '%s.%s.%s.0/24', priority '%s'",
 				$filterID,
 				$ip1,
@@ -687,8 +684,6 @@ sub _session_poolmember_add
 		my $tcClass_trafficClass = getPoolAttribute($pool->{'ID'},'tc.txclass');
 		# Grab some hash table ID's we need
 		my $ip3HtHex = $globals->{'TcFilterMappings'}->{$txInterfaceID}->{'dst'}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3}->{'id'};
-		# And hex our IP component
-		my $ip4Hex = toHex($ip4);
 		$logger->log(LOG_DEBUG,"[TC] Linking pool member IP '%s' to class '%s' at hash endpoint '%s:%s'",
 				$poolMember->{'IPAddress'},
 				$tcClass_trafficClass,
@@ -709,8 +704,6 @@ sub _session_poolmember_add
 		my $tcClass_trafficClass = getPoolAttribute($pool->{'ID'},'tc.rxclass');
 		# Grab some hash table ID's we need
 		my $ip3HtHex = $globals->{'TcFilterMappings'}->{$rxInterfaceID}->{'src'}->{$matchPriority}->{$ip1}->{$ip2}->{$ip3}->{'id'};
-		# And hex our IP component
-		my $ip4Hex = toHex($ip4);
 		$logger->log(LOG_DEBUG,"[TC] Linking RX IP '%s' to class '%s' at hash endpoint '%s:%s'",
 				$poolMember->{'IPAddress'},
 				$tcClass_trafficClass,
