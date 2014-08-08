@@ -45,7 +45,7 @@ $VERSION = '1.300';
 
 
 # Class instantiation
-sub new 
+sub new
 {
 	my $class = shift;
 
@@ -61,10 +61,11 @@ sub new
 }
 
 
+
 # From the docs:
 # get_one_start() accepts an array reference containing unprocessed stream chunks. The chunks are added to the filter's Internal
 # buffer for parsing by get_one().
-sub get_one_start 
+sub get_one_start
 {
 	my ($self, $stream) = @_;
 
@@ -76,8 +77,9 @@ sub get_one_start
 }
 
 
+
 # This is called to see if we can grab records/items
-sub get_one 
+sub get_one
 {
 	my $self = shift;
 	my @results = ();
@@ -131,7 +133,7 @@ sub get_one
 			next;
 		}
 
-		push(@results,$curstat);	
+		push(@results,$curstat);
 	}
 
 
@@ -139,8 +141,9 @@ sub get_one
 }
 
 
+
 # Function to push data to the socket
-sub put 
+sub put
 {
 	my ($self, $data) = @_;
 
@@ -164,6 +167,7 @@ sub _reset
 	# Reset our filter state
 	$self->{'buffer'} = '';
 }
+
 
 
 # Get rate...
