@@ -179,9 +179,9 @@ sub _getKNumber
 	} elsif ($multiplier eq "K") {
 		# noop
 	} elsif ($multiplier eq "M") {
-		$num *= 1000000;
+		$num *= 1000;
 	} elsif ($multiplier eq "G") {
-		$num *= 1000000000;
+		$num *= 1000000;
 	}
 
 	return int($num);
