@@ -997,14 +997,14 @@ sub _tc_iface_init
 		_tc_class_optimize($changeSet,$interfaceID,$defaultPoolTcClass,$interfaceTrafficClass->{'Limit'});
 
 		# Make the queue size big enough
-		my $queueSize = int((($interface->{'Limit'} * 1000) / 8) * 5); # Should give a 5s queue time, eg. (100kbps * 1000 / 8) * 5
+		my $queueSize = int($interface->{'Limit'} / 8) * 1000 * 5; # Should give a 5s queue time, eg. (100kbps / 8) * 1000 * 5
 
 		# RED metrics (sort of as per manpage)
 		my $redAvPkt = 1000;
 		my $redMax = int($queueSize * 0.75); # 75% mark at 100% probabilty
 		my $redMin = int($queueSize * 0.10); # 10% mark start RED
 #		my $redBurst = int( ($redMin+$redMax) / (2*$redAvPkt));
-		my $redBurst = int($queueSize * 0.10); # 10% burst
+		my $redBurst = int($redMin / $redAvPkt) + 1;
 		my $redLimit = $queueSize;
 
 		my $prioTcClass = _getPrioTcClass($interfaceID,$defaultPoolTcClass);
