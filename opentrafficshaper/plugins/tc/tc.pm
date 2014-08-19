@@ -1266,6 +1266,68 @@ sub _tc_class_optimize
 					'rate',"${rateBand2}kbit",'burst',"${rateBand2Burst}k",'continue',
 				'flowid',"$prioTcClass:1",
 	]);
+	# SSH
+	$changeSet->add([
+			'/sbin/tc','filter','add',
+				'dev',$interface->{'Device'},
+				'parent',"$prioTcClass:",
+				'prio','1',
+				'protocol',$config->{'ip_protocol'},
+				'u32',
+					'match','u8','0x6','0xff', # TCP
+						'at',9+$config->{'iphdr_offset'},
+					'match','u16','0x16','0xffff', # SPORT 22
+						'at',20+$config->{'iphdr_offset'},
+				'police',
+					'rate',"${rateBand2}kbit",'burst',"${rateBand2Burst}k",'continue',
+				'flowid',"$prioTcClass:1",
+	]);
+	$changeSet->add([
+			'/sbin/tc','filter','add',
+				'dev',$interface->{'Device'},
+				'parent',"$prioTcClass:",
+				'prio','1',
+				'protocol',$config->{'ip_protocol'},
+				'u32',
+					'match','u8','0x6','0xff', # TCP
+						'at',9+$config->{'iphdr_offset'},
+					'match','u16','0x16','0xffff', # DPORT 22
+						'at',22+$config->{'iphdr_offset'},
+				'police',
+					'rate',"${rateBand2}kbit",'burst',"${rateBand2Burst}k",'continue',
+				'flowid',"$prioTcClass:1",
+	]);
+	# TELNET
+	$changeSet->add([
+			'/sbin/tc','filter','add',
+				'dev',$interface->{'Device'},
+				'parent',"$prioTcClass:",
+				'prio','1',
+				'protocol',$config->{'ip_protocol'},
+				'u32',
+					'match','u8','0x6','0xff', # TCP
+						'at',9+$config->{'iphdr_offset'},
+					'match','u16','0x17','0xffff', # SPORT 23
+						'at',20+$config->{'iphdr_offset'},
+				'police',
+					'rate',"${rateBand2}kbit",'burst',"${rateBand2Burst}k",'continue',
+				'flowid',"$prioTcClass:1",
+	]);
+	$changeSet->add([
+			'/sbin/tc','filter','add',
+				'dev',$interface->{'Device'},
+				'parent',"$prioTcClass:",
+				'prio','1',
+				'protocol',$config->{'ip_protocol'},
+				'u32',
+					'match','u8','0x6','0xff', # TCP
+						'at',9+$config->{'iphdr_offset'},
+					'match','u16','0x17','0xffff', # DPORT 23
+						'at',22+$config->{'iphdr_offset'},
+				'police',
+					'rate',"${rateBand2}kbit",'burst',"${rateBand2Burst}k",'continue',
+				'flowid',"$prioTcClass:1",
+	]);
 	# TODO: Make this customizable not hard coded?
 	# Mikrotik Management Port
 	$changeSet->add([
