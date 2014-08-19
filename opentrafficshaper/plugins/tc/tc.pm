@@ -1247,6 +1247,8 @@ sub _tc_class_optimize
 						'at',9+$config->{'iphdr_offset'},
 					'match','u16','0xa1','0xffff', # SPORT 161
 						'at',20+$config->{'iphdr_offset'},
+				'police',
+					'rate',"${rateBand2}kbit",'burst',"${rateBand2Burst}k",'continue',
 				'flowid',"$prioTcClass:1",
 	]);
 	$changeSet->add([
@@ -1260,6 +1262,8 @@ sub _tc_class_optimize
 						'at',9+$config->{'iphdr_offset'},
 					'match','u16','0xa1','0xffff', # DPORT 161
 						'at',22+$config->{'iphdr_offset'},
+				'police',
+					'rate',"${rateBand2}kbit",'burst',"${rateBand2Burst}k",'continue',
 				'flowid',"$prioTcClass:1",
 	]);
 	# TODO: Make this customizable not hard coded?
