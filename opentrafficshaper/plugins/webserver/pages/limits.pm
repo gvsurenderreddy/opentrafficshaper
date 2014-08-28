@@ -1850,8 +1850,8 @@ EOF
 			sprintf('%s/%s',prettyUndef($poolOverride->{'TxLimit'}),prettyUndef($poolOverride->{'RxLimit'}))
 		);
 
-		my $urlPoolOverrideEdit = sprintf('/limits/pool-override-edit?oid=',encode_entities($poolOverride->{'ID'}));
-		my $urlPoolOverrideRemove = sprintf('/limits/pool-override-remove?oid=',encode_entities($poolOverride->{'ID'}));
+		my $urlPoolOverrideEdit = sprintf('/limits/pool-override-edit?poid=%s',encode_entities($poolOverride->{'ID'}));
+		my $urlPoolOverrideRemove = sprintf('/limits/pool-override-remove?poid=%s',encode_entities($poolOverride->{'ID'}));
 
 		$content .= <<EOF;
 				<tr>
