@@ -2397,7 +2397,7 @@ EOF
 		# Check if its a success
 		if ($form->{'confirm'}->{'value'} eq "Yes") {
 			# Post the removal
-			$kernel->post("configmanager" => "pool-override_remove" => $poolOverride->{'ID'});
+			$kernel->post("configmanager" => "pool_override_remove" => $poolOverride->{'ID'});
 		}
 		return (HTTP_TEMPORARY_REDIRECT,'/limits/pool-override-list');
 	}
