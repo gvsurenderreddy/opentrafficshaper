@@ -38,8 +38,10 @@ Debian: libdbd-mysql-perl
 * System Changes
 *
 
-1. If you are running kernel 3.12, please make sure you add the following to /etc/modules or appropriate to enable stats
-sch_htb htb_rate_set=1
+1. If you are running kernel 3.12, please make sure you add the following to /etc/modules-load.d/htb-stats.conf
+# Enable HTB stats
+sch_htb htb_rate_est=1
+
 
 
 *
