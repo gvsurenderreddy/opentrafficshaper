@@ -1,6 +1,6 @@
 # OpenTrafficShaper POE::Filter::TCStatistics TC stats filter
 # OpenTrafficShaper webserver module: limits page
-# Copyright (C) 2007-2013, AllWorldIT
+# Copyright (C) 2007-2015, AllWorldIT
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by

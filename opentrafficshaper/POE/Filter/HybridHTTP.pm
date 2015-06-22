@@ -1,4 +1,4 @@
-# POE::Filter::HybridHTTP - Copyright 2013, AllworldIT
+# POE::Filter::HybridHTTP - Copyright 2013-2015, AllworldIT
 # Hybrid HTTP filter supporting websockets too.
 #
 # This program is free software: you can redistribute it and/or modify
