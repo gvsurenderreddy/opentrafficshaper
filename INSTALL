@@ -1,29 +1,40 @@
-Installing OpenTrafficShaper:
-
-
 *
 * Requirements for OpenTrafficShaper
 *
 
 - POE
-Debian: libpoe-perl
+Debian-based: libpoe-perl
 
 - Config::IniFiles
-Debian: libconfig-inifiles-perl
+Debian-based: libconfig-inifiles-perl
 
 - DateTime
-Debian: libdatetime-perl
+Debian-based: libdatetime-perl
 
 - Digest::SHA
-Debian: libdigest-sha-perl
+Debian-based: libdigest-sha-perl
 
 - JSON
-Debian: libjson-perl
+Debian-based: libjson-perl
 
 - DBD::MySQL
-Debian: libdbd-mysql-perl
+Debian-based: libdbd-mysql-perl
+
+- HTML::Entities module
+Debian-based: libhtml-parser-perl
 
 - Perl 5.6+
+
+# sudo apt-get install libpoe-perl libconfig-inifiles-perl libdatetime-perl libdigest-sha-perl libjson-perl libdbd-mysql-perl perl
+
+
+*
+* Installing OpenTrafficShaper
+*
+
+# sudo apt-get install git
+# git clone https://gitlab.devlabs.linuxassist.net/opentrafficshaper/opentrafficshaper.git
+# cd opentrafficshaper
 
 
 *
@@ -33,15 +44,51 @@ Debian: libdbd-mysql-perl
 ./update-git-modules
 
 
-
 *
 * System Changes
 *
 
-1. If you are running kernel 3.12, please make sure you add the following to /etc/modprobe.d/htb-stats.conf
-# Enable HTB stats
+- If you are running kernel 3.12+:
+# sudo touch /etc/modprobe.d/htb-stats.conf
+
+- Add this to /etc/modprobe.d/htb-stats.conf:
 options sch_htb htb_rate_est=1
 
+* Please reboot your PC to apply this changes before starting module!
+
+- Create directories:
+# sudo mkdir /var/log/opentrafficshaper
+# sudo mkdir /var/run/opentrafficshaper
+# sudo mkdir /var/lib/opentrafficshaper
+
+- Create statement file:
+# sudo touch /var/lib/opentrafficshaper/configmanager.state
+
+
+*
+* Enable statistics
+*
+
+- Install mysql-server:
+# sudo apt-get install mysql-server
+
+- Connect to MySQL:
+# mysql -u root -p
+
+- Create new user:
+> CREATE USER 'ots'@'localhost' IDENTIFIED BY 'Pas$W00rd';
+
+- Create database:
+> CREATE DATABASE otsdb;
+
+- Grand all privilages to database:
+> GRANT ALL PRIVILEGES ON otsdb.* TO 'ots'@'localhost';
+
+- Close connection:
+> quit
+
+- Restore MySQL schema
+# mysql -u ots -p otsdb < database/stats.sql
 
 
 *
