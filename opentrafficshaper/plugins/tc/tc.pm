@@ -936,7 +936,7 @@ sub _tc_iface_init
 	]);
 
 	# Attach our main limit on the qdisc
-	my $burst = int(($interface->{'Limit'}/8) * 0.10); # 10% burst
+	my $burst = int($interface->{'Limit'}/8); # Allow the entire interface to be emptied with a burst
 	$changeSet->add([
 			'/sbin/tc','class','add',
 				'dev',$interface->{'Device'},
@@ -945,6 +945,7 @@ sub _tc_iface_init
 				'htb',
 					'rate',"$interface->{'Limit'}kbit",
 					'burst',"${burst}kb",
+					'cburst',"${burst}kb",
 	]);
 
 	# Class 0 is our interface, it points to 1 (the major TcClass)) : 1 (class below)
@@ -964,7 +965,13 @@ sub _tc_iface_init
 		my $tcClass = _getTcClassFromTrafficClassID($interfaceID,$trafficClassID);
 		my $trafficPriority = getTrafficClassPriority($trafficClassID);
 
-		$burst = int(($interfaceTrafficClass->{'Limit'}/8) * 0.10); # 10% burst
+		$burst = int($interfaceTrafficClass->{'CIR'}/8); # Allow burst up to the CIR
+		my $cburst = int(($interfaceTrafficClass->{'Limit'} - $interfaceTrafficClass->{'CIR'}) / 8 / 10) + 1600; # Allow burst of 10% of the diff between CIR and Limit
+		# NK: cburst should not exceed burst, if it does, just use the burst value
+		# this ensures we do not get negative burst
+		if ($cburst > $burst) {
+			$cburst = $burst;
+		}
 
 		# Add class
 		$changeSet->add([
@@ -977,6 +984,7 @@ sub _tc_iface_init
 						'ceil',"$interfaceTrafficClass->{'Limit'}kbit",
 						'prio',$trafficPriority,
 						'burst', "${burst}kb",
+						'cburst', "${cburst}kb",
 		]);
 
 		# Setup interface traffic class details
@@ -997,14 +1005,13 @@ sub _tc_iface_init
 		_tc_class_optimize($changeSet,$interfaceID,$defaultPoolTcClass,$interfaceTrafficClass->{'Limit'});
 
 		# Make the queue size big enough
-		my $queueSize = int($interface->{'Limit'} / 8) * 1000 * 5; # Should give a 5s queue time, eg. (100kbps / 8) * 1000 * 5
+		my $queueSize = int($interfaceTrafficClass->{'CIR'} / 8) * 1000 * 5;
 
 		# RED metrics (sort of as per manpage)
 		my $redAvPkt = 1000;
-		my $redMax = int($queueSize * 0.75); # 75% mark at 100% probabilty
+		my $redMax = int($queueSize * 0.50); # 50% mark at 100% probabilty
 		my $redMin = int($queueSize * 0.10); # 10% mark start RED
-#		my $redBurst = int( ($redMin+$redMax) / (2*$redAvPkt));
-		my $redBurst = int($redMin / $redAvPkt) + 1;
+		my $redBurst = int( ($redMin+$redMax) / (2*$redAvPkt));
 		my $redLimit = $queueSize;
 
 		my $prioTcClass = _getPrioTcClass($interfaceID,$defaultPoolTcClass);
@@ -1611,8 +1618,14 @@ sub _tc_class_add
 
 	my $interface = getInterface($interfaceID);
 
-	# Set burst to a sane value
-	my $burst = int(($ceil / 8) * 0.10); # 10% burst
+	# Set burst to a sane value, in this case the CIR (or $rate) size
+	my $burst = int($rate / 8);
+	my $cburst = int(($ceil - $rate) / 8 / 10);
+	# NK: cburst should not exceed burst, if it does, just use the burst value
+	# this ensures we do not get negative burst
+	if ($cburst > $burst) {
+		$cburst = $burst;
+	}
 
 	# Create main rate limiting classes
 	$changeSet->add([
@@ -1625,6 +1638,7 @@ sub _tc_class_add
 					'ceil', "${ceil}kbit",
 					'prio', $trafficPriority,
 					'burst', "${burst}kb",
+					'cburst', "${cburst}kb",
 	]);
 }
 
@@ -1640,13 +1654,18 @@ sub _tc_class_change
 
 	my @args = ();
 
-	# Based on if ceil is avaiable, set burst
-	my $burst;
-	if (defined($ceil)) {
-		$burst = int(($ceil / 8) * 0.10);
-	} else {
-		# If ceil is not available, set burst and ceil
-		$burst = $ceil = $rate;
+	# If ceil is not available, set it to the CIR (or $rate in this case)
+	if (!defined($ceil)) {
+		$ceil = $rate;
+	}
+
+	# Set the burst rate to the CIR (or $rate in this case)
+	my $burst = int($rate / 8);
+	my $cburst = int(($ceil - $rate) / 8 / 10);
+	# NK: cburst should not exceed burst, if it does, just use the burst value
+	# this ensures we do not get negative burst
+	if ($cburst > $burst) {
+		$cburst = $burst;
 	}
 
 	# Check if we have a priority
@@ -1664,6 +1683,7 @@ sub _tc_class_change
 					'rate', "${rate}kbit",
 					'ceil', "${ceil}kbit",
 					'burst', "${burst}kb",
+					'cburst', "${cburst}kb",
 					@args
 	]);
 }
